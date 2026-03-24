@@ -12,29 +12,488 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- Configuração Firebase ---
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'hobby-hub-local';
-
-        // --- Estado da Aplicação ---
+        // --- Configuração e Inicialização Segura ---
+        let db, auth, appId;
+        
+        // Estado da Aplicação
         let state = {
             user: null,
-            activeTab: 'discovery', // discovery, groups, market, profile
+            activeTab: 'loading', 
             groups: [],
             events: [],
             marketItems: [],
             userProfile: null,
-            selectedGroup: null
+            selectedGroup: null,
+            error: null
         };
+
+        async function initApp() {
+            try {
+                let config;
+                
+                // Se estiver no ambiente de desenvolvimento do chat, usa as variáveis do sistema
+                if (typeof __firebase_config !== 'undefined') {
+                    config = JSON.parse(__firebase_config);
+                    appId = typeof __app_id !== 'undefined' ? __app_id : 'hubbyhub-app-id';
+                } else {
+                    // CONFIGURAÇÃO DO USUÁRIO INTEGRADA:
+                    config = {
+                        apiKey: "AIzaSyD2evGU9oz4NvGIH4NllIfaVipFltt8f0Q",
+                        authDomain: "hubbyhub-98c71.firebaseapp.com",
+                        projectId: "hubbyhub-98c71",
+                        storageBucket: "hubbyhub-98c71.firebasestorage.app",
+                        messagingSenderId: "97040838158",
+                        appId: "1:97040838158:web:47070af0ff42a9817fd65f"
+                    };
+                    // Identificador único para a estrutura de pastas no Firestore
+                    appId = 'hubbyhub-98c71'; 
+                }
+
+                const app = initializeApp(config);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Autenticação (Tenta Token Customizado ou Anônimo)
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (u) => {
+                    state.user = u;
+                    if (u) {
+                        state.activeTab = 'discovery';
+                        setupListeners(u.uid);
+                    }
+                });
+
+            } catch (err) {
+                console.error("Erro na inicialização:", err);
+                state.activeTab = 'error';
+                state.error = err.message;
+                updateUI();
+            }
+        }
 
         // --- Funções de UI ---
         function updateUI() {
             const root = document.getElementById('app-root');
+            
+            if (state.activeTab === 'error') {
+                root.innerHTML = `
+                    <div class="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
+                        <div class="bg-red-50 p-6 rounded-2xl border border-red-100 max-w-sm">
+                            <i data-lucide="alert-circle" class="mx-auto w-12 h-12 text-red-500 mb-4"></i>
+                            <h2 class="text-xl font-bold text-red-900 mb-2">Erro de Conexão</h2>
+                            <p class="text-red-700 text-sm mb-4">${state.error}</p>
+                            <p class="text-slate-500 text-xs">Verifique se você ativou o "Authentication (Anonymous)" e o "Firestore Database" no seu console do Firebase.</p>
+                        </div>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
             if (state.activeTab === 'loading') {
-                root.innerHTML = renderLoading();
+                root.innerHTML = `
+                    <div class="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+                        <div class="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+                        <p class="text-slate-500 font-medium animate-pulse">Ligando ao HobbyHub...</p>
+                    </div>
+                `;
+                return;
+            }
+
+            root.innerHTML = `
+                <div class="min-h-screen bg-slate-50 max-w-md mx-auto relative shadow-2xl overflow-x-hidden pb-24">
+                    ${renderHeader()}
+                    <main>
+                        ${renderActiveTab()}
+                    </main>
+                    ${renderBottomNav()}
+                    ${state.selectedGroup ? renderGroupDetail() : ''}
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderHeader() {
+            if (state.activeTab === 'discovery') {
+                return `
+                    <header class="px-4 pt-6 mb-4">
+                        <div class="flex items-center justify-between">
+                            <h1 class="text-2xl font-bold text-slate-900">HobbyHub</h1>
+                            <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs">${state.userProfile?.name?.charAt(0) || 'H'}</div>
+                        </div>
+                        <p class="text-slate-500 text-sm">Próximo de ${state.userProfile?.location || 'Localizar...'}</p>
+                        <div class="mt-4 flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                            ${['Todos', 'Esportes', 'Artes', 'Games', 'Jardim'].map(cat => `
+                                <button class="whitespace-nowrap px-4 py-2 bg-white border border-slate-100 rounded-full text-sm font-medium hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm">
+                                    ${cat}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </header>
+                `;
+            }
+            return '';
+        }
+
+        function renderActiveTab() {
+            switch(state.activeTab) {
+                case 'discovery': return renderDiscovery();
+                case 'groups': return renderGroups();
+                case 'market': return renderMarket();
+                case 'profile': return renderProfile();
+                default: return '';
+            }
+        }
+
+        function renderDiscovery() {
+            return `
+                <section class="px-4 space-y-6">
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="font-bold text-lg">Grupos na Área</h2>
+                            <button class="text-indigo-600 text-sm font-semibold">Ver todos</button>
+                        </div>
+                        <div class="grid gap-4">
+                            ${state.groups.length === 0 ? `
+                                <div class="p-8 text-center bg-white rounded-2xl border-2 border-dashed border-slate-200">
+                                    <i data-lucide="users" class="mx-auto h-12 w-12 text-slate-300 mb-2"></i>
+                                    <p class="text-slate-500 text-sm">Nenhum grupo ativo por aqui.</p>
+                                    <button onclick="window.createDemoGroup()" class="mt-3 text-indigo-600 font-bold text-sm">+ Criar Primeiro Grupo</button>
+                                </div>
+                            ` : state.groups.map(g => `
+                                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 cursor-pointer hover:border-indigo-200 transition-all" onclick="window.selectGroup('${g.id}')">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <span class="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[10px] font-bold uppercase">${g.hobby}</span>
+                                        <span class="text-[10px] text-slate-400 flex items-center"><i data-lucide="map-pin" class="w-3 h-3 mr-1"></i> 1km</span>
+                                    </div>
+                                    <h3 class="font-bold text-slate-800">${g.name}</h3>
+                                    <p class="text-xs text-slate-500 mt-1 line-clamp-1">${g.description}</p>
+                                    <div class="mt-4 flex items-center justify-between">
+                                        <div class="w-7 h-7 rounded-full bg-indigo-50 border-2 border-white flex items-center justify-center text-[8px] font-bold text-indigo-600">+${g.members?.length || 0}</div>
+                                        <button onclick="event.stopPropagation(); window.joinGroup('${g.id}')" class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-700">Participar</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h2 class="font-bold text-lg mb-4">Agenda Local</h2>
+                        <div class="space-y-3">
+                            ${state.events.map(e => `
+                                <div class="flex gap-4 p-3 bg-white border border-slate-100 rounded-2xl shadow-sm">
+                                    <div class="flex-shrink-0 w-14 h-14 bg-indigo-50 rounded-xl flex flex-col items-center justify-center text-indigo-600">
+                                        <span class="text-[10px] font-bold uppercase">${new Date(e.date).toLocaleDateString('pt-PT', {month:'short'})}</span>
+                                        <span class="text-lg font-black">${new Date(e.date).getDate()}</span>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="font-bold text-slate-800 truncate text-sm">${e.title}</h4>
+                                        <p class="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                            <i data-lucide="clock" class="w-3 h-3"></i> ${e.time || '18:00'} • <i data-lucide="map-pin" class="w-3 h-3"></i> ${e.location}
+                                        </p>
+                                    </div>
+                                </div>
+                            `).join('')}
+                            ${state.events.length === 0 ? `
+                                <button onclick="window.createDemoEvent()" class="w-full py-4 text-slate-400 border-2 border-dashed rounded-2xl text-xs font-medium">
+                                    + Organizar Encontro
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                </section>
+            `;
+        }
+
+        function renderGroups() {
+            const myGroups = state.groups.filter(g => g.members?.includes(state.user?.uid));
+            return `
+                <div class="p-4 space-y-4">
+                    <h1 class="text-2xl font-bold text-slate-900">Meus Grupos</h1>
+                    ${myGroups.length === 0 ? `
+                        <div class="py-20 text-center opacity-40">
+                            <i data-lucide="users" class="mx-auto w-16 h-16 mb-4"></i>
+                            <p>Ainda não entrou em nenhum grupo.</p>
+                        </div>
+                    ` : myGroups.map(g => `
+                        <div class="bg-white p-4 rounded-2xl border flex items-center justify-between" onclick="window.selectGroup('${g.id}')">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                                    <i data-lucide="users"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold">${g.name}</h3>
+                                    <p class="text-xs text-slate-400">${g.members?.length} membros</p>
+                                </div>
+                            </div>
+                            <i data-lucide="message-square" class="text-indigo-300"></i>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderMarket() {
+            return `
+                <div class="p-4 space-y-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h1 class="text-2xl font-bold text-slate-900">Mercado</h1>
+                            <p class="text-slate-500 text-sm">Produtos e serviços de vizinhos</p>
+                        </div>
+                        <button onclick="window.createDemoProduct()" class="bg-indigo-600 text-white p-2 rounded-full shadow-lg hover:bg-indigo-700">
+                            <i data-lucide="plus"></i>
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        ${state.marketItems.map(item => `
+                            <div class="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                                <div class="aspect-square bg-slate-50 flex items-center justify-center text-slate-200">
+                                    <i data-lucide="shopping-bag" class="w-10 h-10"></i>
+                                </div>
+                                <div class="p-3">
+                                    <p class="text-[9px] font-bold text-indigo-500 uppercase">${item.category}</p>
+                                    <h3 class="font-bold text-xs truncate text-slate-800">${item.title}</h3>
+                                    <div class="flex items-center justify-between mt-2">
+                                        <span class="font-black text-indigo-600 text-sm">R$ ${item.price}</span>
+                                        <i data-lucide="heart" class="w-4 h-4 text-slate-300"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderProfile() {
+            return `
+                <div class="p-4 space-y-6">
+                    <div class="flex items-center gap-4 py-6">
+                        <div class="w-20 h-20 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-3xl font-black shadow-xl shadow-indigo-100">
+                            ${state.userProfile?.name?.charAt(0) || 'U'}
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-900">${state.userProfile?.name || 'Utilizador'}</h2>
+                            <p class="text-xs text-slate-400 flex items-center gap-1"><i data-lucide="map-pin" class="w-3 h-3"></i> ${state.userProfile?.location || 'Indefinido'}</p>
+                            <div class="flex gap-1 mt-2">
+                                ${state.userProfile?.hobbies?.map(h => `<span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold">${h}</span>`).join('') || ''}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-indigo-900 rounded-3xl p-6 text-white relative overflow-hidden shadow-lg shadow-indigo-200">
+                        <div class="relative z-10">
+                            <h4 class="font-bold">Hobby Pro</h4>
+                            <p class="text-xs text-indigo-200 mt-1">Quer vender suas criações ou aulas? Ative seu perfil profissional.</p>
+                            <button class="mt-4 bg-white text-indigo-900 px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-100">Saber Mais</button>
+                        </div>
+                        <i data-lucide="store" class="absolute -right-4 -bottom-4 w-24 h-24 opacity-10"></i>
+                    </div>
+
+                    <div class="space-y-2">
+                         <h3 class="font-bold text-slate-800 text-sm">Minha Conta</h3>
+                         <div class="bg-white rounded-2xl border divide-y">
+                            <div class="p-4 flex justify-between items-center text-sm font-medium cursor-pointer hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3"><i data-lucide="settings" class="w-4 h-4 text-slate-400"></i> Definições</div>
+                                <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                            </div>
+                            <div class="p-4 flex justify-between items-center text-sm font-medium cursor-pointer hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3"><i data-lucide="help-circle" class="w-4 h-4 text-slate-400"></i> Ajuda</div>
+                                <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                            </div>
+                         </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderGroupDetail() {
+            const g = state.selectedGroup;
+            const isMember = g.members && state.user && g.members.includes(state.user.uid);
+            return `
+                <div class="fixed inset-0 z-40 bg-white max-w-md mx-auto overflow-y-auto pb-20">
+                    <div class="sticky top-0 bg-white/80 backdrop-blur-md p-4 flex items-center gap-3 border-b z-50">
+                        <button onclick="window.closeGroupDetail()" class="p-2 hover:bg-slate-100 rounded-full"><i data-lucide="chevron-left"></i></button>
+                        <h2 class="font-bold truncate text-sm">${g.name}</h2>
+                    </div>
+                    <div class="p-4 space-y-6">
+                        <div class="h-44 bg-indigo-600 rounded-3xl relative overflow-hidden shadow-lg">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                            <div class="absolute bottom-5 left-5 text-white">
+                                <span class="px-2 py-0.5 bg-white/20 rounded text-[9px] font-bold uppercase tracking-wider mb-2 inline-block">${g.hobby}</span>
+                                <h3 class="text-2xl font-bold">${g.name}</h3>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-4">
+                            <div class="flex-1 p-3 bg-slate-50 rounded-2xl text-center border">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase">Vizinhos</p>
+                                <p class="text-lg font-black">${g.members?.length || 0}</p>
+                            </div>
+                            <div class="flex-1 p-3 bg-slate-50 rounded-2xl text-center border">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase">Eventos</p>
+                                <p class="text-lg font-black">Ativos</p>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <h4 class="font-bold text-slate-800">Sobre</h4>
+                            <p class="text-sm text-slate-600 leading-relaxed">${g.description}</p>
+                        </div>
+
+                        <div class="space-y-4 pt-4">
+                            <h4 class="font-bold">Mural</h4>
+                            <div class="p-8 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 text-center text-slate-400 text-xs">
+                                <i data-lucide="message-circle" class="mx-auto w-8 h-8 mb-2 opacity-20"></i>
+                                O mural está vazio. Dê as boas-vindas!
+                            </div>
+                        </div>
+
+                        <button onclick="window.joinGroup('${g.id}')" class="w-full ${isMember ? 'bg-slate-100 text-slate-500' : 'bg-indigo-600 text-white'} py-3 rounded-2xl font-bold shadow-lg transition-all active:scale-95">
+                            ${isMember ? 'Já és Membro' : 'Aderir ao Grupo'}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBottomNav() {
+            const tabs = [
+                { id: 'discovery', icon: 'map', label: 'Explorar' },
+                { id: 'groups', icon: 'users', label: 'Grupos' },
+                { id: 'market', icon: 'shopping-bag', label: 'Mercado' },
+                { id: 'profile', icon: 'user', label: 'Perfil' }
+            ];
+            return `
+                <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 backdrop-blur-xl border-t flex justify-around py-4 px-2 z-50 shadow-[0_-5px_20px_rgba(0,0,0,0.05)]">
+                    ${tabs.map(t => `
+                        <button onclick="window.switchTab('${t.id}')" class="flex flex-col items-center gap-1.5 transition-all ${state.activeTab === t.id ? 'text-indigo-600 scale-105' : 'text-slate-400'}">
+                            <i data-lucide="${t.icon}" class="w-6 h-6 ${state.activeTab === t.id ? 'fill-indigo-600/5' : ''}"></i>
+                            <span class="text-[9px] font-bold uppercase tracking-widest">${t.label}</span>
+                        </button>
+                    `).join('')}
+                </nav>
+            `;
+        }
+
+        // --- Lógica de Negócio ---
+        window.switchTab = (tabId) => {
+            state.activeTab = tabId;
+            state.selectedGroup = null;
+            updateUI();
+        };
+
+        window.selectGroup = (groupId) => {
+            state.selectedGroup = state.groups.find(g => g.id === groupId);
+            updateUI();
+        };
+
+        window.closeGroupDetail = () => {
+            state.selectedGroup = null;
+            updateUI();
+        };
+
+        window.joinGroup = async (groupId) => {
+            if (!state.user || !db) return;
+            try {
+                const groupRef = doc(db, 'artifacts', appId, 'public', 'data', 'groups', groupId);
+                await updateDoc(groupRef, {
+                    members: arrayUnion(state.user.uid)
+                });
+            } catch (e) { console.error(e); }
+        };
+
+        window.createDemoGroup = async () => {
+            if (!state.user || !db) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'groups'), {
+                name: "Vizinhos da Fotografia",
+                hobby: "Fotografia",
+                description: "Grupo para explorar as ruas do bairro e trocar dicas de ângulos e edição.",
+                creatorId: state.user.uid,
+                members: [state.user.uid],
+                location: state.userProfile?.location || "Lisboa",
+                createdAt: new Date().toISOString()
+            });
+        };
+
+        window.createDemoEvent = async () => {
+            if (!db) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
+                title: "Encontro de Boardgames",
+                date: new Date(Date.now() + 86400000 * 3).toISOString(),
+                location: "Quiosque da Praça",
+                attendees: [state.user?.uid],
+                hobby: "Games"
+            });
+        };
+
+        window.createDemoProduct = async () => {
+            if (!db) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'marketplace'), {
+                title: "Terrários Artesanais",
+                price: "45.00",
+                category: "Jardim",
+                sellerId: state.user?.uid,
+                description: "Pequenos ecossistemas feitos à mão."
+            });
+        };
+
+        function setupListeners(uid) {
+            if (!db) return;
+            
+            // Perfil do Utilizador
+            const profileRef = doc(db, 'artifacts', appId, 'users', uid, 'profile', 'data');
+            onSnapshot(profileRef, (snap) => {
+                if (snap.exists()) {
+                    state.userProfile = snap.data();
+                } else {
+                    const data = { name: "Novo Vizinho", hobbies: ["Hobby"], location: "Localidade" };
+                    setDoc(profileRef, data);
+                    state.userProfile = data;
+                }
+                updateUI();
+            }, (e) => console.error("Firestore Profile Error:", e));
+
+            // Grupos Reais do seu Projeto
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'groups'), (snap) => {
+                state.groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateUI();
+            });
+
+            // Eventos Reais
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'events'), (snap) => {
+                state.events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateUI();
+            });
+
+            // Marketplace Real
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'marketplace'), (snap) => {
+                state.marketItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateUI();
+            });
+        }
+
+        window.onload = initApp;
+    </script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        main { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+    </style>
+</head>
+<body class="bg-slate-200 antialiased selection:bg-indigo-100 selection:text-indigo-900">
+    <!-- O app será injetado aqui -->
+    <div id="app-root"></div>
+</body>
+</html>                root.innerHTML = renderLoading();
             } else {
                 root.innerHTML = `
                     <div class="min-h-screen bg-slate-50 max-w-md mx-auto relative shadow-2xl overflow-x-hidden pb-24">
