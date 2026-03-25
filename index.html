@@ -8,19 +8,21 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .post-gradient { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .hobby-gradient { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
-<body class="bg-slate-50 antialiased">
+<body class="antialiased">
 
     <div id="app-root">
-        <!-- Loader Inicial -->
+        <!-- Carregamento inicial -->
         <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center">
             <div class="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p class="text-slate-400 font-bold text-sm">A carregar o seu feed...</p>
+            <p class="text-slate-400 font-bold text-sm">A conectar à vizinhança...</p>
         </div>
     </div>
 
@@ -29,11 +31,353 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion, arrayRemove, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // --- CONFIGURAÇÃO ---
+        // --- CONFIGURAÇÃO DO SEU FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyD2evGU9oz4NvGIH4NllIfaVipFltt8f0Q",
             authDomain: "hubbyhub-98c71.firebaseapp.com",
             projectId: "hubbyhub-98c71",
+            storageBucket: "hubbyhub-98c71.firebasestorage.app",
+            messagingSenderId: "97040838158",
+            appId: "1:97040838158:web:47070af0ff42a9817fd65f"
+        };
+
+        const APP_ID = 'hubbyhub-98c71';
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- ESTADO GLOBAL DA APP ---
+        window.state = {
+            user: null,
+            profile: null,
+            posts: [],
+            groups: [],
+            activeTab: 'home', // home, search, add, profile
+            selectedGroup: null,
+            isPosting: false
+        };
+
+        // --- INICIALIZAÇÃO E AUTH ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                window.state.user = user;
+                initDataStreams(user.uid);
+            } else {
+                try {
+                    await signInAnonymously(auth);
+                } catch (e) {
+                    console.error("Erro na autenticação:", e);
+                }
+            }
+        });
+
+        function initDataStreams(uid) {
+            // Listener de Perfil do Usuário
+            const profileRef = doc(db, 'artifacts', APP_ID, 'users', uid, 'profile', 'data');
+            onSnapshot(profileRef, (snap) => {
+                if (snap.exists()) {
+                    window.state.profile = snap.data();
+                } else {
+                    const defaultProfile = { name: "Vizinho Ativo", avatar: "🎨", location: "Bairro Central", hobby: "Geral" };
+                    setDoc(profileRef, defaultProfile);
+                    window.state.profile = defaultProfile;
+                }
+                render();
+            });
+
+            // Feed de Posts em Tempo Real
+            const postsRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'posts');
+            onSnapshot(postsRef, (snap) => {
+                window.state.posts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                render();
+            });
+
+            // Grupos / Stories
+            const groupsRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'groups');
+            onSnapshot(groupsRef, (snap) => {
+                window.state.groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                render();
+            });
+        }
+
+        // --- LÓGICA DE INTERAÇÃO ---
+        window.toggleLike = async (postId, likes) => {
+            if (!window.state.user) return;
+            const uid = window.state.user.uid;
+            const postRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'posts', postId);
+            const hasLiked = likes && likes.includes(uid);
+            
+            await updateDoc(postRef, {
+                likes: hasLiked ? arrayRemove(uid) : arrayUnion(uid)
+            });
+        };
+
+        window.publishPost = async (e) => {
+            e.preventDefault();
+            const content = e.target.content.value;
+            const hobby = e.target.hobby.value;
+            if (!content || window.state.isPosting) return;
+
+            window.state.isPosting = true;
+            render();
+
+            try {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'posts'), {
+                    userId: window.state.user.uid,
+                    userName: window.state.profile.name,
+                    userAvatar: window.state.profile.avatar,
+                    content: content,
+                    hobby: hobby,
+                    likes: [],
+                    createdAt: Date.now()
+                });
+                window.state.activeTab = 'home';
+            } catch (err) {
+                alert("Erro ao publicar: " + err.message);
+            } finally {
+                window.state.isPosting = false;
+                render();
+            }
+        };
+
+        window.changeTab = (tab) => {
+            window.state.activeTab = tab;
+            window.state.selectedGroup = null;
+            render();
+        };
+
+        window.openGroup = (groupId) => {
+            window.state.selectedGroup = window.state.groups.find(g => g.id === groupId);
+            render();
+        };
+
+        // --- RENDERIZAÇÃO DA INTERFACE ---
+        function render() {
+            const root = document.getElementById('app-root');
+            const s = window.state;
+
+            if (!s.profile) return;
+
+            root.innerHTML = `
+                <div class="min-h-screen max-w-md mx-auto bg-white flex flex-col shadow-2xl relative overflow-hidden">
+                    
+                    <!-- Header -->
+                    <header class="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-4 py-3 flex justify-between items-center">
+                        <h1 class="text-2xl font-black text-indigo-600 tracking-tighter italic">HobbyHub</h1>
+                        <div class="flex gap-4 items-center">
+                            <i data-lucide="heart" class="w-6 h-6 text-slate-700"></i>
+                            <i data-lucide="message-circle" class="w-6 h-6 text-slate-700"></i>
+                        </div>
+                    </header>
+
+                    <!-- Conteúdo Principal -->
+                    <main class="flex-1 overflow-y-auto pb-20 no-scrollbar">
+                        ${renderTabContent(s)}
+                    </main>
+
+                    <!-- Barra de Navegação Inferior -->
+                    <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-100 flex justify-around py-3 z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+                        <button onclick="window.changeTab('home')" class="${s.activeTab === 'home' ? 'text-indigo-600' : 'text-slate-400'}"><i data-lucide="home"></i></button>
+                        <button onclick="window.changeTab('search')" class="${s.activeTab === 'search' ? 'text-indigo-600' : 'text-slate-400'}"><i data-lucide="search"></i></button>
+                        <button onclick="window.changeTab('add')" class="${s.activeTab === 'add' ? 'text-indigo-600' : 'text-slate-400'}"><i data-lucide="plus-square"></i></button>
+                        <button onclick="window.changeTab('profile')" class="${s.activeTab === 'profile' ? 'text-indigo-600' : 'text-slate-400'}"><i data-lucide="user"></i></button>
+                    </nav>
+
+                    ${s.selectedGroup ? renderGroupModal(s) : ''}
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderTabContent(s) {
+            switch(s.activeTab) {
+                case 'home': return renderHome(s);
+                case 'search': return renderSearch(s);
+                case 'add': return renderAdd(s);
+                case 'profile': return renderProfile(s);
+                default: return '';
+            }
+        }
+
+        function renderHome(s) {
+            return `
+                <!-- Stories (Grupos Ativos) -->
+                <div class="flex gap-4 p-4 overflow-x-auto no-scrollbar border-b border-slate-50 bg-white">
+                    <div class="flex flex-col items-center gap-1 min-w-[70px]">
+                        <div class="w-16 h-16 rounded-full p-0.5 border-2 border-indigo-500">
+                            <div class="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl border-2 border-white">🎨</div>
+                        </div>
+                        <span class="text-[10px] font-bold text-slate-500">Meu Hobby</span>
+                    </div>
+                    ${s.groups.map(g => `
+                        <div onclick="window.openGroup('${g.id}')" class="flex flex-col items-center gap-1 min-w-[70px] cursor-pointer">
+                            <div class="w-16 h-16 rounded-full p-0.5 border-2 border-slate-200">
+                                <div class="w-full h-full rounded-full hobby-gradient flex items-center justify-center text-white font-black text-xs border-2 border-white uppercase">
+                                    ${g.hobby?.substring(0,2) || 'HB'}
+                                </div>
+                            </div>
+                            <span class="text-[10px] font-bold text-slate-500 truncate w-full text-center px-1">${g.name}</span>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <!-- Feed de Posts -->
+                <div class="divide-y divide-slate-100">
+                    ${s.posts.length === 0 ? `
+                        <div class="py-20 text-center px-10">
+                            <i data-lucide="camera" class="mx-auto w-12 h-12 text-slate-200 mb-4"></i>
+                            <h3 class="font-bold text-slate-800">Partilha o teu Hobby</h3>
+                            <p class="text-xs text-slate-400 mt-1">Sê o primeiro a mostrar o que andas a fazer aos teus vizinhos.</p>
+                        </div>
+                    ` : s.posts.map(p => `
+                        <article class="bg-white pb-4 animate-fade-in">
+                            <div class="p-3 flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold border border-indigo-200">${p.userAvatar || '👤'}</div>
+                                    <div>
+                                        <p class="text-xs font-bold text-slate-900">${p.userName}</p>
+                                        <p class="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">${p.hobby || 'Geral'}</p>
+                                    </div>
+                                </div>
+                                <i data-lucide="more-horizontal" class="w-4 h-4 text-slate-300"></i>
+                            </div>
+
+                            <div class="aspect-square w-full hobby-gradient flex items-center justify-center p-10 text-center relative">
+                                <span class="absolute top-4 right-4 bg-black/10 backdrop-blur-md text-[8px] font-black text-white px-2 py-1 rounded-full uppercase tracking-widest">${p.hobby}</span>
+                                <p class="text-xl font-black text-white leading-tight opacity-90 italic">"${p.content}"</p>
+                            </div>
+
+                            <div class="p-3">
+                                <div class="flex justify-between items-center mb-2">
+                                    <div class="flex gap-4">
+                                        <button onclick="window.toggleLike('${p.id}', ${JSON.stringify(p.likes || [])})">
+                                            <i data-lucide="heart" class="w-6 h-6 ${p.likes?.includes(s.user.uid) ? 'fill-red-500 text-red-500' : 'text-slate-700'}"></i>
+                                        </button>
+                                        <i data-lucide="message-circle" class="w-6 h-6 text-slate-700"></i>
+                                        <i data-lucide="send" class="w-6 h-6 text-slate-700"></i>
+                                    </div>
+                                    <i data-lucide="bookmark" class="w-6 h-6 text-slate-700"></i>
+                                </div>
+                                <p class="text-xs font-black text-slate-900">${p.likes?.length || 0} gostos</p>
+                                <p class="text-xs text-slate-800 mt-1">
+                                    <span class="font-bold mr-1">${p.userName}</span>
+                                    ${p.content}
+                                </p>
+                                <p class="text-[9px] text-slate-400 uppercase font-bold mt-2">Há instantes</p>
+                            </div>
+                        </article>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderSearch(s) {
+            return `
+                <div class="p-4 space-y-6">
+                    <div class="relative">
+                        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                        <input placeholder="Procurar hobbies no bairro..." class="w-full bg-slate-100 border-none rounded-2xl py-3 pl-10 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-black text-slate-800 mb-4 uppercase tracking-widest">Descobrir Grupos</h2>
+                        <div class="grid gap-3">
+                            ${s.groups.map(g => `
+                                <div onclick="window.openGroup('${g.id}')" class="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 hobby-gradient rounded-xl flex items-center justify-center text-white font-black text-xs">${g.hobby?.charAt(0)}</div>
+                                        <div>
+                                            <h4 class="text-sm font-bold text-slate-800">${g.name}</h4>
+                                            <p class="text-[10px] text-slate-400">${g.members?.length || 0} membros ativos</p>
+                                        </div>
+                                    </div>
+                                    <i data-lucide="chevron-right" class="text-slate-300 w-5 h-5"></i>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAdd(s) {
+            return `
+                <div class="p-6 flex flex-col h-full bg-white">
+                    <h2 class="text-2xl font-black text-slate-900 mb-6">Novo Post</h2>
+                    <form onsubmit="window.publishPost(event)" class="space-y-6">
+                        <div>
+                            <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Legenda do seu progresso</label>
+                            <textarea name="content" rows="4" maxlength="200" placeholder="O que andas a criar hoje?" class="w-full bg-slate-50 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 border-none resize-none" required></textarea>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Qual é o Hobby?</label>
+                            <select name="hobby" class="w-full bg-slate-50 rounded-xl p-4 text-sm font-bold outline-none border-none">
+                                <option>Artes</option>
+                                <option>Culinária</option>
+                                <option>Desporto</option>
+                                <option>Games</option>
+                                <option>Jardim</option>
+                                <option>Música</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                            ${s.isPosting ? '<div class="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>' : 'Partilhar na Vizinhança'}
+                        </button>
+                    </form>
+                </div>
+            `;
+        }
+
+        function renderProfile(s) {
+            return `
+                <div class="bg-white">
+                    <div class="p-8 text-center">
+                        <div class="w-24 h-24 bg-indigo-600 rounded-[2.5rem] mx-auto flex items-center justify-center text-4xl shadow-2xl shadow-indigo-100 border-4 border-white mb-4">
+                            ${s.profile.avatar || '👤'}
+                        </div>
+                        <h3 class="text-xl font-black text-slate-900">${s.profile.name}</h3>
+                        <p class="text-xs text-slate-400 font-bold tracking-tight">${s.profile.location} • ${s.profile.hobby}</p>
+                        
+                        <div class="flex justify-center gap-8 mt-6">
+                            <div><p class="font-black text-slate-900">${s.posts.filter(p => p.userId === s.user.uid).length}</p><p class="text-[9px] text-slate-400 font-black uppercase">Posts</p></div>
+                            <div><p class="font-black text-slate-900">${s.groups.length}</p><p class="text-[9px] text-slate-400 font-black uppercase">Grupos</p></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-0.5 p-0.5">
+                        ${s.posts.filter(p => p.userId === s.user.uid).map(() => `<div class="aspect-square hobby-gradient opacity-40 rounded-sm"></div>`).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderGroupModal(s) {
+            const g = s.selectedGroup;
+            return `
+                <div class="fixed inset-0 z-[60] bg-white max-w-md mx-auto overflow-y-auto animate-in slide-in-from-bottom duration-300">
+                    <div class="p-6">
+                        <button onclick="window.changeTab('home')" class="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mb-6"><i data-lucide="x"></i></button>
+                        <div class="h-48 rounded-[2.5rem] hobby-gradient p-8 flex flex-col justify-end text-white shadow-xl shadow-indigo-100">
+                            <span class="text-[10px] font-black uppercase opacity-60 tracking-widest">${g.hobby}</span>
+                            <h2 class="text-3xl font-black">${g.name}</h2>
+                        </div>
+                        <div class="mt-8 space-y-4">
+                            <h4 class="font-black text-slate-800">Descrição do Grupo</h4>
+                            <p class="text-sm text-slate-500 leading-relaxed">${g.description || 'Uma comunidade vibrante de entusiastas locais partilhando o mesmo hobby.'}</p>
+                            <div class="pt-6 border-t border-slate-50 flex items-center justify-between">
+                                <div><p class="text-xl font-black text-slate-900">${g.members?.length || 0}</p><p class="text-[10px] text-slate-400 font-bold uppercase">Membros</p></div>
+                                <button class="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black shadow-lg">Participar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        window.onload = () => render();
+    </script>
+</body>
+</html>
+
             storageBucket: "hubbyhub-98c71.firebasestorage.app",
             messagingSenderId: "97040838158",
             appId: "1:97040838158:web:47070af0ff42a9817fd65f"
