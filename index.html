@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HobbyHub Social</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
@@ -22,20 +20,19 @@
 <body>
 
     <div id="app-root">
-        <!-- Ecrã de carregamento forçado -->
+        <!-- Loader inicial -->
         <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white;">
             <div style="width: 32px; height: 32px; border: 4px solid #f1f5f9; border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-            <p style="margin-top: 20px; color: #94a3b8; font-weight: bold; font-size: 14px;">A ligar ao HobbyHub...</p>
+            <p style="margin-top: 20px; color: #94a3b8; font-weight: bold; font-size: 14px;">A carregar HobbyHub...</p>
         </div>
     </div>
 
-    <!-- Scripts do Firebase -->
     <script type="module">
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-        import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-        // CONFIGURAÇÃO DO PROJETO (hubbyhub-98c71)
+        // CONFIGURAÇÃO DO PROJETO
         const firebaseConfig = {
             apiKey: 'AIzaSyD2evGU9oz4NvGIH4NllIfaVipFltt8f0Q',
             authDomain: 'hubbyhub-98c71.firebaseapp.com',
@@ -57,34 +54,39 @@
             posts: [],
             groups: [],
             activeTab: 'home',
-            selectedGroup: null,
-            isPosting: false
+            view: 'auth', // auth ou app
+            authMode: 'login', // login ou register
+            isActionLoading: false
         };
 
-        // INICIALIZAÇÃO
+        // CONTROLE DE AUTENTICAÇÃO
         onAuthStateChanged(auth, function(user) {
             if (user) {
                 window.state.user = user;
+                window.state.view = 'app';
                 initDatabase(user.uid);
             } else {
-                signInAnonymously(auth).catch(function(e) { console.error('Erro Auth:', e); });
+                window.state.user = null;
+                window.state.view = 'auth';
+                window.state.profile = null;
+                render();
             }
         });
 
         function initDatabase(uid) {
-            // Ouvinte de Perfil
+            // Perfil
             onSnapshot(doc(db, 'artifacts', PROJ_ID, 'users', uid, 'profile', 'data'), function(snap) {
                 if (snap.exists()) {
                     window.state.profile = snap.data();
                 } else {
-                    const d = { name: 'Vizinho Hobby', avatar: '🎨', location: 'Vila Local', hobby: 'Geral' };
+                    const d = { name: 'Novo Membro', avatar: '🎨', location: 'Brasil', bio: 'Iniciando meus hobbies!' };
                     setDoc(snap.ref, d);
                     window.state.profile = d;
                 }
                 render();
             });
 
-            // Ouvinte de Posts (Feed Real-time)
+            // Posts
             onSnapshot(collection(db, 'artifacts', PROJ_ID, 'public', 'data', 'posts'), function(snap) {
                 window.state.posts = snap.docs.map(function(d) {
                     var data = d.data();
@@ -94,7 +96,7 @@
                 render();
             });
 
-            // Ouvinte de Grupos (Stories)
+            // Grupos
             onSnapshot(collection(db, 'artifacts', PROJ_ID, 'public', 'data', 'groups'), function(snap) {
                 window.state.groups = snap.docs.map(function(d) {
                     var data = d.data();
@@ -105,11 +107,42 @@
             });
         }
 
-        // FUNÇÕES GLOBAIS
-        window.changeTab = function(t) { window.state.activeTab = t; window.state.selectedGroup = null; render(); };
-        window.openGroup = function(id) { window.state.selectedGroup = window.state.groups.find(function(g){ return g.id === id; }); render(); };
-        window.closeModal = function() { window.state.selectedGroup = null; render(); };
+        // FUNÇÕES DE AUTH
+        window.handleAuth = async function(e) {
+            e.preventDefault();
+            const email = e.target.email.value;
+            const pass = e.target.password.value;
+            window.state.isActionLoading = true; render();
 
+            try {
+                if (window.state.authMode === 'login') {
+                    await signInWithEmailAndPassword(auth, email, pass);
+                } else {
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+                    const name = e.target.name.value;
+                    await setDoc(doc(db, 'artifacts', PROJ_ID, 'users', userCredential.user.uid, 'profile', 'data'), {
+                        name: name, avatar: '🎨', location: 'Brasil', bio: 'Explorador de Hobbies'
+                    });
+                }
+            } catch (err) {
+                alert('Erro: ' + err.message);
+            } finally {
+                window.state.isActionLoading = false; render();
+            }
+        };
+
+        window.toggleAuthMode = function() {
+            window.state.authMode = window.state.authMode === 'login' ? 'register' : 'login';
+            render();
+        };
+
+        window.logout = function() {
+            signOut(auth);
+        };
+
+        // FUNÇÕES DA APP
+        window.changeTab = function(t) { window.state.activeTab = t; render(); };
+        
         window.toggleLike = async function(id, likes) {
             const uid = window.state.user.uid;
             const ref = doc(db, 'artifacts', PROJ_ID, 'public', 'data', 'posts', id);
@@ -117,112 +150,153 @@
             await updateDoc(ref, { likes: isLiked ? arrayRemove(uid) : arrayUnion(uid) });
         };
 
-        window.submitNewPost = async function(e) {
+        window.publishPost = async function(e) {
             e.preventDefault();
-            const txt = e.target.content.value;
+            const content = e.target.content.value;
             const hobby = e.target.hobby.value;
-            if (!txt) return;
-            window.state.isPosting = true; render();
+            if (!content) return;
+
+            window.state.isActionLoading = true; render();
             try {
                 await addDoc(collection(db, 'artifacts', PROJ_ID, 'public', 'data', 'posts'), {
                     userId: window.state.user.uid,
-                    userName: window.state.profile.name,
-                    userAvatar: window.state.profile.avatar,
-                    content: txt,
+                    userName: window.state.profile.name || 'Usuário',
+                    userAvatar: window.state.profile.avatar || '🎨',
+                    content: content,
                     hobby: hobby,
                     likes: [],
                     createdAt: Date.now()
                 });
                 window.state.activeTab = 'home';
-            } catch (err) { alert(err.message); }
-            finally { window.state.isPosting = false; render(); }
+            } catch (err) {
+                alert('Erro ao postar: ' + err.message);
+            } finally {
+                window.state.isActionLoading = false; render();
+            }
         };
 
-        // RENDERIZAÇÃO ULTRA-SEGURA (Sem Template Literals)
+        // RENDERIZAÇÃO
         function render() {
             const root = document.getElementById('app-root');
             const s = window.state;
-            if (!s.profile) return;
 
+            if (s.view === 'auth') {
+                root.innerHTML = renderAuth(s);
+            } else {
+                if (!s.profile) return;
+                root.innerHTML = renderApp(s);
+            }
+            lucide.createIcons();
+        }
+
+        function renderAuth(s) {
+            var html = '<div class="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">';
+            html += '<div class="w-full max-w-sm bg-white rounded-[2.5rem] p-8 shadow-xl">';
+            html += '<h1 class="text-3xl font-black text-indigo-600 mb-2 italic text-center">HobbyHub</h1>';
+            html += '<p class="text-slate-400 text-sm text-center mb-8">' + (s.authMode === 'login' ? 'Bem-vindo de volta!' : 'Crie sua conta na vizinhança') + '</p>';
+            
+            html += '<form onsubmit="window.handleAuth(event)" class="space-y-4">';
+            if (s.authMode === 'register') {
+                html += '<div><label class="text-[10px] font-bold text-slate-400 uppercase ml-1">Nome Completo</label><input name="name" type="text" required class="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"></div>';
+            }
+            html += '<div><label class="text-[10px] font-bold text-slate-400 uppercase ml-1">E-mail</label><input name="email" type="email" required class="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"></div>';
+            html += '<div><label class="text-[10px] font-bold text-slate-400 uppercase ml-1">Senha</label><input name="password" type="password" required class="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"></div>';
+            
+            html += '<button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 mt-4 active:scale-95 transition-all">';
+            html += s.isActionLoading ? 'Processando...' : (s.authMode === 'login' ? 'Entrar' : 'Cadastrar');
+            html += '</button></form>';
+            
+            html += '<button onclick="window.toggleAuthMode()" class="w-full text-center mt-6 text-xs font-bold text-slate-400 uppercase tracking-widest">';
+            html += s.authMode === 'login' ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Faça Login';
+            html += '</button></div></div>';
+            return html;
+        }
+
+        function renderApp(s) {
             var html = '<div class="min-h-screen max-w-md mx-auto bg-white flex flex-col shadow-2xl relative overflow-hidden">';
             
-            // Header (Instagram Style)
+            // Header
             html += '<header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-100 px-4 py-3 flex justify-between items-center">';
             html += '<h1 class="text-2xl font-black text-indigo-600 tracking-tighter italic">HobbyHub</h1>';
-            html += '<div class="flex gap-5 items-center"><i data-lucide="plus-circle" onclick="window.changeTab(\'add\')" class="w-6 h-6 text-slate-800 cursor-pointer"></i><i data-lucide="message-circle" class="w-6 h-6 text-slate-800"></i></div>';
+            html += '<div class="flex gap-4 items-center"><i data-lucide="plus-square" onclick="window.changeTab(\'add\')" class="w-6 h-6 text-slate-800 cursor-pointer"></i><i data-lucide="bell" class="w-6 h-6 text-slate-800"></i></div>';
             html += '</header>';
 
-            // Main Content
+            // Main
             html += '<main class="flex-1 overflow-y-auto pb-24 no-scrollbar">';
             
             if (s.activeTab === 'home') {
-                // Stories
-                html += '<div class="flex gap-4 p-4 overflow-x-auto no-scrollbar border-b border-slate-50 bg-white">';
-                html += '<div class="flex flex-col items-center gap-1 min-w-[72px]"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-indigo-500"><div class="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl border-2 border-white">🎨</div></div><span class="text-[9px] font-bold text-slate-500">Novo</span></div>';
-                s.groups.forEach(function(g) {
-                    html += '<div onclick="window.openGroup(\'' + g.id + '\')" class="flex flex-col items-center gap-1 min-w-[72px] cursor-pointer"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-slate-200"><div class="w-full h-full rounded-full hobby-gradient flex items-center justify-center text-white font-black text-[10px] border-2 border-white uppercase">' + (g.hobby ? g.hobby.substring(0,2) : 'HB') + '</div></div><span class="text-[9px] font-bold text-slate-500 truncate w-full text-center px-1">' + g.name + '</span></div>';
-                });
-                html += '</div>';
-
-                // Feed
-                html += '<div class="divide-y divide-slate-100">';
-                if (s.posts.length === 0) {
-                    html += '<div class="py-24 text-center px-10"><i data-lucide="camera" class="mx-auto w-12 h-12 text-slate-200 mb-4"></i><h3 class="font-bold text-slate-800 italic">Feed Vazio</h3><p class="text-[11px] text-slate-400 mt-1 leading-relaxed text-center">Sê o primeiro a partilhar o teu progresso hoje!</p></div>';
-                } else {
-                    s.posts.forEach(function(p) {
-                        const isLiked = p.likes && p.likes.indexOf(s.user.uid) > -1;
-                        html += '<article class="bg-white pb-4 animate-card">';
-                        html += '<div class="p-3 flex items-center justify-between"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] border border-indigo-100 font-bold">' + (p.userAvatar || '👤') + '</div><div><p class="text-xs font-bold text-slate-900">' + p.userName + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-tighter">' + (p.hobby || 'Geral') + '</p></div></div><i data-lucide="more-horizontal" class="w-4 h-4 text-slate-300"></i></div>';
-                        html += '<div class="aspect-square w-full hobby-gradient flex items-center justify-center p-12 text-center relative shadow-inner"><span class="absolute top-4 right-4 bg-black/10 backdrop-blur-md text-[8px] font-black text-white px-3 py-1.5 rounded-full uppercase tracking-widest">' + p.hobby + '</span><p class="text-xl font-black text-white leading-tight italic">"' + p.content + '"</p></div>';
-                        html += '<div class="p-3"><div class="flex justify-between items-center mb-2"><div class="flex gap-4"><button onclick="window.toggleLike(\'' + p.id + '\',' + JSON.stringify(p.likes || []) + ')"><i data-lucide="heart" class="w-6 h-6 ' + (isLiked ? 'fill-red-500 text-red-500' : 'text-slate-800') + '"></i></button><i data-lucide="message-circle" class="w-6 h-6 text-slate-800"></i><i data-lucide="send" class="w-6 h-6 text-slate-800"></i></div><i data-lucide="bookmark" class="w-6 h-6 text-slate-800"></i></div><p class="text-xs font-black text-slate-900">' + (p.likes ? p.likes.length : 0) + ' gostos</p><p class="text-xs text-slate-700 mt-1"><span class="font-bold mr-1">' + p.userName + '</span>' + p.content + '</p></div>';
-                        html += '</article>';
-                    });
-                }
-                html += '</div>';
-            } 
-            else if (s.activeTab === 'search') {
-                html += '<div class="p-4 space-y-6"><div class="relative"><i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input placeholder="Descobrir vizinhos..." class="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" /></div>';
-                html += '<h2 class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Grupos Recomendados</h2><div class="grid gap-3">';
-                s.groups.forEach(function(g) {
-                    html += '<div onclick="window.openGroup(\'' + g.id + '\')" class="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer hover:border-indigo-200 transition-colors"><div class="flex items-center gap-3"><div class="w-12 h-12 hobby-gradient rounded-2xl flex items-center justify-center text-white font-black text-sm">' + (g.hobby ? g.hobby.charAt(0) : 'H') + '</div><div><h4 class="text-sm font-bold text-slate-800">' + g.name + '</h4><p class="text-[10px] text-slate-400">' + (g.members ? g.members.length : 0) + ' membros</p></div></div><i data-lucide="plus" class="text-indigo-600 w-5 h-5"></i></div>';
-                });
-                html += '</div></div>';
-            }
-            else if (s.activeTab === 'add') {
-                html += '<div class="p-6 bg-white"><div class="flex items-center gap-3 mb-8"><div class="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><i data-lucide="plus-square"></i></div><h2 class="text-2xl font-black text-slate-900 tracking-tight">Novo Post</h2></div>';
-                html += '<form onsubmit="window.submitNewPost(event)" class="space-y-6"><div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">Legenda</label><textarea name="content" rows="4" maxlength="200" placeholder="O que andas a fazer hoje?" class="w-full bg-slate-50 rounded-3xl p-5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 border-none resize-none shadow-inner" required></textarea></div>';
-                html += '<div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">Hobby</label><select name="hobby" class="w-full bg-slate-50 rounded-2xl p-4 text-sm font-bold outline-none border-none shadow-inner appearance-none"><option>Artes</option><option>Culinária</option><option>Desporto</option><option>Games</option><option>Jardim</option></select></div>';
-                html += '<button type="submit" class="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 active:scale-95 transition-transform">' + (s.isPosting ? 'A publicar...' : 'Partilhar Agora') + '</button></form></div>';
-            }
-            else if (s.activeTab === 'profile') {
-                const myPosts = s.posts.filter(function(p){ return p.userId === s.user.uid; });
-                html += '<div class="bg-white"><div class="p-8 text-center bg-slate-50/50"><div class="w-24 h-24 bg-indigo-600 rounded-[2.5rem] mx-auto flex items-center justify-center text-4xl shadow-2xl shadow-indigo-100 border-4 border-white mb-4">' + (s.profile.avatar || '👤') + '</div><h3 class="text-xl font-black text-slate-900">' + s.profile.name + '</h3><p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">' + s.profile.location + '</p><div class="flex justify-center gap-10 mt-8 py-6 border-t border-slate-100"><div><p class="text-xl font-black text-slate-900">' + myPosts.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-widest">Posts</p></div><div><p class="text-xl font-black text-slate-900">' + s.groups.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-widest">Grupos</p></div></div></div>';
-                html += '<div class="p-2 grid grid-cols-3 gap-1">';
-                myPosts.forEach(function(){ html += '<div class="aspect-square hobby-gradient rounded-xl opacity-30"></div>'; });
-                html += '</div></div>';
+                html += renderHome(s);
+            } else if (s.activeTab === 'search') {
+                html += renderSearch(s);
+            } else if (s.activeTab === 'add') {
+                html += renderAdd(s);
+            } else if (s.activeTab === 'profile') {
+                html += renderProfile(s);
             }
 
             html += '</main>';
 
-            // Nav Inferior
+            // Bottom Nav
             html += '<nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-100 flex justify-around py-3 z-50 shadow-lg">';
             const icons = ['home', 'search', 'plus-square', 'user'];
-            const ids = ['home', 'search', 'add', 'profile'];
+            const tabs = ['home', 'search', 'add', 'profile'];
             for(var i=0; i<4; i++) {
-                const cls = (s.activeTab === ids[i] ? 'tab-active' : 'tab-inactive');
-                html += '<button onclick="window.changeTab(\'' + ids[i] + '\')" class="' + cls + ' transition-all"><i data-lucide="' + icons[i] + '"></i></button>';
+                html += '<button onclick="window.changeTab(\'' + tabs[i] + '\')" class="' + (s.activeTab === tabs[i] ? 'tab-active' : 'tab-inactive') + ' transition-all"><i data-lucide="' + icons[i] + '"></i></button>';
             }
-            html += '</nav>';
+            html += '</nav></div>';
+            return html;
+        }
 
-            // Modal Grupo
-            if (s.selectedGroup) {
-                const g = s.selectedGroup;
-                html += '<div class="fixed inset-0 z-[60] bg-white max-w-md mx-auto overflow-y-auto animate-card"><div class="p-6"><button onclick="window.closeModal()" class="w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center mb-8"><i data-lucide="arrow-left"></i></button><div class="h-48 rounded-[2.5rem] hobby-gradient p-8 flex flex-col justify-end text-white shadow-xl shadow-indigo-100 mb-8"><span class="text-[10px] font-black uppercase opacity-60 tracking-widest mb-1">' + g.hobby + '</span><h2 class="text-3xl font-black tracking-tighter">' + g.name + '</h2></div><div class="space-y-6"><div><h4 class="font-black text-slate-800 mb-2 uppercase text-[10px] tracking-widest">Sobre</h4><p class="text-sm text-slate-500 leading-relaxed">' + (g.description || 'Comunidade de vizinhos.') + '</p></div><div class="pt-8 border-t border-slate-100 flex items-center justify-between"><div><p class="text-2xl font-black text-slate-900">' + (g.members ? g.members.length : 0) + '</p><p class="text-[9px] text-slate-400 font-black uppercase">Membros</p></div><button class="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black shadow-lg">Entrar</button></div></div></div></div>';
-            }
-
+        function renderHome(s) {
+            var html = '<div class="flex gap-4 p-4 overflow-x-auto no-scrollbar border-b border-slate-50 bg-white">';
+            html += '<div class="flex flex-col items-center gap-1 min-w-[72px]"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-indigo-500"><div class="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl border-2 border-white">' + s.profile.avatar + '</div></div><span class="text-[9px] font-bold text-slate-500">Meu Hobby</span></div>';
+            s.groups.forEach(function(g) {
+                html += '<div class="flex flex-col items-center gap-1 min-w-[72px] cursor-pointer"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-slate-200"><div class="w-full h-full rounded-full hobby-gradient flex items-center justify-center text-white font-black text-[10px] border-2 border-white uppercase">' + (g.hobby ? g.hobby.substring(0,2) : 'HB') + '</div></div><span class="text-[9px] font-bold text-slate-500 truncate w-full text-center px-1">' + g.name + '</span></div>';
+            });
             html += '</div>';
-            root.innerHTML = html;
-            lucide.createIcons();
+
+            html += '<div class="divide-y divide-slate-100">';
+            if (s.posts.length === 0) {
+                html += '<div class="py-24 text-center px-10"><i data-lucide="camera" class="mx-auto w-12 h-12 text-slate-200 mb-4"></i><h3 class="font-bold text-slate-800">Feed Vazio</h3><p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Mostre ao bairro o que você está fazendo!</p></div>';
+            } else {
+                s.posts.forEach(function(p) {
+                    const liked = p.likes && p.likes.indexOf(s.user.uid) > -1;
+                    html += '<article class="bg-white pb-4 animate-card">';
+                    html += '<div class="p-3 flex items-center justify-between"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] border border-indigo-100 font-bold">' + (p.userAvatar || '🎨') + '</div><div><p class="text-xs font-bold text-slate-900">' + p.userName + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-tighter">' + (p.hobby || 'Geral') + '</p></div></div><i data-lucide="more-horizontal" class="w-4 h-4 text-slate-300"></i></div>';
+                    html += '<div class="aspect-square w-full hobby-gradient flex items-center justify-center p-12 text-center relative shadow-inner"><span class="absolute top-4 right-4 bg-black/10 backdrop-blur-md text-[8px] font-black text-white px-3 py-1.5 rounded-full uppercase tracking-widest">' + p.hobby + '</span><p class="text-xl font-black text-white leading-tight italic">"' + p.content + '"</p></div>';
+                    html += '<div class="p-3"><div class="flex justify-between items-center mb-2"><div class="flex gap-4"><button onclick="window.toggleLike(\'' + p.id + '\',' + JSON.stringify(p.likes || []) + ')"><i data-lucide="heart" class="w-6 h-6 ' + (liked ? 'fill-red-500 text-red-500' : 'text-slate-800') + '"></i></button><i data-lucide="message-circle" class="w-6 h-6 text-slate-800"></i><i data-lucide="send" class="w-6 h-6 text-slate-800"></i></div><i data-lucide="bookmark" class="w-6 h-6 text-slate-800"></i></div><p class="text-xs font-black text-slate-900">' + (p.likes ? p.likes.length : 0) + ' gostos</p><p class="text-xs text-slate-700 mt-1"><span class="font-bold mr-1">' + p.userName + '</span>' + p.content + '</p></div></article>';
+                });
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function renderSearch(s) {
+            var html = '<div class="p-4 space-y-6"><div class="relative"><i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input placeholder="Procurar grupos ou vizinhos..." class="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" /></div>';
+            html += '<h2 class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Comunidades Ativas</h2><div class="grid gap-3">';
+            s.groups.forEach(function(g) {
+                html += '<div class="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer hover:border-indigo-200 transition-colors"><div class="flex items-center gap-3"><div class="w-12 h-12 hobby-gradient rounded-2xl flex items-center justify-center text-white font-black text-sm">' + (g.hobby ? g.hobby.charAt(0) : 'H') + '</div><div><h4 class="text-sm font-bold text-slate-800">' + g.name + '</h4><p class="text-[10px] text-slate-400">' + (g.members ? g.members.length : 0) + ' membros</p></div></div><i data-lucide="plus" class="text-indigo-600 w-5 h-5"></i></div>';
+            });
+            html += '</div></div>';
+            return html;
+        }
+
+        function renderAdd(s) {
+            var html = '<div class="p-6 bg-white"><div class="flex items-center gap-3 mb-8"><div class="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><i data-lucide="plus-square"></i></div><h2 class="text-2xl font-black text-slate-900 tracking-tight">Novo Post</h2></div>';
+            html += '<form onsubmit="window.publishPost(event)" class="space-y-6"><div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">O que andas a criar?</label><textarea name="content" rows="4" maxlength="200" placeholder="Escreve aqui seu progresso..." class="w-full bg-slate-50 rounded-3xl p-5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 border-none resize-none shadow-inner" required></textarea></div>';
+            html += '<div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">Hobby</label><select name="hobby" class="w-full bg-slate-50 rounded-2xl p-4 text-sm font-bold outline-none border-none shadow-inner appearance-none"><option>Artes</option><option>Culinária</option><option>Desporto</option><option>Games</option><option>Jardim</option></select></div>';
+            html += '<button type="submit" class="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 active:scale-95 transition-transform">' + (s.isActionLoading ? 'Postando...' : 'Publicar Agora') + '</button></form></div>';
+            return html;
+        }
+
+        function renderProfile(s) {
+            const myPosts = s.posts.filter(function(p){ return p.userId === s.user.uid; });
+            var html = '<div class="bg-white"><div class="p-8 text-center bg-slate-50/50"><div class="w-24 h-24 bg-indigo-600 rounded-[2.5rem] mx-auto flex items-center justify-center text-4xl shadow-2xl shadow-indigo-100 border-4 border-white mb-4">' + (s.profile.avatar || '👤') + '</div><h3 class="text-xl font-black text-slate-900">' + s.profile.name + '</h3><p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">' + s.profile.location + '</p><div class="flex justify-center gap-10 mt-8 py-6 border-t border-slate-100"><div><p class="text-xl font-black text-slate-900">' + myPosts.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase">Posts</p></div><div><p class="text-xl font-black text-slate-900">' + s.groups.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase">Grupos</p></div></div>';
+            html += '<button onclick="window.logout()" class="mt-4 px-6 py-2 bg-red-50 text-red-500 rounded-xl text-xs font-black uppercase tracking-widest">Sair da Conta</button></div>';
+            html += '<div class="p-2 grid grid-cols-3 gap-1">';
+            myPosts.forEach(function(){ html += '<div class="aspect-square hobby-gradient rounded-lg opacity-30"></div>'; });
+            html += '</div></div>';
+            return html;
         }
 
         window.onload = render;
