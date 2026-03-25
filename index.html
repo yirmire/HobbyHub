@@ -7,33 +7,229 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #fafafa; margin: 0; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .hobby-gradient { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
-        .story-ring { padding: 2px; border: 2px solid #6366f1; border-radius: 9999px; }
-        .post-enter { animation: slideUp 0.4s ease-out; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .active-tab { color: #4f46e5; }
+        .inactive-tab { color: #94a3b8; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-post { animation: slideUp 0.4s ease-out; }
     </style>
 </head>
 <body>
 
     <div id="app-root">
-        <!-- Loader inicial robusto -->
-        <div class="h-screen flex flex-col items-center justify-center bg-white">
-            <div class="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-            <p class="mt-4 text-slate-400 font-bold text-sm tracking-tight">A ligar ao HobbyHub...</p>
+        <!-- Loader inicial de segurança -->
+        <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white;">
+            <div style="width: 32px; height: 32px; border: 4px solid #e2e8f0; border-top-color: #4f46e5; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <p style="margin-top: 16px; color: #64748b; font-weight: bold; font-size: 14px;">A carregar a vizinhança...</p>
         </div>
     </div>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // CONFIGURAÇÃO DO SEU PROJETO
         const firebaseConfig = {
+            apiKey: "AIzaSyD2evGU9oz4NvGIH4NllIfaVipFltt8f0Q",
+            authDomain: "hubbyhub-98c71.firebaseapp.com",
+            projectId: "hubbyhub-98c71",
+            storageBucket: "hubbyhub-98c71.firebasestorage.app",
+            messagingSenderId: "97040838158",
+            appId: "1:97040838158:web:47070af0ff42a9817fd65f"
+        };
+
+        const APP_ID = 'hubbyhub-98c71';
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // ESTADO GLOBAL
+        window.state = {
+            user: null,
+            profile: null,
+            posts: [],
+            groups: [],
+            activeTab: 'home', // home, search, add, profile
+            selectedGroup: null,
+            isPosting: false
+        };
+
+        // INICIALIZAÇÃO E LISTENER DE AUTH
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.state.user = user;
+                initStreams(user.uid);
+            } else {
+                signInAnonymously(auth).catch(err => console.error("Erro Auth:", err));
+            }
+        });
+
+        function initStreams(uid) {
+            // Perfil
+            onSnapshot(doc(db, 'artifacts', APP_ID, 'users', uid, 'profile', 'data'), (snap) => {
+                if (snap.exists()) {
+                    window.state.profile = snap.data();
+                } else {
+                    const initial = { name: "Novo Vizinho", avatar: "🎨", location: "Lisboa", bio: "Fã de Hobbies" };
+                    setDoc(snap.ref, initial);
+                    window.state.profile = initial;
+                }
+                render();
+            });
+
+            // Posts (Feed)
+            onSnapshot(collection(db, 'artifacts', APP_ID, 'public', 'data', 'posts'), (snap) => {
+                window.state.posts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                render();
+            });
+
+            // Grupos (Stories)
+            onSnapshot(collection(db, 'artifacts', APP_ID, 'public', 'data', 'groups'), (snap) => {
+                window.state.groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                render();
+            });
+        }
+
+        // FUNÇÕES DE AÇÃO
+        window.changeTab = (t) => { window.state.activeTab = t; window.state.selectedGroup = null; render(); };
+        window.openGroup = (id) => { window.state.selectedGroup = window.state.groups.find(g => g.id === id); render(); };
+        window.closeGroup = () => { window.state.selectedGroup = null; render(); };
+
+        window.likePost = async (id, likes) => {
+            const uid = window.state.user.uid;
+            const ref = doc(db, 'artifacts', APP_ID, 'public', 'data', 'posts', id);
+            const hasLiked = likes && likes.includes(uid);
+            await updateDoc(ref, { likes: hasLiked ? arrayRemove(uid) : arrayUnion(uid) });
+        };
+
+        window.publishPost = async (e) => {
+            e.preventDefault();
+            const content = e.target.content.value;
+            const hobby = e.target.hobby.value;
+            if (!content || window.state.isPosting) return;
+
+            window.state.isPosting = true;
+            render();
+
+            try {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'posts'), {
+                    userId: window.state.user.uid,
+                    userName: window.state.profile.name,
+                    userAvatar: window.state.profile.avatar,
+                    content: content,
+                    hobby: hobby,
+                    likes: [],
+                    createdAt: Date.now()
+                });
+                window.state.activeTab = 'home';
+            } catch (err) {
+                alert("Erro ao publicar: " + err.message);
+            } finally {
+                window.state.isPosting = false;
+                render();
+            }
+        };
+
+        // RENDERIZAÇÃO (Técnica de Concatenação Clássica para evitar erros de código)
+        function render() {
+            const root = document.getElementById('app-root');
+            const s = window.state;
+            if (!s.profile) return;
+
+            let html = '<div class="min-h-screen max-w-md mx-auto bg-white flex flex-col shadow-2xl relative overflow-hidden">';
+            
+            // Header Estilo Instagram
+            html += '<header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-100 px-4 py-3 flex justify-between items-center">';
+            html += '<h1 class="text-2xl font-black text-indigo-600 tracking-tighter italic">HobbyHub</h1>';
+            html += '<div class="flex gap-5 items-center"><i data-lucide="plus-square" onclick="window.changeTab(\'add\')" class="w-6 h-6 text-slate-800 cursor-pointer"></i><i data-lucide="message-circle" class="w-6 h-6 text-slate-800"></i></div>';
+            html += '</header>';
+
+            // Área de Conteúdo
+            html += '<main class="flex-1 overflow-y-auto pb-24 no-scrollbar">';
+            
+            if (s.activeTab === 'home') {
+                // Stories (Grupos)
+                html += '<div class="flex gap-4 p-4 overflow-x-auto no-scrollbar border-b border-slate-50 bg-white">';
+                html += '<div class="flex flex-col items-center gap-1 min-w-[72px]"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-indigo-500"><div class="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl border-2 border-white">🎨</div></div><span class="text-[9px] font-bold text-slate-500">Eu</span></div>';
+                s.groups.forEach(g => {
+                    html += '<div onclick="window.openGroup(\'' + g.id + '\')" class="flex flex-col items-center gap-1 min-w-[72px] cursor-pointer"><div class="w-16 h-16 rounded-full p-0.5 border-2 border-slate-200"><div class="w-full h-full rounded-full hobby-gradient flex items-center justify-center text-white font-black text-[10px] border-2 border-white uppercase">' + (g.hobby ? g.hobby.substring(0,2) : 'HB') + '</div></div><span class="text-[9px] font-bold text-slate-500 truncate w-full text-center px-1">' + g.name + '</span></div>';
+                });
+                html += '</div>';
+
+                // Feed
+                html += '<div class="divide-y divide-slate-100">';
+                if (s.posts.length === 0) {
+                    html += '<div class="py-24 text-center px-10"><i data-lucide="camera" class="mx-auto w-12 h-12 text-slate-200 mb-4"></i><h3 class="font-bold text-slate-800">Feed Vazio</h3><p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Mostra aos teus vizinhos o teu hobby!</p></div>';
+                } else {
+                    s.posts.forEach(p => {
+                        const isLiked = p.likes && p.likes.includes(s.user.uid);
+                        html += '<article class="bg-white pb-4 animate-post">';
+                        html += '<div class="p-3 flex items-center justify-between"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] border border-indigo-100 font-bold">' + (p.userAvatar || '👤') + '</div><div><p class="text-xs font-bold text-slate-900">' + p.userName + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-tighter">' + (p.hobby || 'Geral') + '</p></div></div><i data-lucide="more-horizontal" class="w-4 h-4 text-slate-300"></i></div>';
+                        html += '<div class="aspect-square w-full hobby-gradient flex items-center justify-center p-12 text-center relative shadow-inner"><span class="absolute top-4 right-4 bg-black/10 backdrop-blur-md text-[8px] font-black text-white px-3 py-1.5 rounded-full uppercase tracking-widest">' + p.hobby + '</span><p class="text-xl font-black text-white leading-tight italic">"' + p.content + '"</p></div>';
+                        html += '<div class="p-3"><div class="flex justify-between items-center mb-2"><div class="flex gap-4"><button onclick="window.likePost(\'' + p.id + '\',' + JSON.stringify(p.likes || []) + ')"><i data-lucide="heart" class="w-6 h-6 ' + (isLiked ? 'fill-red-500 text-red-500' : 'text-slate-800') + '"></i></button><i data-lucide="message-circle" class="w-6 h-6 text-slate-800"></i><i data-lucide="send" class="w-6 h-6 text-slate-800"></i></div><i data-lucide="bookmark" class="w-6 h-6 text-slate-800"></i></div><p class="text-xs font-black text-slate-900">' + (p.likes ? p.likes.length : 0) + ' gostos</p><p class="text-xs text-slate-700 mt-1"><span class="font-bold mr-1">' + p.userName + '</span>' + p.content + '</p></div>';
+                        html += '</article>';
+                    });
+                }
+                html += '</div>';
+            } 
+            else if (s.activeTab === 'search') {
+                html += '<div class="p-4 space-y-6"><div class="relative"><i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input placeholder="Descobrir hobbies no bairro..." class="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" /></div>';
+                html += '<h2 class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Sugestões Local</h2><div class="grid gap-3">';
+                s.groups.forEach(g => {
+                    html += '<div onclick="window.openGroup(\'' + g.id + '\')" class="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer hover:border-indigo-200 transition-colors"><div class="flex items-center gap-3"><div class="w-12 h-12 hobby-gradient rounded-2xl flex items-center justify-center text-white font-black text-sm">' + (g.hobby ? g.hobby.charAt(0) : 'H') + '</div><div><h4 class="text-sm font-bold text-slate-800">' + g.name + '</h4><p class="text-[10px] text-slate-400">' + (g.members ? g.members.length : 0) + ' entusiastas</p></div></div><i data-lucide="chevron-right" class="text-slate-300 w-5 h-5"></i></div>';
+                });
+                html += '</div></div>';
+            }
+            else if (s.activeTab === 'add') {
+                html += '<div class="p-6 bg-white"><div class="flex items-center gap-3 mb-8"><div class="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><i data-lucide="plus-square"></i></div><h2 class="text-2xl font-black text-slate-900">Novo Post</h2></div>';
+                html += '<form onsubmit="window.publishPost(event)" class="space-y-6"><div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">O que andas a criar?</label><textarea name="content" rows="4" maxlength="200" placeholder="Partilha a tua progresso..." class="w-full bg-slate-50 rounded-3xl p-5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 border-none resize-none shadow-inner" required></textarea></div>';
+                html += '<div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 ml-1">Categoria</label><select name="hobby" class="w-full bg-slate-50 rounded-2xl p-4 text-sm font-bold outline-none border-none shadow-inner appearance-none"><option>Artes</option><option>Desporto</option><option>Culinária</option><option>Games</option><option>Jardim</option></select></div>';
+                html += '<button type="submit" class="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 active:scale-95 transition-transform">' + (s.isPosting ? '<div class="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>' : 'Publicar Agora') + '</button></form></div>';
+            }
+            else if (s.activeTab === 'profile') {
+                const userPosts = s.posts.filter(p => p.userId === s.user.uid);
+                html += '<div class="bg-white"><div class="p-8 text-center bg-slate-50/50"><div class="w-24 h-24 bg-indigo-600 rounded-[2.5rem] mx-auto flex items-center justify-center text-4xl shadow-2xl shadow-indigo-100 border-4 border-white mb-4">' + (s.profile.avatar || '👤') + '</div><h3 class="text-xl font-black text-slate-900">' + s.profile.name + '</h3><p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">' + s.profile.location + '</p><div class="flex justify-center gap-10 mt-8 py-6 border-t border-slate-100"><div><p class="text-xl font-black text-slate-900">' + userPosts.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase">Posts</p></div><div><p class="text-xl font-black text-slate-900">' + s.groups.length + '</p><p class="text-[9px] text-slate-400 font-black uppercase">Grupos</p></div></div></div>';
+                html += '<div class="p-2 grid grid-cols-3 gap-1">';
+                userPosts.forEach(() => { html += '<div class="aspect-square hobby-gradient rounded-lg opacity-30"></div>'; });
+                html += '</div></div>';
+            }
+
+            html += '</main>';
+
+            // Barra de Navegação Inferior
+            html += '<nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-100 flex justify-around py-3 z-50 shadow-lg">';
+            const tabs = [
+                { id: 'home', icon: 'home' },
+                { id: 'search', icon: 'search' },
+                { id: 'add', icon: 'plus-square' },
+                { id: 'profile', icon: 'user' }
+            ];
+            tabs.forEach(t => {
+                html += '<button onclick="window.changeTab(\'' + t.id + '\')" class="' + (s.activeTab === t.id ? 'active-tab' : 'inactive-tab') + ' transition-all"><i data-lucide="' + t.icon + '"></i></button>';
+            });
+            html += '</nav>';
+
+            // Modal de Grupo
+            if (s.selectedGroup) {
+                const g = s.selectedGroup;
+                html += '<div class="fixed inset-0 z-[60] bg-white max-w-md mx-auto overflow-y-auto animate-post"><div class="p-6"><button onclick="window.closeGroup()" class="w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center mb-8"><i data-lucide="arrow-left"></i></button><div class="h-48 rounded-[2.5rem] hobby-gradient p-8 flex flex-col justify-end text-white shadow-xl shadow-indigo-100 mb-8"><span class="text-[10px] font-black uppercase opacity-60 tracking-widest mb-1">' + g.hobby + '</span><h2 class="text-3xl font-black tracking-tighter">' + g.name + '</h2></div><div class="space-y-6"><div><h4 class="font-black text-slate-800 mb-2 uppercase text-[10px] tracking-widest">Sobre</h4><p class="text-sm text-slate-500 leading-relaxed">' + (g.description || 'Comunidade apaixonada de vizinhos.') + '</p></div><div class="pt-8 border-t border-slate-100 flex items-center justify-between"><div><p class="text-2xl font-black text-slate-900">' + (g.members ? g.members.length : 0) + '</p><p class="text-[9px] text-slate-400 font-black uppercase tracking-widest">Vizinhos</p></div><button class="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black shadow-lg">Entrar</button></div></div></div></div>';
+            }
+
+            html += '</div>';
+            root.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        window.onload = render;
+    </script>
+</body>
+</html>
+
             apiKey: "AIzaSyD2evGU9oz4NvGIH4NllIfaVipFltt8f0Q",
             authDomain: "hubbyhub-98c71.firebaseapp.com",
             projectId: "hubbyhub-98c71",
