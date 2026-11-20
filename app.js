@@ -158,6 +158,7 @@ function avatar(p,big=false) {return `<span class="avatar ${big?'big':''}" aria-
 function empty(ico,title,description,button='',action='compose') {return `<div class="card empty"><span class="empty-icon">${ico}</span><h3>${title}</h3><p>${description}</p>${button?`<button class="btn btn-soft btn-small" data-action="${esc(action)}">${esc(button)} ${icon('arrow')}</button>`:''}</div>`;}
 function renderAuth() {
   const register=state.authMode==='register';
+  const recovering=state.authMode==='reset';
   return `<div class="auth-shell"><section class="auth-visual">
     ${brand()}
     <div class="auth-text"><div class="eyebrow" style="color:#ffdc98">UMA COMUNIDADE PARA CHAMAR DE SUA</div>
@@ -167,16 +168,17 @@ function renderAuth() {
     <div class="auth-decoration" aria-hidden="true"><div class="auth-bubble a"><span>📸</span> Fotógrafos</div><div class="auth-bubble b"><span>🎮</span> Gamers</div><div class="auth-bubble c"><span>📚</span> Leitores</div></div>
   </section><section class="auth-right"><div class="auth-box">
     <div class="eyebrow">BEM-VINDO AO HOBBYHUB</div>
-    <h2>${register?'Crie seu espaço.':'Que bom ter você aqui!'}</h2>
-    <p>${register?'Comece pelas coisas que te fazem feliz.':'Entre para reencontrar sua comunidade.'}</p>
-    <form id="auth-form" data-draft="true" class="form-stack">
+    <h2>${recovering?'Recuperar acesso':register?'Crie seu espaço.':'Que bom ter você aqui!'}</h2>
+    <p>${recovering?'Digite seu e-mail. Enviaremos um link para redefinir sua senha.':register?'Comece pelas coisas que te fazem feliz.':'Entre para reencontrar sua comunidade.'}</p>
+    <form id="${recovering?'reset-form':'auth-form'}" data-draft="true" class="form-stack">
     ${register?`<div class="field"><label for="register-name">Seu nome</label><input class="input" id="register-name" name="name" maxlength="60" required autocomplete="name" placeholder="Como podemos chamar você?"></div>
     <div class="field"><label for="register-location">Sua cidade</label><input class="input" id="register-location" name="location" required maxlength="90" autocomplete="address-level2" placeholder="Ex.: Nova Friburgo"></div>`:''}
     <div class="field"><label for="auth-email">E-mail</label><input class="input" id="auth-email" type="email" name="email" required autocomplete="email" placeholder="seu@email.com"></div>
-    <div class="field"><label for="auth-password">Senha</label><input class="input" id="auth-password" name="password" type="password" minlength="6" required autocomplete="${register?'new-password':'current-password'}" placeholder="Mínimo de 6 caracteres"></div>
-    <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${register?'Criar minha conta':'Entrar na comunidade'} ${icon('arrow')}</button>
+    ${recovering?'':`<div class="field"><label for="auth-password">Senha</label><input class="input" id="auth-password" name="password" type="password" minlength="6" required autocomplete="${register?'new-password':'current-password'}" placeholder="Mínimo de 6 caracteres"></div>`}
+    <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${recovering?'Enviar link de recuperação':register?'Criar minha conta':'Entrar na comunidade'} ${icon('arrow')}</button>
     </form>
-    <div class="auth-switch">${register?'Já tem uma conta?':'Ainda não faz parte?'} <button data-action="toggle-auth">${register?'Fazer login':'Cadastre-se grátis'}</button></div>
+    ${!register&&!recovering?'<div class="auth-switch"><button data-action="forgot-password">Esqueci minha senha</button></div>':''}
+    <div class="auth-switch">${recovering?'Lembrou da senha?':register?'Já tem uma conta?':'Ainda não faz parte?'} <button data-action="toggle-auth">${register||recovering?'Fazer login':'Cadastre-se grátis'}</button></div>
     <div class="auth-note">${icon('lock')} Seus dados são mantidos no Firebase. Nunca publique informações sensíveis em posts ou chats. A segurança depende das regras de acesso configuradas no projeto.</div>
     <div class="auth-switch"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button></div>
   </div></section></div>`;
@@ -422,10 +424,13 @@ async function startDirect(uid){
  if(!uid||uid===me())return;
  const p=member(uid);const id=threadId(me(),uid);
  await attempt(async()=>{
-   if(!state.threads.some(t=>t.id===id)) {
-     // Só criamos a conversa se ela ainda não foi recebida pelo listener.
-     await firebase.setDoc(dmRef(id),{participants:[me(),uid].sort(),createdAt:now(),names:{[me()]:myName(),[uid]:p?.name||'Pessoa'}});
-   }
+   // Transação evita que duas pessoas sobrescrevam a mesma conversa ao criá-la.
+   await firebase.runTransaction(db,async(transaction)=>{
+     const thread=await transaction.get(dmRef(id));
+     if(!thread.exists()){
+       transaction.set(dmRef(id),{participants:[me(),uid].sort(),createdAt:now(),names:{[me()]:myName(),[uid]:p?.name||'Pessoa'}});
+     }
+   });
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
@@ -450,6 +455,7 @@ async function onAction(btn) {
  switch(action){
   case 'reload':window.location.reload();return;
   case 'toggle-auth':state.authMode=state.authMode==='login'?'register':'login';state.drafts.clear();render();return;
+  case 'forgot-password':state.authMode='reset';state.drafts.clear();render();return;
   case 'theme':changeTheme();return;
   case 'tab':setTab(btn.dataset.tab);return;
   case 'explore':redirectToExplore();return;
@@ -522,6 +528,11 @@ document.addEventListener('submit',async(event)=>{
  const data=Object.fromEntries(new FormData(form));
  const val=(key)=>String(data[key]||'').trim();
  switch(form.id){
+  case 'reset-form':await attempt(async()=>{
+    await firebase.sendPasswordResetEmail(auth,val('email'));
+    state.authMode='login';state.drafts.clear();
+    showToast('Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha.');
+  });return;
   case 'auth-form':await attempt(async()=>{
     const email=val('email'),password=String(data.password||'');
     if(state.authMode==='login')await firebase.signInWithEmailAndPassword(auth,email,password);
