@@ -70,4 +70,17 @@ await request(sender, 'POST', 'public/data/messages?documentId=hello', 200, {
 await request(recipient, 'GET', 'public/data/messages/hello', 200);
 await request(null, 'GET', 'public/data/messages/hello', 403);
 
-console.log('Mensagens privadas e da comunidade testadas com três contas no emulador.');
+const following = `public/data/members/${sender.localId}/following`;
+await request(sender, 'POST', `${following}?documentId=${recipient.localId}`, 200, {
+  createdAt: { integerValue: String(Date.now()) }
+});
+const follows = await request(sender, 'GET', following, 200);
+assert.equal(follows.documents.length, 1);
+await request(recipient, 'GET', following, 403);
+await request(null, 'GET', following, 403);
+await request(sender, 'POST', `${following}?documentId=${sender.localId}`, 403, {
+  createdAt: { integerValue: String(Date.now()) }
+});
+await request(sender, 'DELETE', `${following}/${recipient.localId}`, 200);
+
+console.log('Mensagens privadas, chat da comunidade e lista de pessoas seguidas testados no emulador.');
