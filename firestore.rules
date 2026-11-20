@@ -6,6 +6,12 @@ service cloud.firestore {
     function validText(text, lower, upper) {
       return text is string && text.size() >= lower && text.size() <= upper;
     }
+    function validMediaLink(link) {
+      return link is string && (link == '' || (link.size() <= 1500 && link.matches('https://[^ ]+')));
+    }
+    function validProfileMedia(data) {
+      return validMediaLink(data.get('photoUrl', '')) && validMediaLink(data.get('videoUrl', ''));
+    }
     function changedOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -40,15 +46,17 @@ service cloud.firestore {
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.avatar, 1, 8)
         && validText(request.resource.data.bio, 0, 300)
+        && validProfileMedia(request.resource.data)
         && request.resource.data.hobbies is list
         && request.resource.data.hobbies.size() <= 10;
       allow update: if isMe(uid)
         && resource.data.uid == uid
-        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies'])
+        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies', 'photoUrl', 'videoUrl'])
         && validText(request.resource.data.name, 1, 60)
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.avatar, 1, 8)
         && validText(request.resource.data.bio, 0, 300)
+        && validProfileMedia(request.resource.data)
         && request.resource.data.hobbies is list
         && request.resource.data.hobbies.size() <= 10;
       allow delete: if false;
@@ -62,6 +70,19 @@ service cloud.firestore {
         allow list: if isMe(uid);
         allow get, create, delete: if isMe(uid) && targetId != uid;
         allow update: if false;
+      }
+      match /testimonials/{authorId} {
+        allow get: if isMe(uid) || isMe(authorId) || (loggedIn() && resource.data.approved == true);
+        allow list: if isMe(uid) || (loggedIn() && resource.data.approved == true);
+        allow create: if isMe(authorId) && authorId != uid
+          && request.resource.data.keys().hasOnly(['text', 'createdAt', 'approved'])
+          && validText(request.resource.data.text, 1, 600)
+          && request.resource.data.createdAt is number
+          && request.resource.data.approved == false;
+        allow update: if isMe(uid)
+          && changedOnly(['approved'])
+          && request.resource.data.approved is bool;
+        allow delete: if isMe(uid) || isMe(authorId);
       }
     }
 
