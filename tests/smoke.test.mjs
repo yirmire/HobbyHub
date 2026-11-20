@@ -17,6 +17,37 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('a community invitation waits for sign-in and opens the intended group without query parameters', () => {
+  const context = appContext();
+  context.window.location = { pathname:'/HobbyHub/',origin:'https://example.test',hash:'#group=g_123',search:'?utm_source=chatgpt.com' };
+  vm.runInContext(`state.groups=[{id:'g_123'}];state.groupsLoaded=true;openLinkedContent()`, context);
+  assert.equal(vm.runInContext('state.modal', context), null);
+  vm.runInContext(`state.user={uid:'member'};state.groupsLoaded=false;openLinkedContent()`, context);
+  assert.equal(vm.runInContext('state.modal', context), null);
+  vm.runInContext(`state.groupsLoaded=true;openLinkedContent()`, context);
+  assert.equal(vm.runInContext('state.selectedGroup', context), 'g_123');
+  assert.equal(vm.runInContext('state.modal', context), 'group-detail');
+  assert.equal(vm.runInContext(`contentLink('group','g_123')`, context), 'https://example.test/HobbyHub/#group=g_123');
+});
+
+test('a pinned group post appears once and only the creator sees pin controls', () => {
+  const context = appContext();
+  const owner = vm.runInContext(`
+    state.user={uid:'owner'};
+    state.selectedGroup='g';
+    state.modal='group-detail';
+    state.groups=[{id:'g',name:'Fotógrafos',createdBy:'owner',members:['owner'],pinnedPostId:'pinned'}];
+    state.posts=[{id:'new',groupId:'g',content:'Mais recente'},{id:'pinned',groupId:'g',content:'Boas-vindas ao grupo'}];
+    renderModal()
+  `, context);
+  assert.equal([...owner.matchAll(/Boas-vindas ao grupo/g)].length, 1);
+  assert.ok(owner.indexOf('Boas-vindas ao grupo') < owner.indexOf('Mais recente'));
+  assert.match(owner, /data-action="unpin-group-post"/);
+  const member = vm.runInContext(`state.user={uid:'visitor'};renderModal()`, context);
+  assert.match(member, /Publicação fixada/);
+  assert.doesNotMatch(member, /data-action="(?:un)?pin-group-post"/);
+});
+
 test('unread navigation counts conversations and highlights each one in the list', () => {
   const context = appContext();
   const list = vm.runInContext(`

@@ -62,6 +62,7 @@ const state = {
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, alerts:[], quizMood:null,
   reportTarget:null,
+  groupsLoaded:false,
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -189,10 +190,13 @@ function startSession() {
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
   subscribe(col('posts'), (s)=>{
     state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-    // Uma publicação compartilhada pode ser aberta após o usuário entrar.
-    queueMicrotask(openLinkedPost);
+    queueMicrotask(openLinkedContent);
   },'publicações');
-  subscribe(col('groups'), (s)=>{state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'comunidades');
+  subscribe(col('groups'), (s)=>{
+    state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    state.groupsLoaded=true;
+    queueMicrotask(openLinkedContent);
+  },'comunidades');
   subscribe(col('events'), (s)=>{state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));},'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -221,7 +225,7 @@ async function init() {
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
-      state.reportTarget=null;
+      state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
@@ -472,12 +476,18 @@ function renderModal() {
  const group=state.groups.find(g=>g.id===state.selectedGroup);
  if(!group)return modalWrap('Comunidade indisponível','<p>Esta comunidade não está mais disponível.</p>');
  const joined=(group.members||[]).includes(me());
- const posts=state.posts.filter(p=>p.groupId===group.id).slice(0,15);
+ const groupPosts=state.posts.filter(p=>p.groupId===group.id);
+ const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
+ const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
+ const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
+ <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
+ <div class="toggle-row"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${group.createdBy===me()?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
- <div class="toggle-row" style="margin:18px 0"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span><button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
+ <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span><button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button><button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
+ ${pinned?renderGroupPost(pinned,true):''}
  <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
- ${posts.length?posts.map(p=>`<div class="card" style="padding:13px;margin-bottom:9px"><strong class="mini">${esc(authorName(p))}</strong><p class="mini" style="margin:8px 0">${esc(short(p.content,280))}</p><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(p.id)}">${icon('chat')} Responder</button></div>`).join(''):empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
+ ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
  }
  if(state.modal==='group')return modalWrap('Criar comunidade',`<form id="group-form" data-draft="true" class="form-stack"><div class="field"><label>Nome do grupo</label><input class="input" name="name" required minlength="3" maxlength="75" placeholder="Ex.: Fotógrafos da Serra"></div><div class="field"><label>Principal hobby</label>${topicSelect()}</div><div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="600" required placeholder="Que tipo de experiências vocês querem compartilhar?"></textarea></div><div class="field"><label>Cidade ou região</label><input class="input" name="location" maxlength="90" value="${esc(myLocation())}" required></div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar grupo ${icon('arrow')}</button></div></form>`);
@@ -561,13 +571,16 @@ function render() {
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
-function closeModal(){
- if(state.modal==='comments'&&window.location.hash.startsWith('#post=')){
+function clearContentLink(){
+ if(/^#(?:post|group)=/.test(window.location.hash)){
    window.history.replaceState(null,'',window.location.pathname+window.location.search);
  }
+}
+function closeModal(){
+ clearContentLink();
  document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
-function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
+function setTab(tab){clearContentLink();state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
  const sender=me();
@@ -593,9 +606,28 @@ async function startDirect(uid){
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  },'openingDirect','Esta conversa privada não está disponível no momento.');
 }
-function openLinkedPost() {
-  const match = /^#post=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
-  if (match && state.user && !state.modal && state.posts.some(post=>post.id===match[1])) openComments(match[1]);
+function contentLink(type,id) {
+ const link=new URL(window.location.pathname,window.location.origin);
+ link.hash=`${type}=${encodeURIComponent(id)}`;
+ return link.href;
+}
+function openLinkedContent() {
+ const match=/^#(post|group)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
+ if(!match||!state.user||state.modal)return;
+ const [,type,id]=match;
+ if(type==='post'&&state.posts.some(post=>post.id===id))openComments(id);
+ if(type==='group'&&state.groupsLoaded){
+   state.tab='groups';state.selectedGroup=id;openModal('group-detail');
+ }
+}
+async function copyGroupInvite(id) {
+ if(!state.groups.some(group=>group.id===id))return;
+ const link=contentLink('group',id);
+ if(navigator.clipboard?.writeText){
+   try {await navigator.clipboard.writeText(link);showToast('Link de convite copiado!');return;}
+   catch(error){console.warn('Não foi possível copiar automaticamente:',error);}
+ }
+ window.prompt('Copie o link do convite:',link);
 }
 function openComments(postId){
  if(!state.posts.some(p=>p.id===postId))return;
@@ -671,6 +703,23 @@ async function onAction(btn) {
   case 'compose':state.composingGroup=null;openModal('compose');return;
   case 'group':case 'event':openModal(action);return;
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
+  case 'copy-group-invite':await copyGroupInvite(id);return;
+  case 'pin-group-post':
+  case 'unpin-group-post':await attempt(async()=>{
+    const group=state.groups.find(g=>g.id===state.selectedGroup);
+    if(!group||group.createdBy!==me())return;
+    const groupRef=ref('groups',group.id);
+    if(action==='pin-group-post'){
+      if(!state.posts.some(post=>post.id===id&&post.groupId===group.id))return;
+      await firebase.updateDoc(groupRef,{pinnedPostId:id});
+      showToast('Publicação fixada na comunidade.');
+    }else{
+      await firebase.runTransaction(db,async tx=>{
+        const current=await tx.get(groupRef);
+        if(current.data()?.pinnedPostId===id)tx.update(groupRef,{pinnedPostId:''});
+      });
+    }
+  });return;
   case 'group-post':{const g=state.groups.find(x=>x.id===(id||state.selectedGroup));if(!g||(g.members||[]).includes(me())===false)return;state.composingGroup=g.id;openModal('compose');return;}
   case 'close':closeModal();return;
   case 'edit-profile':openModal('edit-profile');return;
@@ -716,12 +765,11 @@ async function onAction(btn) {
   case 'comments':openComments(id);return;
   case 'share-post':{
     if(!state.posts.some(post=>post.id===id))return;
-    const link=new URL(window.location.href);
-    link.hash='post='+encodeURIComponent(id);
+    const link=contentLink('post',id);
     try{
-      if(navigator.share) await navigator.share({title:'Publicação no HobbyHub',url:link.href});
-      else if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(link.href);showToast('Link da publicação copiado!');}
-      else window.prompt('Copie o link da publicação:',link.href);
+      if(navigator.share) await navigator.share({title:'Publicação no HobbyHub',url:link});
+      else if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(link);showToast('Link da publicação copiado!');}
+      else window.prompt('Copie o link da publicação:',link);
     }catch(error){if(error?.name!=='AbortError'){console.error(error);showToast('Não foi possível compartilhar esta publicação.',true);}}
     return;
   }
@@ -775,7 +823,7 @@ document.addEventListener('change',(event)=>{
  else return;
  render();
 });
-window.addEventListener('hashchange',openLinkedPost);
+window.addEventListener('hashchange',openLinkedContent);
 document.addEventListener('input',(event)=>{
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
 });
@@ -804,8 +852,11 @@ document.addEventListener('submit',async(event)=>{
   });return;
   case 'post-form':await attempt(async()=>{
     const content=val('content');if(!content||content.length>2000)return;
-    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(state.composingGroup?{groupId:state.composingGroup}:{})});
-    closeModal();setTab('home');showToast('Sua publicação está no ar!');
+    const groupId=state.composingGroup;
+    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{})});
+    closeModal();setTab(groupId?'groups':'home');
+    if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
+    showToast('Sua publicação está no ar!');
   });return;
   case 'group-form':await attempt(async()=>{
     const name=val('name');if(name.length<3)return;

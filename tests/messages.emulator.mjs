@@ -226,4 +226,30 @@ const profileReport = reportFields({
 await request(sender, 'POST', reportCollection, 200, profileReport);
 await request(sender, 'DELETE', testimonial, 200);
 
-console.log('Mensagens, bloqueios, seguimentos, mídia, depoimentos e denúncias testados no emulador.');
+const groups = 'public/data/groups';
+const group = `${groups}/welcome-group`;
+await request(sender, 'POST', `${groups}?documentId=welcome-group`, 200, {
+  name: str('Fotógrafos'),
+  hobby: str('Fotografia'),
+  description: str('Comunidade de fotografia'),
+  location: str('Brasil'),
+  createdBy: str(sender.localId),
+  members: { arrayValue: { values: [str(sender.localId)] } }
+});
+await request(recipient, 'GET', group, 200);
+const welcome = {
+  userId: str(sender.localId), userName: str('Pessoa de teste'), content: str('Boas-vindas!'),
+  hobby: str('Fotografia'), location: str('Brasil'), likes: { arrayValue: { values: [] } },
+  createdAt: { integerValue: String(Date.now()) }
+};
+await request(sender, 'POST', 'public/data/posts?documentId=welcome-post', 200, { ...welcome, groupId: str('welcome-group') });
+await request(sender, 'POST', 'public/data/posts?documentId=unrelated-post', 200, welcome);
+const pin = `${group}?updateMask.fieldPaths=pinnedPostId`;
+await request(recipient, 'PATCH', pin, 403, { pinnedPostId: str('welcome-post') });
+await request(sender, 'PATCH', pin, 403, { pinnedPostId: str('unrelated-post') });
+await request(sender, 'PATCH', pin, 200, { pinnedPostId: str('welcome-post') });
+const groupForVisitor = await request(recipient, 'GET', group, 200);
+assert.equal(groupForVisitor.fields.pinnedPostId.stringValue, 'welcome-post');
+await request(sender, 'PATCH', pin, 200, { pinnedPostId: str('') });
+
+console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');

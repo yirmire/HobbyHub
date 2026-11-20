@@ -178,15 +178,25 @@ service cloud.firestore {
     }
 
     match /artifacts/{appId}/public/data/groups/{groupId} {
+      function canPinGroupPost() {
+        let postId = request.resource.data.pinnedPostId;
+        return isMe(resource.data.get('createdBy', ''))
+          && changedOnly(['pinnedPostId'])
+          && postId is string
+          && (postId == '' || (validText(postId, 1, 120)
+            && postId.matches('[^/]+')
+            && get(/databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)).data.groupId == groupId));
+      }
       allow read: if loggedIn();
       allow create: if loggedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.members == [request.auth.uid]
+        && !request.resource.data.keys().hasAny(['pinnedPostId'])
         && validText(request.resource.data.name, 3, 75)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.description, 1, 600)
         && validText(request.resource.data.location, 1, 90);
-      allow update: if onlyMyArrayMembership('members');
+      allow update: if onlyMyArrayMembership('members') || canPinGroupPost();
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
     }
 
