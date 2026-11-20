@@ -58,7 +58,9 @@ service cloud.firestore {
         allow update: if false;
       }
       match /following/{targetId} {
-        allow read, create, delete: if isMe(uid) && targetId != uid;
+        // A consulta do dono lista a coleção inteira, sem filtrar por targetId.
+        allow list: if isMe(uid);
+        allow get, create, delete: if isMe(uid) && targetId != uid;
         allow update: if false;
       }
     }
