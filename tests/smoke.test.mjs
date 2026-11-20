@@ -4,17 +4,61 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // Tests the UI and chat creation logic without real Firebase credentials.
-function appContext() {
+function appContext(handlers = {}) {
   const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
     .replace(/\binit\(\);\s*$/, '');
   const context = vm.createContext({
     console, Date, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
     window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0 },
-    document: { addEventListener: () => {}, getElementById: () => null }
+    document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
   });
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
   return context;
+}
+
+test('global chat and city chat show distinct messages, including older local messages', () => {
+  const context = appContext();
+  const local = vm.runInContext(`
+    state.profile={location:'Nova Friburgo, RJ'};
+    state.messages=[
+      {text:'Mensagem antiga da cidade',location:'Nova Friburgo'},
+      {text:'Mensagem de outra cidade',location:'Petrópolis'},
+      {text:'Mensagem para todos',scope:'global',location:'Nova Friburgo'}
+    ];
+    renderMessages()
+  `, context);
+  assert.match(local, /Mensagem antiga da cidade/);
+  assert.doesNotMatch(local, /Mensagem de outra cidade|Mensagem para todos/);
+  const global = vm.runInContext(`state.chatMode='global';renderMessages()`, context);
+  assert.match(global, /Mensagem para todos/);
+  assert.doesNotMatch(global, /Mensagem antiga da cidade|Mensagem de outra cidade/);
+});
+
+for (const replacementText of ['Olá!', 'Próxima mensagem']) {
+  test(`handles a replaced message form containing "${replacementText}" after sending`, async () => {
+    const submitHandler = {};
+    const context = appContext(submitHandler);
+    context.FormData = function () { return [['message', 'Olá!']]; };
+    const key = 'message-form:user-a:global';
+    const form = {id:'message-form',dataset:{draftKey:key},elements:{message:{value:'Olá!'}}};
+    const current = {dataset:{draftKey:key},elements:{message:{value:replacementText}}};
+    let finishSending;
+    context.sending = new Promise(resolve => { finishSending = resolve; });
+    context.writes = [];
+    vm.runInContext(`
+      state.user={uid:'user-a'};state.chatMode='global';render=()=>{};db={};
+      firebase={collection:()=> 'messages', addDoc:(_target,payload)=>{writes.push(payload);return sending;}};
+    `, context);
+    context.document.getElementById = () => form;
+    const submission = submitHandler.submit({target:form,preventDefault(){}});
+    context.document.getElementById = () => current;
+    finishSending();
+    await submission;
+    assert.equal(current.elements.message.value, replacementText === 'Olá!' ? '' : replacementText);
+    assert.equal(context.writes[0].scope, 'global');
+    assert.equal(context.writes.length, 1);
+  });
 }
 
 test('escapes untrusted text before HTML rendering', () => {

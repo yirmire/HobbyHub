@@ -323,11 +323,14 @@ function renderProfile() {
  ${posts.length?posts.map(postCard).join(''):empty('🎨','Conte sua primeira história','O que você está aprendendo, criando ou descobrindo?','Criar publicação','compose')}`;
 }
 function renderMessages() {
- const community=state.chatMode==='community';
- const messages=community?state.messages.filter(m=>locate(m.location)):state.directMessages;
- const title=community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
+ const community=state.chatMode!=='direct';
+ const global=state.chatMode==='global';
+ const messages=community?state.messages.filter(m=>global?m.scope==='global':m.scope!=='global'&&locate(m.location)):state.directMessages;
+ const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
+ const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
- <button class="chat-contact ${community?'active':''}" data-action="chat-community"><span class="avatar">🌍</span><span>Comunidade local</span></button>
+ <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
+ <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
  ${state.threads.map(t=>{
  const other=(t.participants||[]).find(id=>id!==me());if(!other)return '';
  const p=member(other),isActive=!community&&state.chatTarget?.uid===other;
@@ -335,9 +338,9 @@ function renderMessages() {
  }).join('')}
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
- <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:'🌍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa (com regras publicadas)'}</small></div></div>
+ <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div></div>
  <div id="chat-log" class="chat-log">${messages.length?messages.slice(-150).map(m=>`<div class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span></div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}</div>
- ${community||state.chatTarget?`<form id="message-form" data-draft="true" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
+ ${community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
 function modalWrap(title,content){return `<div class="overlay" data-overlay="true"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;}
@@ -404,12 +407,12 @@ function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMon
 function captureDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
    const values={};f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{values[el.name]=el.value;});
-   state.drafts.set(f.id,values);
+   state.drafts.set(f.dataset.draftKey||f.id,values);
  });
 }
 function restoreDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
-   const values=state.drafts.get(f.id);if(!values)return;
+   const values=state.drafts.get(f.dataset.draftKey||f.id);if(!values)return;
    f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{if(Object.hasOwn(values,el.name))el.value=values[el.name];});
  });
 }
@@ -498,7 +501,7 @@ async function onAction(btn) {
   case 'quiz-topic':{const value=btn.dataset.topic;closeModal();state.search=value;setTab('explore');return;}
   case 'person':{if(id===me()){setTab('profile');return;}state.viewUser=id;openModal('person');return;}
   case 'open-dm':await startDirect(id);return;
-  case 'chat-community':state.chatMode='community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
+  case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
   case 'share-post':{
     if(!state.posts.some(post=>post.id===id))return;
@@ -610,10 +613,20 @@ document.addEventListener('submit',async(event)=>{
   });return;
   case 'message-form':await attempt(async()=>{
     const text=val('message');if(!text)return;
+    const key=form.dataset.draftKey;
     const payload={senderId:me(),senderName:myName(),text,createdAt:now()};
-    if(state.chatMode==='community')await firebase.addDoc(col('messages'),{...payload,location:myLocation()});
-    else if(state.chatTarget?.uid){await firebase.addDoc(firebase.collection(db,'artifacts',PROJECT,'dm_threads',threadId(me(),state.chatTarget.uid),'messages'),payload);}
-    form.querySelector('[name="message"]').value='';state.drafts.set('message-form',{message:''});
+    if(state.chatMode==='direct'){
+      if(!state.chatTarget?.uid)return;
+      await firebase.addDoc(firebase.collection(db,'artifacts',PROJECT,'dm_threads',threadId(me(),state.chatTarget.uid),'messages'),payload);
+    }else{
+      await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
+    }
+    const current=document.getElementById('message-form');
+    if(current?.dataset.draftKey===key){
+      const input=current.elements.message;
+      if(input.value===data.message)input.value='';
+    }
+    if(state.drafts.get(key)?.message===data.message)state.drafts.delete(key);
   });return;
   case 'report-form':await attempt(async()=>{
     if(!state.reportPostId)return;
