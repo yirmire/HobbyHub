@@ -75,7 +75,9 @@ const threadId = (a,b) => [a,b].sort().join('_');
 const me = () => state.user?.uid || '';
 const myName = () => state.profile?.name || 'Pessoa do HobbyHub';
 const myLocation = () => state.profile?.location || 'Brasil';
-const locate = (location) => norm(location) === norm(myLocation());
+// A cidade pode ter um estado/UF depois de vírgula ou hífen.
+const cityKey = (location) => norm(String(location ?? '').split(/\s+[-–]\s+|,/)[0]);
+const locate = (location) => Boolean(cityKey(location)) && cityKey(location) === cityKey(myLocation());
 const member = (uid) => state.members.find((p) => p.uid===uid);
 const authorName = (record) => member(record.userId || record.senderId)?.name || record.userName || record.senderName || 'Pessoa da comunidade';
 function showToast(message, error=false) {const n=document.getElementById('toast');n.textContent=message;n.className=`toast show ${error?'error':''}`;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{n.className='toast';},4000);}
@@ -119,7 +121,11 @@ async function ensureMember(user) {
 function startSession() {
   const docs=(snapshot)=>snapshot.docs.map((d)=>({...d.data(),id:d.id}));
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
-  subscribe(col('posts'), (s)=>{state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'publicações');
+  subscribe(col('posts'), (s)=>{
+    state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    // Uma publicação compartilhada pode ser aberta após o usuário entrar.
+    queueMicrotask(openLinkedPost);
+  },'publicações');
   subscribe(col('groups'), (s)=>{state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'comunidades');
   subscribe(col('events'), (s)=>{state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));},'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
@@ -158,6 +164,7 @@ function avatar(p,big=false) {return `<span class="avatar ${big?'big':''}" aria-
 function empty(ico,title,description,button='',action='compose') {return `<div class="card empty"><span class="empty-icon">${ico}</span><h3>${title}</h3><p>${description}</p>${button?`<button class="btn btn-soft btn-small" data-action="${esc(action)}">${esc(button)} ${icon('arrow')}</button>`:''}</div>`;}
 function renderAuth() {
   const register=state.authMode==='register';
+  const recovering=state.authMode==='reset';
   return `<div class="auth-shell"><section class="auth-visual">
     ${brand()}
     <div class="auth-text"><div class="eyebrow" style="color:#ffdc98">UMA COMUNIDADE PARA CHAMAR DE SUA</div>
@@ -167,16 +174,17 @@ function renderAuth() {
     <div class="auth-decoration" aria-hidden="true"><div class="auth-bubble a"><span>📸</span> Fotógrafos</div><div class="auth-bubble b"><span>🎮</span> Gamers</div><div class="auth-bubble c"><span>📚</span> Leitores</div></div>
   </section><section class="auth-right"><div class="auth-box">
     <div class="eyebrow">BEM-VINDO AO HOBBYHUB</div>
-    <h2>${register?'Crie seu espaço.':'Que bom ter você aqui!'}</h2>
-    <p>${register?'Comece pelas coisas que te fazem feliz.':'Entre para reencontrar sua comunidade.'}</p>
-    <form id="auth-form" data-draft="true" class="form-stack">
+    <h2>${recovering?'Recuperar acesso':register?'Crie seu espaço.':'Que bom ter você aqui!'}</h2>
+    <p>${recovering?'Digite seu e-mail. Enviaremos um link para redefinir sua senha.':register?'Comece pelas coisas que te fazem feliz.':'Entre para reencontrar sua comunidade.'}</p>
+    <form id="${recovering?'reset-form':'auth-form'}" data-draft="true" class="form-stack">
     ${register?`<div class="field"><label for="register-name">Seu nome</label><input class="input" id="register-name" name="name" maxlength="60" required autocomplete="name" placeholder="Como podemos chamar você?"></div>
     <div class="field"><label for="register-location">Sua cidade</label><input class="input" id="register-location" name="location" required maxlength="90" autocomplete="address-level2" placeholder="Ex.: Nova Friburgo"></div>`:''}
     <div class="field"><label for="auth-email">E-mail</label><input class="input" id="auth-email" type="email" name="email" required autocomplete="email" placeholder="seu@email.com"></div>
-    <div class="field"><label for="auth-password">Senha</label><input class="input" id="auth-password" name="password" type="password" minlength="6" required autocomplete="${register?'new-password':'current-password'}" placeholder="Mínimo de 6 caracteres"></div>
-    <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${register?'Criar minha conta':'Entrar na comunidade'} ${icon('arrow')}</button>
+    ${recovering?'':`<div class="field"><label for="auth-password">Senha</label><input class="input" id="auth-password" name="password" type="password" minlength="6" required autocomplete="${register?'new-password':'current-password'}" placeholder="Mínimo de 6 caracteres"></div>`}
+    <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${recovering?'Enviar link de recuperação':register?'Criar minha conta':'Entrar na comunidade'} ${icon('arrow')}</button>
     </form>
-    <div class="auth-switch">${register?'Já tem uma conta?':'Ainda não faz parte?'} <button data-action="toggle-auth">${register?'Fazer login':'Cadastre-se grátis'}</button></div>
+    ${!register&&!recovering?'<div class="auth-switch"><button data-action="forgot-password">Esqueci minha senha</button></div>':''}
+    <div class="auth-switch">${recovering?'Lembrou da senha?':register?'Já tem uma conta?':'Ainda não faz parte?'} <button data-action="toggle-auth">${register||recovering?'Fazer login':'Cadastre-se grátis'}</button></div>
     <div class="auth-note">${icon('lock')} Seus dados são mantidos no Firebase. Nunca publique informações sensíveis em posts ou chats. A segurança depende das regras de acesso configuradas no projeto.</div>
     <div class="auth-switch"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button></div>
   </div></section></div>`;
@@ -210,7 +218,7 @@ function renderLayout() {
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
  return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row"><button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
- ${titleBar()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
+ ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
 function postCard(post) {
@@ -226,6 +234,7 @@ function postCard(post) {
  <div class="post-actions"><button class="post-action ${liked?'liked':''}" data-action="like" data-id="${esc(post.id)}" aria-label="${liked?'Descurtir':'Curtir'}">${icon('heart')} ${liked?'Curtido':'Curtir'}</button>
  <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Comentar</button>
  <button class="post-action ${saved?'bookmarked':''}" data-action="save" data-id="${esc(post.id)}">${icon('bookmark')} ${saved?'Salvo':'Salvar'}</button>
+ <button class="post-action" data-action="share-post" data-id="${esc(post.id)}" aria-label="Compartilhar publicação">${icon('send')} Compartilhar</button>
  ${owner?`<button class="post-action" data-action="delete-post" data-id="${esc(post.id)}" aria-label="Excluir publicação">${icon('trash')}</button>`:`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
 }
 function filteredPosts(posts=state.posts) {
@@ -414,7 +423,11 @@ function render() {
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
-function closeModal(){document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
+function closeModal(){
+ if(state.modal==='comments'&&window.location.hash.startsWith('#post=')){
+   window.history.replaceState(null,'',window.location.pathname+window.location.search);
+ }
+ document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
@@ -422,10 +435,13 @@ async function startDirect(uid){
  if(!uid||uid===me())return;
  const p=member(uid);const id=threadId(me(),uid);
  await attempt(async()=>{
-   if(!state.threads.some(t=>t.id===id)) {
-     // Só criamos a conversa se ela ainda não foi recebida pelo listener.
-     await firebase.setDoc(dmRef(id),{participants:[me(),uid].sort(),createdAt:now(),names:{[me()]:myName(),[uid]:p?.name||'Pessoa'}});
-   }
+   // Transação evita que duas pessoas sobrescrevam a mesma conversa ao criá-la.
+   await firebase.runTransaction(db,async(transaction)=>{
+     const thread=await transaction.get(dmRef(id));
+     if(!thread.exists()){
+       transaction.set(dmRef(id),{participants:[me(),uid].sort(),createdAt:now(),names:{[me()]:myName(),[uid]:p?.name||'Pessoa'}});
+     }
+   });
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
@@ -433,6 +449,10 @@ async function startDirect(uid){
      state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  });
+}
+function openLinkedPost() {
+  const match = /^#post=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
+  if (match && state.user && !state.modal && state.posts.some(post=>post.id===match[1])) openComments(match[1]);
 }
 function openComments(postId){
  if(!state.posts.some(p=>p.id===postId))return;
@@ -450,6 +470,7 @@ async function onAction(btn) {
  switch(action){
   case 'reload':window.location.reload();return;
   case 'toggle-auth':state.authMode=state.authMode==='login'?'register':'login';state.drafts.clear();render();return;
+  case 'forgot-password':state.authMode='reset';state.drafts.clear();render();return;
   case 'theme':changeTheme();return;
   case 'tab':setTab(btn.dataset.tab);return;
   case 'explore':redirectToExplore();return;
@@ -470,6 +491,17 @@ async function onAction(btn) {
   case 'open-dm':await startDirect(id);return;
   case 'chat-community':state.chatMode='community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
+  case 'share-post':{
+    if(!state.posts.some(post=>post.id===id))return;
+    const link=new URL(window.location.href);
+    link.hash='post='+encodeURIComponent(id);
+    try{
+      if(navigator.share) await navigator.share({title:'Publicação no HobbyHub',url:link.href});
+      else if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(link.href);showToast('Link da publicação copiado!');}
+      else window.prompt('Copie o link da publicação:',link.href);
+    }catch(error){if(error?.name!=='AbortError'){console.error(error);showToast('Não foi possível compartilhar esta publicação.',true);}}
+    return;
+  }
   case 'logout':await attempt(async()=>{unsubscribeAll();await firebase.signOut(auth);showToast('Você saiu da sua conta. Até logo!');});return;
   case 'follow':await attempt(async()=>{
     if(!id||id===me())return;
@@ -512,6 +544,7 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
+window.addEventListener('hashchange',openLinkedPost);
 document.addEventListener('input',(event)=>{
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
 });
@@ -522,6 +555,11 @@ document.addEventListener('submit',async(event)=>{
  const data=Object.fromEntries(new FormData(form));
  const val=(key)=>String(data[key]||'').trim();
  switch(form.id){
+  case 'reset-form':await attempt(async()=>{
+    await firebase.sendPasswordResetEmail(auth,val('email'));
+    state.authMode='login';state.drafts.clear();
+    showToast('Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha.');
+  });return;
   case 'auth-form':await attempt(async()=>{
     const email=val('email'),password=String(data.password||'');
     if(state.authMode==='login')await firebase.signInWithEmailAndPassword(auth,email,password);
