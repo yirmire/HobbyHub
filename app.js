@@ -62,6 +62,7 @@ const state = {
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, alerts:[], quizMood:null,
   reportTarget:null,
+  latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -72,6 +73,7 @@ const ref = (...segments) => firebase.doc(db,...BASE,...segments);
 const memberRef = (uid) => ref('members',uid);
 const legacyProfileRef = (uid) => firebase.doc(db,'artifacts',PROJECT,'users',uid,'profile','data');
 const dmRef = (threadId) => firebase.doc(db,'artifacts',PROJECT,'dm_threads',threadId);
+const directMessagesCol = (id) => firebase.collection(db,'artifacts',PROJECT,'dm_threads',id,'messages');
 const threadId = (a,b) => [a,b].sort().join('_');
 const me = () => state.user?.uid || '';
 const myName = () => state.profile?.name || 'Pessoa do HobbyHub';
@@ -103,10 +105,67 @@ async function attempt(callback, pending='busy', permissionMessage) {
   catch(error) {console.error('HobbyHub:',error);showToast(error?.code==='permission-denied'&&permissionMessage?permissionMessage:friendlyError(error),true);}
   finally {state[pending]=false;render();}
 }
-function unsubscribeAll() { for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}; if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;} }
+function unsubscribeAll() {
+ for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
+ for(const unsubscribe of state.inboundUnsubs.values())unsubscribe();
+ state.inboundUnsubs.clear();
+ if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
+ if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
+}
 function subscribe(reference, setter, label) {
   const unsub=firebase.onSnapshot(reference,(snap)=>{setter(snap);render();},(error)=>{console.error('HobbyHub listener:',label,error);state.alerts=[...new Set([...state.alerts,`Não foi possível carregar ${label}: ${friendlyError(error)}`])];render();});
   state.sessionUnsubs.push(unsub);
+}
+function watchLatestIncomingMessages() {
+ const uid=me();
+ const activeIds=new Set(state.threads.map(thread=>thread.id));
+ for(const [id,unsubscribe] of state.inboundUnsubs){
+   if(activeIds.has(id))continue;
+   unsubscribe();
+   state.inboundUnsubs.delete(id);
+   state.latestInboundAt.delete(id);
+ }
+ for(const thread of state.threads){
+   const peer=thread.participants?.find(id=>id!==uid);
+   if(!peer||state.inboundUnsubs.has(thread.id))continue;
+   const latest=firebase.query(directMessagesCol(thread.id),firebase.where('senderId','==',peer),firebase.orderBy('createdAt','desc'),firebase.limit(1));
+   const unsubscribe=firebase.onSnapshot(latest,snapshot=>{
+     if(me()!==uid)return;
+     state.latestInboundAt.set(thread.id,snapshot.docs[0]?.data().createdAt||0);
+     render();
+   },error=>console.error('Indicador de mensagens:',error));
+   state.inboundUnsubs.set(thread.id,unsubscribe);
+ }
+}
+function unreadThread(id) {
+ return (state.latestInboundAt.get(id)||0)>(state.privateReadAt.get(id)||0);
+}
+async function markOpenConversationRead() {
+ const uid=me(),peer=state.chatTarget?.uid;
+ if(!uid||!peer||state.chatMode!=='direct'||state.tab!=='messages'||state.modal||document.visibilityState!=='visible')return;
+ const id=threadId(uid,peer);
+ const lastReadAt=state.directMessages.reduce((latest,message)=>message.senderId!==uid?Math.max(latest,message.createdAt||0):latest,0);
+ const pending=state.pendingReads;
+ if(lastReadAt<=(state.privateReadAt.get(id)||0)||pending.has(id))return;
+ pending.add(id);
+ try {
+   const marker=ref('members',uid,'privateReads',id);
+   const saved=await firebase.runTransaction(db,async tx=>{
+     const snapshot=await tx.get(marker);
+     const previous=snapshot.data()?.lastReadAt||0;
+     if(lastReadAt>previous)tx.set(marker,{lastReadAt});
+     return Math.max(lastReadAt,previous);
+   });
+   if(me()!==uid||state.pendingReads!==pending)return;
+   state.privateReadAt.set(id,Math.max(saved,state.privateReadAt.get(id)||0));
+   render();
+ }catch(error){
+   console.error('Marcar conversa como lida:',error);
+   return;
+ }finally{
+   pending.delete(id);
+ }
+ if(me()===uid&&state.pendingReads===pending)void markOpenConversationRead();
 }
 async function ensureMember(user) {
   const target=memberRef(user.uid);
@@ -137,7 +196,10 @@ function startSession() {
   subscribe(col('events'), (s)=>{state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));},'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
-    (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'conversas privadas');
+    (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));watchLatestIncomingMessages();},'conversas privadas');
+  subscribe(col('members',me(),'privateReads'),snapshot=>{
+    for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
+  },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
@@ -160,6 +222,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;
+      state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
     },(error)=>{state.boot=false;state.initError=friendlyError(error);render();});
@@ -199,14 +262,18 @@ function renderAuth() {
     <div class="auth-switch"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button></div>
   </div></section></div>`;
 }
+function unreadBadge(tab) {
+ const count=tab==='messages'?state.threads.filter(thread=>unreadThread(thread.id)).length:0;
+ return count?`<span class="unread-count"><span aria-hidden="true">${count>99?'99+':count}</span><span class="sr-only">${count} ${count===1?'conversa não lida':'conversas não lidas'}</span></span>`:'';
+}
 function renderSidebar() {
-  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span></button>`).join('')}</nav>
+  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span>${unreadBadge(tab)}</button>`).join('')}</nav>
   <div class="sidebar-cta"><button class="btn btn-primary" data-action="compose">${icon('plus')} Nova publicação</button></div>
   <div class="sidebar-footer"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button><p>Feito para viver mais daquilo que você ama. ✨</p><small>HobbyHub © ${new Date().getFullYear()}</small></div></aside>`;
 }
 function renderBottomNav(){
   const items=[['home','Início','home'],['explore','Explorar','compass'],['compose','','plus'],['groups','Grupos','users'],['messages','Chat','chat'],['profile','Perfil','user']];
-  return `<nav class="bottom-nav" aria-label="Navegação móvel">${items.map(([tab,title,ico])=>`<button data-action="${tab==='compose'?'compose':'tab'}" ${tab!=='compose'?`data-tab="${tab}"`:''} aria-label="${title||'Criar publicação'}" class="${state.tab===tab?'active':''} ${tab==='compose'?'add-nav':''}">${icon(ico)}${title?`<span>${title}</span>`:''}</button>`).join('')}</nav>`;
+  return `<nav class="bottom-nav" aria-label="Navegação móvel">${items.map(([tab,title,ico])=>`<button data-action="${tab==='compose'?'compose':'tab'}" ${tab!=='compose'?`data-tab="${tab}"`:'aria-label="Criar publicação"'} class="${state.tab===tab?'active':''} ${tab==='compose'?'add-nav':''}">${icon(ico)}${title?`<span>${title}</span>`:''}${unreadBadge(tab)}</button>`).join('')}</nav>`;
 }
 function titleBar() {
  const titles={home:['Seu cantinho no mundo','Descubra algo novo hoje.'],explore:['Explorar interesses','Encontre pessoas e ideias para compartilhar.'],groups:['Suas comunidades','Um lugar para cada paixão.'],events:['Encontros & experiências','Da conversa para a vida real.'],messages:['Mensagens','Boas conexões começam com uma conversa.'],saved:['Seus favoritos','Tudo o que vale revisitar.'],profile:['Seu perfil','Sua história começa com o que você ama.']};
@@ -379,10 +446,11 @@ function renderMessages() {
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
  <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
- ${state.threads.map(t=>{
+ ${[...state.threads].sort((a,b)=>Number(unreadThread(b.id))-Number(unreadThread(a.id))||(state.latestInboundAt.get(b.id)||b.createdAt||0)-(state.latestInboundAt.get(a.id)||a.createdAt||0)).map(t=>{
  const other=(t.participants||[]).find(id=>id!==me());if(!other)return '';
  const p=member(other),isActive=!community&&state.chatTarget?.uid===other;
- return `<button class="chat-contact ${isActive?'active':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${esc(short(p?.name||t.names?.[other]||'Pessoa',19))}</span></button>`;
+ const unread=unreadThread(t.id);
+ return `<button class="chat-contact ${isActive?'active':''} ${unread?'chat-unread':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${esc(short(p?.name||t.names?.[other]||'Pessoa',19))}</span>${unread?'<span class="unread-dot"><span class="sr-only">Não lida</span></span>':''}</button>`;
  }).join('')}
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
@@ -497,9 +565,9 @@ function closeModal(){
  if(state.modal==='comments'&&window.location.hash.startsWith('#post=')){
    window.history.replaceState(null,'',window.location.pathname+window.location.search);
  }
- document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
+ document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
-function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();window.scrollTo({top:0,behavior:'instant'});}
+function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
  const sender=me();
@@ -518,8 +586,10 @@ async function startDirect(uid){
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
-   state.messageUnsub=firebase.onSnapshot(firebase.collection(db,'artifacts',PROJECT,'dm_threads',id,'messages'),(snap)=>{
+   state.messageUnsub=firebase.onSnapshot(directMessagesCol(id),(snap)=>{
+     if(me()!==sender||state.chatTarget?.uid!==uid)return;
      state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
+     void markOpenConversationRead();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  },'openingDirect','Esta conversa privada não está disponível no momento.');
 }
@@ -698,6 +768,7 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
+document.addEventListener('visibilitychange',()=>void markOpenConversationRead());
 document.addEventListener('change',(event)=>{
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
