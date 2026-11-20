@@ -57,10 +57,10 @@ const dateLabel = (day) => {if(!day)return 'A combinar';const d=new Date(`${day}
 const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
-  threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
+  threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
-  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, alerts:[], quizMood:null,
+  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, alerts:[], quizMood:null,
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -95,11 +95,11 @@ function friendlyError(error) {
   };
   return labels[key] || `Não foi possível concluir. ${error?.message ? String(error.message).slice(0,100):'Tente novamente.'}`;
 }
-async function attempt(callback, pending='busy') {
+async function attempt(callback, pending='busy', permissionMessage) {
   if(state[pending])return;
   state[pending]=true;
   try {await callback();}
-  catch(error) {console.error('HobbyHub:',error);showToast(friendlyError(error),true);}
+  catch(error) {console.error('HobbyHub:',error);showToast(error?.code==='permission-denied'&&permissionMessage?permissionMessage:friendlyError(error),true);}
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() { for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}; if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;} }
@@ -139,6 +139,7 @@ function startSession() {
     (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'conversas privadas');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
+  subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
 }
 async function init() {
@@ -156,7 +157,7 @@ async function init() {
     firebase.onAuthStateChanged(auth,async(user)=>{
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.followingIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
     },(error)=>{state.boot=false;state.initError=friendlyError(error);render();});
@@ -332,6 +333,11 @@ function renderProfileMedia(profile) {
  if(!photo&&!video)return '';
  return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada no perfil" loading="lazy" referrerpolicy="no-referrer">`:''}${video?`<video src="${esc(video)}" controls playsinline preload="none" aria-label="Vídeo compartilhado no perfil"></video><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
 }
+function blockButton(uid) {
+ if(!uid||uid===me())return '';
+ const blocked=state.blockedIds.includes(uid);
+ return `<button class="btn btn-outline btn-small" data-action="${blocked?'unblock-member':'block-member'}" data-id="${esc(uid)}" ${state.updatingBlock?'disabled':''}>${blocked?'Desbloquear':'Bloquear'}</button>`;
+}
 function renderTestimonials(entries, owner=false) {
  if(!entries.length)return '<p class="tip">Ainda não há depoimentos.</p>';
  return `<div class="comment-list">${[...entries].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(entry=>`
@@ -350,6 +356,8 @@ function renderProfile() {
  ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
+ <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
+ <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head"><h2>Depoimentos recebidos</h2></div>
  <div class="card" style="padding:16px">${renderTestimonials(state.receivedTestimonials,true)}</div>
  <div class="section-head"><h2>Suas publicações</h2><button class="text-action" data-action="compose">Publicar algo ${icon('plus')}</button></div>
@@ -360,6 +368,7 @@ function renderMessages() {
  const global=state.chatMode==='global';
  const messages=community?state.messages.filter(m=>global?m.scope==='global':m.scope!=='global'&&locate(m.location)):state.directMessages;
  const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
+ const blocked=!community&&state.blockedIds.includes(state.chatTarget?.uid);
  const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
@@ -371,9 +380,9 @@ function renderMessages() {
  }).join('')}
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
- <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div></div>
+ <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div>${community?'':blockButton(state.chatTarget?.uid)}</div>
  <div id="chat-log" class="chat-log">${messages.length?messages.slice(-150).map(m=>`<div class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span></div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}</div>
- ${community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
+ ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
 function modalWrap(title,content){return `<div class="overlay" data-overlay="true"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;}
@@ -434,7 +443,7 @@ function renderModal() {
  return modalWrap('Conhecer pessoa',`<div style="text-align:center">${avatar(person,true)}<h2 style="margin:12px 0 5px">${esc(person.name)}</h2><p class="mini muted">${icon('map')} ${esc(person.location||'Brasil')}</p><p class="muted">${esc(person.bio||'Apaixonado por novas experiências!')}</p>
  <div class="interest-row" style="justify-content:center">${(person.hobbies||[]).map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>
  ${renderProfileMedia(person)}
- <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button></div></div>
+ <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button>${blockButton(person.uid)}</div></div>
  <div class="section-head"><h2>Depoimentos</h2></div>
  ${state.testimonialStatus?`<p class="tip">${esc(state.testimonialStatus)}</p>`:renderTestimonials(state.visibleTestimonials)}
  ${state.sentTestimonial?`<div class="toggle-row"><small>${state.sentTestimonial.approved?'Seu depoimento está visível.':'Seu depoimento aguarda aprovação.'}</small><button class="text-action" data-action="testimonial-withdraw">Retirar depoimento</button></div>`:state.testimonialStatus?'':`
@@ -500,7 +509,7 @@ async function startDirect(uid){
    state.messageUnsub=firebase.onSnapshot(firebase.collection(db,'artifacts',PROJECT,'dm_threads',id,'messages'),(snap)=>{
      state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
- },'openingDirect');
+ },'openingDirect','Esta conversa privada não está disponível no momento.');
 }
 function openLinkedPost() {
   const match = /^#post=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
@@ -578,6 +587,19 @@ async function onAction(btn) {
     await loadPersonTestimonials(recipient);
   });return;
   case 'open-dm':await startDirect(id);return;
+  case 'block-member':
+  case 'unblock-member':await attempt(async()=>{
+    const uid=me();
+    if(!uid||!id||id===uid)return;
+    const target=ref('members',uid,'blocked',id);
+    if(action==='unblock-member'){
+      await firebase.deleteDoc(target);
+      showToast('Pessoa desbloqueada.');
+    }else if(confirm('Bloquear novas mensagens privadas entre vocês? O histórico será preservado.')){
+      await firebase.setDoc(target,{createdAt:now()});
+      showToast('Pessoa bloqueada.');
+    }
+  },'updatingBlock');return;
   case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
   case 'share-post':{
@@ -708,7 +730,7 @@ document.addEventListener('submit',async(event)=>{
     const key=form.dataset.draftKey;
     const payload={senderId:me(),senderName:myName(),text,createdAt:now()};
     if(state.chatMode==='direct'){
-      if(!state.chatTarget?.uid)return;
+      if(!state.chatTarget?.uid||state.blockedIds.includes(state.chatTarget.uid))return;
       await firebase.addDoc(firebase.collection(db,'artifacts',PROJECT,'dm_threads',threadId(me(),state.chatTarget.uid),'messages'),payload);
     }else{
       await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
@@ -719,7 +741,7 @@ document.addEventListener('submit',async(event)=>{
       if(input.value===data.message)input.value='';
     }
     if(state.drafts.get(key)?.message===data.message)state.drafts.delete(key);
-  });return;
+  },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
   case 'report-form':await attempt(async()=>{
     if(!state.reportPostId)return;
     await firebase.addDoc(col('reports'),{reporterId:me(),targetType:'post',targetId:state.reportPostId,reason:val('reason'),details:val('details'),createdAt:now()});
