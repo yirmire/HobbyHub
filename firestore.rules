@@ -30,6 +30,16 @@ service cloud.firestore {
       return loggedIn()
         && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(id)).data.participants;
     }
+    function betweenUnblockedMembers(appId, participants) {
+      return participants is list && participants.size() == 2
+        && participants[0] is string && participants[1] is string
+        && !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(participants[0])/blocked/$(participants[1]))
+        && !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(participants[1])/blocked/$(participants[0]));
+    }
+    function canSendDirectMessage(appId, id) {
+      let participants = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(id)).data.participants;
+      return request.auth.uid in participants && betweenUnblockedMembers(appId, participants);
+    }
 
     // Perfis antigos: somente o próprio usuário pode ler para migrar.
     match /artifacts/{appId}/users/{uid}/profile/{profileId} {
@@ -69,6 +79,13 @@ service cloud.firestore {
         // A consulta do dono lista a coleção inteira, sem filtrar por targetId.
         allow list: if isMe(uid);
         allow get, create, delete: if isMe(uid) && targetId != uid;
+        allow update: if false;
+      }
+      match /blocked/{targetId} {
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && uid != targetId
+          && request.resource.data.keys().hasOnly(['createdAt'])
+          && request.resource.data.createdAt is number;
         allow update: if false;
       }
       match /testimonials/{authorId} {
@@ -163,11 +180,12 @@ service cloud.firestore {
         && request.resource.data.participants is list
         && request.resource.data.participants.size() == 2
         && request.resource.data.participants.toSet().size() == 2
-        && request.auth.uid in request.resource.data.participants;
+        && request.auth.uid in request.resource.data.participants
+        && betweenUnblockedMembers(appId, request.resource.data.participants);
       allow update, delete: if false;
       match /messages/{messageId} {
         allow read: if threadMember(appId, id);
-        allow create: if threadMember(appId, id)
+        allow create: if loggedIn() && canSendDirectMessage(appId, id)
           && request.resource.data.senderId == request.auth.uid
           && validText(request.resource.data.text, 1, 1500)
           && request.resource.data.createdAt is number;
