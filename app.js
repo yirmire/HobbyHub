@@ -61,6 +61,7 @@ const state = {
   tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, alerts:[], quizMood:null,
+  reportTarget:null,
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -158,6 +159,7 @@ async function init() {
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.reportTarget=null;
       if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
     },(error)=>{state.boot=false;state.initError=friendlyError(error);render();});
@@ -338,11 +340,15 @@ function blockButton(uid) {
  const blocked=state.blockedIds.includes(uid);
  return `<button class="btn btn-outline btn-small" data-action="${blocked?'unblock-member':'block-member'}" data-id="${esc(uid)}" ${state.updatingBlock?'disabled':''}>${blocked?'Desbloquear':'Bloquear'}</button>`;
 }
+function reportButton(type, id, label) {
+ return `<button type="button" class="text-action" data-action="report-content" data-type="${type}" data-id="${esc(id)}" aria-label="Denunciar ${label}">Denunciar</button>`;
+}
 function renderTestimonials(entries, owner=false) {
  if(!entries.length)return '<p class="tip">Ainda não há depoimentos.</p>';
  return `<div class="comment-list">${[...entries].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(entry=>`
   <div class="comment"><div class="comment-body"><strong>${esc(member(entry.id)?.name||'Pessoa do HobbyHub')}</strong>
   <p>${esc(entry.text)}</p>
+  ${entry.id===me()?'':reportButton('testimonial',entry.id,'depoimento')}
   ${owner?`<small>${entry.approved?'Visível no perfil':'Aguardando sua aprovação'}</small>
     <div class="toggle-row"><button class="text-action" data-action="testimonial-visibility" data-id="${esc(entry.id)}">${entry.approved?'Ocultar':'Aprovar'}</button>
     <button class="text-action" data-action="testimonial-remove" data-id="${esc(entry.id)}">Remover</button></div>`:''}
@@ -381,7 +387,7 @@ function renderMessages() {
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
  <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div>${community?'':blockButton(state.chatTarget?.uid)}</div>
- <div id="chat-log" class="chat-log">${messages.length?messages.slice(-150).map(m=>`<div class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span></div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}</div>
+ <div id="chat-log" class="chat-log">${messages.length?messages.slice(-150).map(m=>`<div class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span>${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}</div>
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
@@ -443,13 +449,19 @@ function renderModal() {
  return modalWrap('Conhecer pessoa',`<div style="text-align:center">${avatar(person,true)}<h2 style="margin:12px 0 5px">${esc(person.name)}</h2><p class="mini muted">${icon('map')} ${esc(person.location||'Brasil')}</p><p class="muted">${esc(person.bio||'Apaixonado por novas experiências!')}</p>
  <div class="interest-row" style="justify-content:center">${(person.hobbies||[]).map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>
  ${renderProfileMedia(person)}
- <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button>${blockButton(person.uid)}</div></div>
+ <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button>${blockButton(person.uid)}${reportButton('profile',person.uid,'perfil')}</div></div>
  <div class="section-head"><h2>Depoimentos</h2></div>
  ${state.testimonialStatus?`<p class="tip">${esc(state.testimonialStatus)}</p>`:renderTestimonials(state.visibleTestimonials)}
  ${state.sentTestimonial?`<div class="toggle-row"><small>${state.sentTestimonial.approved?'Seu depoimento está visível.':'Seu depoimento aguarda aprovação.'}</small><button class="text-action" data-action="testimonial-withdraw">Retirar depoimento</button></div>`:state.testimonialStatus?'':`
  <form id="testimonial-form" data-draft="true" class="form-stack"><label class="field">Escrever depoimento<textarea class="textarea" name="text" maxlength="600" required></textarea></label><p class="tip">A pessoa que recebe decide se o depoimento aparece no perfil.</p><button class="btn btn-primary" type="submit">Enviar depoimento</button></form>`}`);
  }
- if(state.modal==='report')return modalWrap('Denunciar publicação',`<p class="tip">Sua denúncia será registrada para análise do administrador do projeto. Não há moderação automática nesta versão.</p><form id="report-form" class="form-stack"><div class="field"><label>Motivo</label><select name="reason" class="select"><option>Spam</option><option>Assédio ou ofensa</option><option>Golpe ou fraude</option><option>Conteúdo impróprio</option><option>Outro</option></select></div><div class="field"><label>Detalhes (opcional)</label><textarea class="textarea" name="details" maxlength="500" placeholder="Descreva o problema..."></textarea></div><button class="btn btn-primary" type="submit">Enviar denúncia</button></form>`);
+ if(state.modal==='report'&&state.reportTarget){
+ const target=state.reportTarget;
+ const label={post:'publicação',profile:'perfil',testimonial:'depoimento',communityMessage:'mensagem',privateMessage:'mensagem'}[target.targetType];
+ return modalWrap(`Denunciar ${label}`,`<p class="tip">${target.targetType==='privateMessage'?'A equipe de moderação receberá apenas a mensagem selecionada, o motivo e os detalhes que você incluir.':'A denúncia será revisada pela equipe de moderação.'}</p>
+ ${target.targetText?`<blockquote class="card" style="padding:12px;margin:12px 0">${esc(short(target.targetText,280))}</blockquote>`:''}
+ <form id="report-form" data-draft="true" class="form-stack"><label class="field">Motivo<select name="reason" class="select"><option>Spam</option><option>Assédio ou ofensa</option><option>Golpe ou fraude</option><option>Conteúdo impróprio</option><option>Outro</option></select></label><label class="field">Detalhes (opcional)<textarea class="textarea" name="details" maxlength="500" placeholder="Descreva o problema..."></textarea></label><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Enviar denúncia</button></form>`);
+ }
  return '';
 }
 function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
@@ -485,7 +497,7 @@ function closeModal(){
  if(state.modal==='comments'&&window.location.hash.startsWith('#post=')){
    window.history.replaceState(null,'',window.location.pathname+window.location.search);
  }
- document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
+ document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
@@ -525,6 +537,36 @@ function openComments(postId){
  render();
 }
 function redirectToExplore(){setTab('explore');}
+function openReport(type,id) {
+ if(!id||!me())return;
+ let target={targetType:type,targetId:id};
+ if(type==='post'){
+   const post=state.posts.find(item=>item.id===id);
+   if(!post||post.userId===me())return;
+ }else{
+   let item;
+   let parentId='';
+   if(type==='profile'){
+     const profile=member(id);
+     if(profile)item={author:id,text:profile.name};
+   }else if(type==='testimonial'){
+     const owner=state.modal!=='person';
+     parentId=owner?me():state.viewUser;
+     const entry=(owner?state.receivedTestimonials:state.visibleTestimonials).find(record=>record.id===id);
+     if(entry)item={author:entry.id,text:entry.text};
+   }else if(type==='privateMessage'||type==='communityMessage'){
+     const direct=type==='privateMessage';
+     if(direct&&!state.chatTarget?.uid)return;
+     if(direct)parentId=threadId(me(),state.chatTarget.uid);
+     const message=(direct?state.directMessages:state.messages).find(record=>record.id===id);
+     if(message)item={author:message.senderId,text:message.text};
+   }
+   if(!item?.author||item.author===me()||!item.text)return;
+   target={...target,parentId,targetUserId:item.author,targetText:item.text,status:'pending'};
+ }
+ state.reportTarget=target;
+ openModal('report');
+}
 async function loadPersonTestimonials(uid) {
  const author=me();
  try {
@@ -646,7 +688,8 @@ async function onAction(btn) {
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',id));showToast('Publicação excluída.');});return;
   case 'delete-comment':if(!confirm('Excluir este comentário?'))return;
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',state.selectedPost,'comments',id));showToast('Comentário excluído.');});return;
-  case 'report-post':state.reportPostId=id;openModal('report');return;
+  case 'report-post':openReport('post',id);return;
+  case 'report-content':openReport(btn.dataset.type,id);return;
   default:return;
  }
 }
@@ -743,9 +786,11 @@ document.addEventListener('submit',async(event)=>{
     if(state.drafts.get(key)?.message===data.message)state.drafts.delete(key);
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
   case 'report-form':await attempt(async()=>{
-    if(!state.reportPostId)return;
-    await firebase.addDoc(col('reports'),{reporterId:me(),targetType:'post',targetId:state.reportPostId,reason:val('reason'),details:val('details'),createdAt:now()});
-    closeModal();showToast('Denúncia registrada para análise.');
+    const target=state.reportTarget;
+    if(!target||!me())return;
+    await firebase.addDoc(col('reports'),{...target,reporterId:me(),reason:val('reason'),details:val('details'),createdAt:now()});
+    if(state.modal==='report'&&state.reportTarget===target)closeModal();
+    showToast('Denúncia registrada para análise.');
   });return;
   default:return;
  }

@@ -9,3 +9,11 @@ Versão atualizada da rede social existente, com visual responsivo, publicação
 - Rode `node --check app.js` e `node --test tests/*.test.mjs` com Node.js 22. Um workflow do GitHub Actions também executa os testes em pull requests.
 - Os testes automáticos não usam Firebase real: verifique login, envio de recuperação, permissões e conversas com duas contas reais antes de liberar ao público.
 - O arquivo `firestore.rules` no repositório **não é publicado automaticamente** no Firebase Console. Valide as regras no emulador e publique pelo Console sem apagar permissões legítimas de outras aplicações.
+
+## Fila privada de denúncias
+
+No Console do Firebase, abra o Firestore do projeto `hubbyhub-98c71` e navegue até `artifacts / hubbyhub-98c71 / public / data / reports`. A fila exige uma conta com permissões administrativas no projeto.
+
+1. Filtre por `status == pending` para revisar denúncias de perfis, depoimentos e mensagens. Denúncias de publicações anteriores a esse fluxo podem não ter campo de status.
+2. Revise o tipo, o motivo e os detalhes. Para mensagens privadas, use apenas o texto da mensagem selecionada que consta em `targetText`.
+3. Depois de concluir a análise, defina `status` como `reviewed`. A decisão deve considerar as regras da comunidade.
