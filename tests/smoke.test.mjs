@@ -17,6 +17,21 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('blocked private conversations keep the history and hide the composer', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'a'};
+    state.chatMode='direct';
+    state.chatTarget={uid:'b',name:'Pessoa'};
+    state.directMessages=[{text:'Mensagem anterior'}];
+    state.blockedIds=['b'];
+    renderMessages()
+  `, context);
+  assert.match(markup, /Mensagem anterior/);
+  assert.match(markup, /data-action="unblock-member"/);
+  assert.doesNotMatch(markup, /id="message-form"/);
+});
+
 test('Explorar combines hobby and city filters', () => {
   const context = appContext();
   const markup = vm.runInContext(`
