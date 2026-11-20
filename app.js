@@ -60,7 +60,7 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[],
   tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
-  modal:null, authMode:'login', busy:false, alerts:[], quizMood:null,
+  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, alerts:[], quizMood:null,
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -95,7 +95,13 @@ function friendlyError(error) {
   };
   return labels[key] || `Não foi possível concluir. ${error?.message ? String(error.message).slice(0,100):'Tente novamente.'}`;
 }
-async function attempt(callback) { if(state.busy) return; state.busy=true; try { await callback(); } catch(error) {console.error('HobbyHub:',error);showToast(friendlyError(error),true);} finally {state.busy=false;render();} }
+async function attempt(callback, pending='busy') {
+  if(state[pending])return;
+  state[pending]=true;
+  try {await callback();}
+  catch(error) {console.error('HobbyHub:',error);showToast(friendlyError(error),true);}
+  finally {state[pending]=false;render();}
+}
 function unsubscribeAll() { for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}; if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;} }
 function subscribe(reference, setter, label) {
   const unsub=firebase.onSnapshot(reference,(snap)=>{setter(snap);render();},(error)=>{console.error('HobbyHub listener:',label,error);state.alerts=[...new Set([...state.alerts,`Não foi possível carregar ${label}: ${friendlyError(error)}`])];render();});
@@ -451,7 +457,7 @@ async function startDirect(uid){
    state.messageUnsub=firebase.onSnapshot(firebase.collection(db,'artifacts',PROJECT,'dm_threads',id,'messages'),(snap)=>{
      state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
- });
+ },'openingDirect');
 }
 function openLinkedPost() {
   const match = /^#post=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
@@ -511,7 +517,7 @@ async function onAction(btn) {
     const target=ref('members',me(),'following',id);
     if(state.followingIds.includes(id)){await firebase.deleteDoc(target);showToast('Você deixou de seguir esta pessoa.');}
     else{await firebase.setDoc(target,{createdAt:now()});showToast('Agora você está seguindo esta pessoa!');}
-  });return;
+  },'updatingFollow');return;
   case 'save':await attempt(async()=>{
     const target=ref('members',me(),'saved',id);
     if(state.savedIds.includes(id)){await firebase.deleteDoc(target);showToast('Removido dos seus salvos.');}
