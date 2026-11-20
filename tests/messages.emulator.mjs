@@ -159,6 +159,46 @@ await request(recipient, 'PATCH', `${testimonial}?updateMask.fieldPaths=approved
   approved: { booleanValue: false }
 });
 await request(other, 'GET', testimonial, 403);
+const str = stringValue => ({ stringValue });
+const reportCollection = 'public/data/reports';
+const reportFields = ({ reporter, type, targetId, parentId, author, text }) => ({
+  reporterId: str(reporter.localId),
+  targetType: str(type),
+  targetId: str(targetId),
+  parentId: str(parentId),
+  targetUserId: str(author.localId),
+  targetText: str(text),
+  reason: str('Outro'),
+  details: str(''),
+  createdAt: { integerValue: String(Date.now()) },
+  status: str('pending')
+});
+const privateReport = reportFields({
+  reporter: recipient, type: 'privateMessage', targetId: 'hello',
+  parentId: threadId, author: sender, text: message.text.stringValue
+});
+await request(recipient, 'POST', `${reportCollection}?documentId=private-valid`, 200, privateReport);
+await request(other, 'POST', reportCollection, 403, { ...privateReport, reporterId: str(other.localId) });
+await request(recipient, 'POST', reportCollection, 403, { ...privateReport, targetText: str('Texto diferente') });
+await request(recipient, 'POST', reportCollection, 403, { ...privateReport, threadHistory: str('Outro conteúdo') });
+await request(recipient, 'GET', `${reportCollection}/private-valid`, 403);
+await request(sender, 'GET', reportCollection, 403);
+const communityReport = reportFields({
+  reporter: recipient, type: 'communityMessage', targetId: 'hello',
+  parentId: '', author: sender, text: message.text.stringValue
+});
+await request(recipient, 'POST', reportCollection, 200, communityReport);
+const testimonialReport = reportFields({
+  reporter: recipient, type: 'testimonial', targetId: sender.localId,
+  parentId: recipient.localId, author: sender, text: 'Ótima companhia para fotografar!'
+});
+await request(recipient, 'POST', reportCollection, 200, testimonialReport);
+await request(other, 'POST', reportCollection, 403, { ...testimonialReport, reporterId: str(other.localId) });
+const profileReport = reportFields({
+  reporter: sender, type: 'profile', targetId: recipient.localId,
+  parentId: '', author: recipient, text: 'Pessoa de teste'
+});
+await request(sender, 'POST', reportCollection, 200, profileReport);
 await request(sender, 'DELETE', testimonial, 200);
 
-console.log('Mensagens, seguimentos, mídia de perfil e aprovação de depoimentos testados no emulador.');
+console.log('Mensagens, bloqueios, seguimentos, mídia, depoimentos e denúncias testados no emulador.');
