@@ -83,4 +83,59 @@ await request(sender, 'POST', `${following}?documentId=${sender.localId}`, 403, 
 });
 await request(sender, 'DELETE', `${following}/${recipient.localId}`, 200);
 
-console.log('Mensagens privadas, chat da comunidade e lista de pessoas seguidas testados no emulador.');
+const profile = `public/data/members/${recipient.localId}`;
+const photoUrl = 'https://example.test/foto.jpg';
+await request(recipient, 'POST', `public/data/members?documentId=${recipient.localId}`, 200, {
+  uid: { stringValue: recipient.localId },
+  name: { stringValue: 'Pessoa de teste' },
+  avatar: { stringValue: '🌟' },
+  location: { stringValue: 'Brasil' },
+  bio: { stringValue: '' },
+  hobbies: { arrayValue: { values: [] } }
+});
+const updated = await request(recipient, 'PATCH', `${profile}?updateMask.fieldPaths=photoUrl`, 200, {
+  photoUrl: { stringValue: photoUrl }
+});
+assert.equal(updated.fields.photoUrl.stringValue, photoUrl);
+await request(sender, 'PATCH', `${profile}?updateMask.fieldPaths=photoUrl`, 403, {
+  photoUrl: { stringValue: 'https://example.test/outra.jpg' }
+});
+await request(recipient, 'PATCH', `${profile}?updateMask.fieldPaths=photoUrl`, 403, {
+  photoUrl: { stringValue: 'http://example.test/foto.jpg' }
+});
+
+const testimonials = `${profile}/testimonials`;
+const testimonial = `${testimonials}/${sender.localId}`;
+await request(sender, 'POST', `${testimonials}?documentId=${sender.localId}`, 200, {
+  text: { stringValue: 'Ótima companhia para fotografar!' },
+  createdAt: { integerValue: String(Date.now()) },
+  approved: { booleanValue: false }
+});
+await request(other, 'GET', testimonial, 403);
+await request(other, 'GET', testimonials, 403);
+await request(recipient, 'GET', testimonials, 200);
+await request(sender, 'PATCH', `${testimonial}?updateMask.fieldPaths=approved`, 403, {
+  approved: { booleanValue: true }
+});
+await request(recipient, 'PATCH', `${testimonial}?updateMask.fieldPaths=approved`, 200, {
+  approved: { booleanValue: true }
+});
+await request(other, 'GET', testimonial, 200);
+await request(null, 'GET', testimonial, 403);
+const publicQuery = await fetch(`${base}/${profile}:runQuery`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${other.idToken}` },
+  body: JSON.stringify({ structuredQuery: {
+    from: [{ collectionId: 'testimonials' }],
+    where: { fieldFilter: { field: { fieldPath: 'approved' }, op: 'EQUAL', value: { booleanValue: true } } }
+  } })
+});
+assert.equal(publicQuery.status, 200);
+assert.equal((await publicQuery.json()).filter(row => row.document).length, 1);
+await request(recipient, 'PATCH', `${testimonial}?updateMask.fieldPaths=approved`, 200, {
+  approved: { booleanValue: false }
+});
+await request(other, 'GET', testimonial, 403);
+await request(sender, 'DELETE', testimonial, 200);
+
+console.log('Mensagens, seguimentos, mídia de perfil e aprovação de depoimentos testados no emulador.');
