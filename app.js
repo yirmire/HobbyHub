@@ -57,8 +57,8 @@ const dateLabel = (day) => {if(!day)return 'A combinar';const d=new Date(`${day}
 const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
-  threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[],
-  tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'',
+  threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
+  tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, alerts:[], quizMood:null,
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -139,6 +139,7 @@ function startSession() {
     (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'conversas privadas');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
+  subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
 }
 async function init() {
   document.body.classList.toggle('dark',state.dark);
@@ -155,7 +156,7 @@ async function init() {
     firebase.onAuthStateChanged(auth,async(user)=>{
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.followingIds=[];state.selectedPost=null;state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.followingIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatTarget=null;state.modal=null;
       if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
     },(error)=>{state.boot=false;state.initError=friendlyError(error);render();});
@@ -263,15 +264,23 @@ function renderHome() {
 }
 function personCard(p) {
  const followed=state.followingIds.includes(p.uid);
- return `<article class="card person-card">${avatar(p)}<div class="person-data"><h3>${esc(p.name)}</h3><p>${icon('map')} ${esc(p.location || 'Brasil')}</p><p>${esc(short(p.bio||'Uma pessoa apaixonada por hobbies.',60))}</p></div><div style="display:grid;gap:6px"><button class="btn btn-small ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(p.uid)}">${followed?'Seguindo':'+ Seguir'}</button><button class="btn btn-small btn-ghost" data-action="open-dm" data-id="${esc(p.uid)}">${icon('chat')}</button></div></article>`;
+ const shared=(p.hobbies||[]).find(h=>(state.profile?.hobbies||[]).some(mine=>norm(mine)===norm(h)));
+ return `<article class="card person-card">${avatar(p)}<div class="person-data"><h3><button class="text-action" data-action="person" data-id="${esc(p.uid)}">${esc(p.name)}</button></h3><p>${icon('map')} ${esc(p.location || 'Brasil')}</p><p>${esc(short(p.bio||'Uma pessoa apaixonada por hobbies.',60))}</p>${shared?`<p>Também gosta de ${esc(shared)}</p>`:''}${locate(p.location)?'<p>Da sua cidade</p>':''}</div><div style="display:grid;gap:6px"><button class="btn btn-small ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(p.uid)}">${followed?'Seguindo':'+ Seguir'}</button><button class="btn btn-small btn-ghost" data-action="open-dm" data-id="${esc(p.uid)}">${icon('chat')} Conversar</button></div></article>`;
 }
 function renderExplore() {
  const q=norm(state.search);
- const people=state.members.filter(p=>p.uid!==me()&&(!q||norm([p.name,p.location,p.bio,(p.hobbies||[]).join(' ')].join(' ')).includes(q)));
+ const candidates=state.members.filter(p=>p.uid&&p.uid!==me());
+ const hobbies=new Map(candidates.flatMap(p=>(Array.isArray(p.hobbies)?p.hobbies:[]).filter(h=>typeof h==='string'&&norm(h)).map(h=>[norm(h),h])));
+ const cities=new Map(candidates.filter(p=>typeof p.location==='string'&&cityKey(p.location)).map(p=>[cityKey(p.location),p.location]));
+ const options=(values,selected)=>[...values].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${selected===key?'selected':''}>${esc(label)}</option>`).join('');
+ const people=candidates.filter(p=>(!state.exploreCity||cityKey(p.location)===state.exploreCity)
+  && (!state.exploreHobby||(p.hobbies||[]).some(h=>norm(h)===state.exploreHobby))
+  && (!q||norm([p.name,p.location,p.bio,(p.hobbies||[]).join(' ')].join(' ')).includes(q)));
  const groups=state.groups.filter(g=>!q||norm([g.name,g.hobby,g.location,g.description].join(' ')).includes(q));
  const posts=state.posts.filter(p=>q&&norm([p.content,p.hobby,authorName(p)].join(' ')).includes(q)).slice(0,10);
  return `<div class="card" style="padding:18px;margin-bottom:17px"><label class="field" for="explore-search"><span class="mini muted">Pesquise pessoas, grupos, hobbies e publicações</span><input id="explore-search" class="input" placeholder="Ex.: fotografia, Nova Friburgo, livros..." data-live-search="true" value="${esc(state.search)}"></label></div>
  <div class="section-head"><h2>Pessoas com interesses parecidos</h2><span class="pill">${people.length} perfis</span></div>
+ <div class="field-grid" style="margin-bottom:14px"><label class="field">Hobby<select class="select" id="explore-hobby"><option value="">Todos os hobbies</option>${options(hobbies,state.exploreHobby)}</select></label><label class="field">Cidade<select class="select" id="explore-city"><option value="">Todas as cidades</option>${options(cities,state.exploreCity)}</select></label></div>
  ${people.length?`<div style="display:grid;gap:10px">${people.slice(0,20).map(personCard).join('')}</div>`:empty('👋','Sua turma está chegando','Ainda não encontramos perfis com essa busca. Compartilhe o HobbyHub com seus amigos.')}
  <div class="section-head"><h2>Comunidades para explorar</h2><button class="text-action" data-action="tab" data-tab="groups">Ver todas</button></div>
  ${groups.length?`<div class="grid-two">${groups.slice(0,4).map(groupCard).join('')}</div>`:empty('🪴','Nenhum grupo encontrado','Crie uma comunidade para reunir pessoas com esse interesse.','Criar grupo','group')}
@@ -312,13 +321,37 @@ function renderSaved() {
  const posts=state.posts.filter(p=>state.savedIds.includes(p.id));
  return `<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${posts.length?posts.map(postCard).join(''):empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
+function mediaUrl(value) {
+ try {
+   const url=new URL(value);
+   return url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<=1500?url.href:'';
+ } catch {return '';}
+}
+function renderProfileMedia(profile) {
+ const photo=mediaUrl(profile.photoUrl),video=mediaUrl(profile.videoUrl);
+ if(!photo&&!video)return '';
+ return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada no perfil" loading="lazy" referrerpolicy="no-referrer">`:''}${video?`<video src="${esc(video)}" controls playsinline preload="none" aria-label="Vídeo compartilhado no perfil"></video><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
+}
+function renderTestimonials(entries, owner=false) {
+ if(!entries.length)return '<p class="tip">Ainda não há depoimentos.</p>';
+ return `<div class="comment-list">${[...entries].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(entry=>`
+  <div class="comment"><div class="comment-body"><strong>${esc(member(entry.id)?.name||'Pessoa do HobbyHub')}</strong>
+  <p>${esc(entry.text)}</p>
+  ${owner?`<small>${entry.approved?'Visível no perfil':'Aguardando sua aprovação'}</small>
+    <div class="toggle-row"><button class="text-action" data-action="testimonial-visibility" data-id="${esc(entry.id)}">${entry.approved?'Ocultar':'Aprovar'}</button>
+    <button class="text-action" data-action="testimonial-remove" data-id="${esc(entry.id)}">Remover</button></div>`:''}
+  </div></div>`).join('')}</div>`;
+}
 function renderProfile() {
  const p=state.profile,posts=state.posts.filter(post=>post.userId===me());
  const groupCount=state.groups.filter(g=>(g.members||[]).includes(me())).length;
  return `<div class="card" style="overflow:hidden"><div class="profile-cover"></div><div class="profile-info">${avatar(p,true)}<div class="profile-topline"><div><h2>${esc(p.name)}</h2><p style="margin-top:7px">${icon('map')} ${esc(p.location)}</p></div><div class="toggle-row"><button class="btn btn-outline btn-small" data-action="edit-profile">${icon('edit')} Editar</button><button class="circle-btn" data-action="logout" title="Sair da conta" aria-label="Sair">${icon('logout')}</button></div></div>
  <p>${esc(p.bio||'Um mundo de hobbies para descobrir.')}</p>
+ ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
+ <div class="section-head"><h2>Depoimentos recebidos</h2></div>
+ <div class="card" style="padding:16px">${renderTestimonials(state.receivedTestimonials,true)}</div>
  <div class="section-head"><h2>Suas publicações</h2><button class="text-action" data-action="compose">Publicar algo ${icon('plus')}</button></div>
  ${posts.length?posts.map(postCard).join(''):empty('🎨','Conte sua primeira história','O que você está aprendendo, criando ou descobrindo?','Criar publicação','compose')}`;
 }
@@ -376,6 +409,8 @@ function renderModal() {
  return modalWrap('Editar perfil',`<form id="profile-form" data-draft="true" class="form-stack"><div class="field-grid"><div class="field"><label>Seu nome</label><input class="input" name="name" value="${esc(p.name)}" maxlength="60" required></div><div class="field"><label>Avatar (emoji)</label><input class="input" name="avatar" value="${esc(p.avatar)}" maxlength="8" required></div></div>
  <div class="field"><label>Sua cidade ou região</label><input class="input" name="location" value="${esc(p.location)}" maxlength="90" required></div><div class="field"><label>Um pouco sobre você</label><textarea class="textarea" name="bio" maxlength="300">${esc(p.bio)}</textarea></div>
  <div class="field"><label>Seus hobbies (separados por vírgula)</label><input class="input" name="hobbies" maxlength="240" value="${esc((p.hobbies||[]).join(', '))}" placeholder="Fotografia, Leitura, Games"></div>
+ <label class="field">Link HTTPS da foto (opcional)<input class="input" type="url" name="photoUrl" maxlength="1500" value="${esc(p.photoUrl||'')}" placeholder="https://…/foto.jpg"></label>
+ <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(p.videoUrl||'')}" placeholder="https://…/video.mp4"></label>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`);
  }
  if(state.modal==='comments'){
@@ -398,7 +433,12 @@ function renderModal() {
  const followed=state.followingIds.includes(person.uid);
  return modalWrap('Conhecer pessoa',`<div style="text-align:center">${avatar(person,true)}<h2 style="margin:12px 0 5px">${esc(person.name)}</h2><p class="mini muted">${icon('map')} ${esc(person.location||'Brasil')}</p><p class="muted">${esc(person.bio||'Apaixonado por novas experiências!')}</p>
  <div class="interest-row" style="justify-content:center">${(person.hobbies||[]).map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>
- <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button></div></div>`);
+ ${renderProfileMedia(person)}
+ <div class="toggle-row" style="margin-top:25px"><button class="btn ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(person.uid)}">${followed?'Seguindo ✓':'+ Seguir'}</button><button class="btn btn-primary" data-action="open-dm" data-id="${esc(person.uid)}">${icon('chat')} Conversar</button></div></div>
+ <div class="section-head"><h2>Depoimentos</h2></div>
+ ${state.testimonialStatus?`<p class="tip">${esc(state.testimonialStatus)}</p>`:renderTestimonials(state.visibleTestimonials)}
+ ${state.sentTestimonial?`<div class="toggle-row"><small>${state.sentTestimonial.approved?'Seu depoimento está visível.':'Seu depoimento aguarda aprovação.'}</small><button class="text-action" data-action="testimonial-withdraw">Retirar depoimento</button></div>`:state.testimonialStatus?'':`
+ <form id="testimonial-form" data-draft="true" class="form-stack"><label class="field">Escrever depoimento<textarea class="textarea" name="text" maxlength="600" required></textarea></label><p class="tip">A pessoa que recebe decide se o depoimento aparece no perfil.</p><button class="btn btn-primary" type="submit">Enviar depoimento</button></form>`}`);
  }
  if(state.modal==='report')return modalWrap('Denunciar publicação',`<p class="tip">Sua denúncia será registrada para análise do administrador do projeto. Não há moderação automática nesta versão.</p><form id="report-form" class="form-stack"><div class="field"><label>Motivo</label><select name="reason" class="select"><option>Spam</option><option>Assédio ou ofensa</option><option>Golpe ou fraude</option><option>Conteúdo impróprio</option><option>Outro</option></select></div><div class="field"><label>Detalhes (opcional)</label><textarea class="textarea" name="details" maxlength="500" placeholder="Descreva o problema..."></textarea></div><button class="btn btn-primary" type="submit">Enviar denúncia</button></form>`);
  return '';
@@ -476,6 +516,23 @@ function openComments(postId){
  render();
 }
 function redirectToExplore(){setTab('explore');}
+async function loadPersonTestimonials(uid) {
+ const author=me();
+ try {
+   const [published,mine]=await Promise.all([
+     firebase.getDocs(firebase.query(col('members',uid,'testimonials'),firebase.where('approved','==',true))),
+     firebase.getDoc(ref('members',uid,'testimonials',author))
+   ]);
+   if(me()!==author||state.modal!=='person'||state.viewUser!==uid)return;
+   state.visibleTestimonials=published.docs.map(d=>({...d.data(),id:d.id}));
+   state.sentTestimonial=mine.exists()?mine.data():null;
+   state.testimonialStatus='';
+ } catch(error) {
+   if(me()!==author||state.modal!=='person'||state.viewUser!==uid)return;
+   state.testimonialStatus=friendlyError(error);
+ }
+ render();
+}
 async function onAction(btn) {
  const action=btn.dataset.action;
  const id=btn.dataset.id;
@@ -499,7 +556,27 @@ async function onAction(btn) {
   case 'quiz':state.quizMood=null;openModal('quiz');return;
   case 'quiz-mood':state.quizMood=btn.dataset.value;render();return;
   case 'quiz-topic':{const value=btn.dataset.topic;closeModal();state.search=value;setTab('explore');return;}
-  case 'person':{if(id===me()){setTab('profile');return;}state.viewUser=id;openModal('person');return;}
+  case 'person':{
+    if(id===me()){setTab('profile');return;}
+    if(!id||!me())return;
+    state.viewUser=id;state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='Carregando depoimentos…';
+    openModal('person');await loadPersonTestimonials(id);return;
+  }
+  case 'testimonial-visibility':await attempt(async()=>{
+    const entry=state.receivedTestimonials.find(item=>item.id===id);
+    if(!entry)return;
+    await firebase.updateDoc(ref('members',me(),'testimonials',id),{approved:!entry.approved});
+  });return;
+  case 'testimonial-remove':await attempt(async()=>{
+    if(!confirm('Remover este depoimento do seu perfil?'))return;
+    await firebase.deleteDoc(ref('members',me(),'testimonials',id));
+  });return;
+  case 'testimonial-withdraw':await attempt(async()=>{
+    const recipient=state.viewUser;
+    if(!recipient||!confirm('Retirar o depoimento enviado?'))return;
+    await firebase.deleteDoc(ref('members',recipient,'testimonials',me()));
+    await loadPersonTestimonials(recipient);
+  });return;
   case 'open-dm':await startDirect(id);return;
   case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
@@ -556,6 +633,12 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
+document.addEventListener('change',(event)=>{
+ if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
+ else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
+ else return;
+ render();
+});
 window.addEventListener('hashchange',openLinkedPost);
 document.addEventListener('input',(event)=>{
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
@@ -602,8 +685,17 @@ document.addEventListener('submit',async(event)=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
     if(!name||!location||!avatarValue)throw new Error('Nome, localidade e avatar são obrigatórios.');
     const hobbies=[...new Set(val('hobbies').split(',').map(s=>s.trim()).filter(Boolean))].slice(0,10);
-    await firebase.updateDoc(memberRef(me()),{name,location,avatar:avatarValue,bio:val('bio'),hobbies});
+    const photoUrl=mediaUrl(val('photoUrl')),videoUrl=mediaUrl(val('videoUrl'));
+    if((val('photoUrl')&&!photoUrl)||(val('videoUrl')&&!videoUrl))throw new Error('Use um link HTTPS válido para a foto ou o vídeo.');
+    await firebase.updateDoc(memberRef(me()),{name,location,avatar:avatarValue,bio:val('bio'),hobbies,photoUrl,videoUrl});
     closeModal();showToast('Perfil atualizado!');
+  });return;
+  case 'testimonial-form':await attempt(async()=>{
+    const recipient=state.viewUser,text=val('text');
+    if(!recipient||recipient===me()||!text)return;
+    await firebase.setDoc(ref('members',recipient,'testimonials',me()),{text,createdAt:now(),approved:false});
+    await loadPersonTestimonials(recipient);
+    showToast('Depoimento enviado para aprovação.');
   });return;
   case 'comment-form':await attempt(async()=>{
     const text=val('text');if(!text||!state.selectedPost)return;
