@@ -70,3 +70,15 @@ for (const exists of [false,true]) {
     assert.equal(vm.runInContext('state.chatMode',context),'direct');
   });
 }
+
+test('local feed matches a city even with state suffix, but not a different city',()=>{
+ const context=appContext();
+ assert.equal(vm.runInContext(`state.profile={location:'Nova Friburgo, RJ'};locate('NOVA FRIBURGO - Rio de Janeiro')`,context),true);
+ assert.equal(vm.runInContext(`locate('Petrópolis, RJ')`,context),false);
+});
+test('post card includes a share action for valid public posts',()=>{
+ const context=appContext();
+ const markup=vm.runInContext(`postCard({id:'abc123',userId:'other',content:'Olá!',hobby:'Leitura',location:'Brasil',likes:[]})`,context);
+ assert.match(markup,/data-action="share-post"/);
+ assert.match(markup,/data-id="abc123"/);
+});
