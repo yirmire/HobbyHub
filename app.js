@@ -432,16 +432,19 @@ function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
- if(!uid||uid===me())return;
- const p=member(uid);const id=threadId(me(),uid);
+ const sender=me();
+ if(!sender||!uid||uid===sender)return;
+ const p=member(uid);const id=threadId(sender,uid);
+ const threadData={participants:[sender,uid].sort(),createdAt:now(),names:{[sender]:myName(),[uid]:p?.name||'Pessoa'}};
  await attempt(async()=>{
    // Transação evita que duas pessoas sobrescrevam a mesma conversa ao criá-la.
    await firebase.runTransaction(db,async(transaction)=>{
      const thread=await transaction.get(dmRef(id));
      if(!thread.exists()){
-       transaction.set(dmRef(id),{participants:[me(),uid].sort(),createdAt:now(),names:{[me()]:myName(),[uid]:p?.name||'Pessoa'}});
+       transaction.set(dmRef(id),threadData);
      }
    });
+   if(me()!==sender)return;
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
