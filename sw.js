@@ -1,5 +1,5 @@
 /* Cache apenas dos arquivos públicos da interface. Dados de usuários nunca entram aqui. */
-const CACHE = 'hobbyhub-shell-v2-1';
+const CACHE = 'hobbyhub-shell-v2-2';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './favicon.svg', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(()=>self.skipWaiting()));
