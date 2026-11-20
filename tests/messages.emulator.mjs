@@ -86,6 +86,31 @@ await request(other, 'POST', freshThread, 403, {
 });
 await request(sender, 'DELETE', `${blocked}/${other.localId}`, 200);
 
+const readCollection = `public/data/members/${recipient.localId}/privateReads`;
+const readMarker = `${readCollection}/${threadId}`;
+const readAt = value => ({ lastReadAt: { integerValue: String(value) } });
+await request(recipient, 'POST', `${readCollection}?documentId=${threadId}`, 200, readAt(100));
+await request(recipient, 'GET', readCollection, 200);
+await request(sender, 'GET', readMarker, 403);
+await request(sender, 'PATCH', readMarker, 403, readAt(200));
+await request(recipient, 'PATCH', readMarker, 403, readAt(99));
+await request(recipient, 'PATCH', readMarker, 200, readAt(200));
+await request(other, 'POST', `public/data/members/${other.localId}/privateReads?documentId=${threadId}`, 403, readAt(100));
+const inboxQuery = await fetch(`${base}/${thread}:runQuery`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${recipient.idToken}` },
+  body: JSON.stringify({ structuredQuery: {
+    from: [{ collectionId: 'messages' }],
+    where: { fieldFilter: { field: { fieldPath: 'senderId' }, op: 'EQUAL', value: { stringValue: sender.localId } } },
+    orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'DESCENDING' }],
+    limit: 1
+  } })
+});
+assert.equal(inboxQuery.status, 200);
+const incoming = (await inboxQuery.json()).filter(row => row.document);
+assert.equal(incoming.length, 1);
+assert.equal(incoming[0].document.fields.senderId.stringValue, sender.localId);
+
 await request(sender, 'POST', 'public/data/messages?documentId=hello', 200, {
   ...message,
   location: { stringValue: 'Brasil' }
