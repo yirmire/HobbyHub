@@ -63,6 +63,29 @@ await request(other, 'POST', `${thread}/messages?documentId=other`, 403, {
   senderId: { stringValue: other.localId }
 });
 
+const blocked = `public/data/members/${sender.localId}/blocked`;
+const block = `${blocked}/${recipient.localId}`;
+const blockFields = { createdAt: { integerValue: String(Date.now()) } };
+await request(recipient, 'POST', `${blocked}?documentId=${recipient.localId}`, 403, blockFields);
+await request(sender, 'POST', `${blocked}?documentId=${recipient.localId}`, 200, blockFields);
+await request(sender, 'GET', blocked, 200);
+await request(recipient, 'GET', block, 403);
+await request(recipient, 'GET', `${thread}/messages/hello`, 200);
+await request(sender, 'GET', `${thread}/messages/hello`, 200);
+await request(sender, 'POST', `${thread}/messages?documentId=blocked-sender`, 403, message);
+const reply = { ...message, senderId: { stringValue: recipient.localId } };
+await request(recipient, 'POST', `${thread}/messages?documentId=blocked-recipient`, 403, reply);
+await request(sender, 'DELETE', block, 200);
+await request(recipient, 'POST', `${thread}/messages?documentId=after-unblock`, 200, reply);
+
+const freshPair = [sender.localId, other.localId].sort();
+const freshThread = `dm_threads?documentId=${freshPair.join('_')}`;
+await request(sender, 'POST', `${blocked}?documentId=${other.localId}`, 200, blockFields);
+await request(other, 'POST', freshThread, 403, {
+  participants: { arrayValue: { values: freshPair.map(stringValue => ({ stringValue })) } }
+});
+await request(sender, 'DELETE', `${blocked}/${other.localId}`, 200);
+
 await request(sender, 'POST', 'public/data/messages?documentId=hello', 200, {
   ...message,
   location: { stringValue: 'Brasil' }
