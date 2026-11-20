@@ -40,6 +40,41 @@ service cloud.firestore {
       let participants = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(id)).data.participants;
       return request.auth.uid in participants && betweenUnblockedMembers(appId, participants);
     }
+    function verifiedReportContent(report, author, content) {
+      return author is string && author != request.auth.uid
+        && report.targetUserId == author && report.targetText == content;
+    }
+    function verifiedPrivateReport(appId, report) {
+      let message = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(report.parentId)/messages/$(report.targetId)).data;
+      return verifiedReportContent(report, message.senderId, message.text);
+    }
+    function verifiedCommunityReport(appId, report) {
+      let message = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/messages/$(report.targetId)).data;
+      return verifiedReportContent(report, message.senderId, message.text);
+    }
+    function verifiedTestimonialReport(appId, report) {
+      let entry = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(report.parentId)/testimonials/$(report.targetId)).data;
+      return (isMe(report.parentId) || entry.approved == true)
+        && verifiedReportContent(report, report.targetId, entry.text);
+    }
+    function verifiedProfileReport(appId, report) {
+      let profile = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(report.targetId)).data;
+      return verifiedReportContent(report, report.targetId, profile.name);
+    }
+    function validModerationReport(appId, report) {
+      return report.keys().hasOnly(['reporterId', 'targetType', 'targetId', 'parentId', 'targetUserId', 'targetText', 'reason', 'details', 'createdAt', 'status'])
+        && report.status == 'pending'
+        && report.createdAt is number
+        && validText(report.parentId, 0, 200)
+        && report.parentId.matches('[^/]*')
+        && validText(report.targetText, 1, 1500)
+        && (
+          (report.targetType == 'privateMessage' && threadMember(appId, report.parentId) && verifiedPrivateReport(appId, report))
+          || (report.targetType == 'communityMessage' && report.parentId == '' && verifiedCommunityReport(appId, report))
+          || (report.targetType == 'testimonial' && verifiedTestimonialReport(appId, report))
+          || (report.targetType == 'profile' && report.parentId == '' && verifiedProfileReport(appId, report))
+        );
+    }
 
     // Perfis antigos: somente o próprio usuário pode ler para migrar.
     match /artifacts/{appId}/users/{uid}/profile/{profileId} {
@@ -197,10 +232,14 @@ service cloud.firestore {
     match /artifacts/{appId}/public/data/reports/{reportId} {
       allow create: if loggedIn()
         && request.resource.data.reporterId == request.auth.uid
-        && request.resource.data.targetType == 'post'
         && validText(request.resource.data.targetId, 1, 200)
+        && request.resource.data.targetId.matches('[^/]+')
         && validText(request.resource.data.reason, 1, 80)
-        && validText(request.resource.data.details, 0, 500);
+        && validText(request.resource.data.details, 0, 500)
+        && ((request.resource.data.targetType == 'post'
+            && request.resource.data.keys().hasOnly(['reporterId', 'targetType', 'targetId', 'reason', 'details', 'createdAt'])
+            && request.resource.data.createdAt is number)
+          || validModerationReport(appId, request.resource.data));
       allow read, update, delete: if false;
     }
 
