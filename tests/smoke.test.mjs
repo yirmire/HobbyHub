@@ -8,7 +8,7 @@ function appContext(handlers = {}) {
   const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
     .replace(/\binit\(\);\s*$/, '');
   const context = vm.createContext({
-    console, Date, setTimeout, clearTimeout, navigator: {},
+    console, Date, URL, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
     window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0 },
     document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
@@ -16,6 +16,34 @@ function appContext(handlers = {}) {
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
   return context;
 }
+
+test('Explorar combines hobby and city filters', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'a'};
+    state.profile={hobbies:['Fotografia'],location:'Nova Friburgo, RJ'};
+    state.members=[
+      {uid:'b',name:'Persona compatível',hobbies:['Fotografia'],location:'Nova Friburgo - RJ'},
+      {uid:'c',name:'Pessoa de outra cidade',hobbies:['Fotografia'],location:'Petrópolis'},
+      {uid:'d',name:'Pessoa de outro hobby',hobbies:['Leitura'],location:'Nova Friburgo'}
+    ];
+    state.exploreCity='nova friburgo';state.exploreHobby='fotografia';
+    renderExplore()
+  `, context);
+  assert.match(markup, /Persona compatível/);
+  assert.match(markup, /Também gosta de Fotografia/);
+  assert.doesNotMatch(markup, /Pessoa de outra cidade|Pessoa de outro hobby/);
+});
+
+test('profile media renders HTTPS files and rejects unsafe protocols', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    renderProfileMedia({photoUrl:'https://example.test/foto.jpg',videoUrl:'https://example.test/video.mp4'})
+  `, context);
+  assert.match(markup, /<img src="https:\/\/example.test\/foto.jpg"/);
+  assert.match(markup, /<video src="https:\/\/example.test\/video.mp4"/);
+  assert.equal(vm.runInContext(`renderProfileMedia({photoUrl:'javascript:alert(1)',videoUrl:'http://example.test/video.mp4'})`, context), '');
+});
 
 test('global chat and city chat show distinct messages, including older local messages', () => {
   const context = appContext();
