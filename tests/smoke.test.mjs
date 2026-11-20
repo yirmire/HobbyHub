@@ -17,6 +17,33 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('reports only the selected private message', async () => {
+  const handlers = {};
+  const context = appContext(handlers);
+  context.FormData = function () { return [['reason', 'Outro'], ['details', 'Contexto opcional']]; };
+  context.writes = [];
+  vm.runInContext(`
+    state.user={uid:'a'};
+    state.chatTarget={uid:'b'};
+    state.directMessages=[
+      {id:'selected',senderId:'b',text:'Mensagem selecionada'},
+      {id:'other',senderId:'b',text:'Mensagem que deve permanecer privada'}
+    ];
+    render=()=>{};
+    closeModal=()=>{};
+    showToast=()=>{};
+    firebase={collection:()=> 'reports', addDoc:(_path,report)=>{writes.push(report);}};
+    openReport('privateMessage','selected');
+  `, context);
+  await handlers.submit({target:{id:'report-form'},preventDefault(){}});
+  assert.equal(context.writes.length, 1);
+  const report = context.writes[0];
+  assert.equal(report.targetId, 'selected');
+  assert.equal(report.targetText, 'Mensagem selecionada');
+  assert.equal(report.parentId, 'a_b');
+  assert.doesNotMatch(JSON.stringify(report), /Mensagem que deve permanecer privada/);
+});
+
 test('blocked private conversations keep the history and hide the composer', () => {
   const context = appContext();
   const markup = vm.runInContext(`
