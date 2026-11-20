@@ -75,7 +75,9 @@ const threadId = (a,b) => [a,b].sort().join('_');
 const me = () => state.user?.uid || '';
 const myName = () => state.profile?.name || 'Pessoa do HobbyHub';
 const myLocation = () => state.profile?.location || 'Brasil';
-const locate = (location) => norm(location) === norm(myLocation());
+// A cidade pode ter um estado/UF depois de vírgula ou hífen.
+const cityKey = (location) => norm(String(location ?? '').split(/\s+[-–]\s+|,/)[0]);
+const locate = (location) => Boolean(cityKey(location)) && cityKey(location) === cityKey(myLocation());
 const member = (uid) => state.members.find((p) => p.uid===uid);
 const authorName = (record) => member(record.userId || record.senderId)?.name || record.userName || record.senderName || 'Pessoa da comunidade';
 function showToast(message, error=false) {const n=document.getElementById('toast');n.textContent=message;n.className=`toast show ${error?'error':''}`;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{n.className='toast';},4000);}
@@ -119,7 +121,11 @@ async function ensureMember(user) {
 function startSession() {
   const docs=(snapshot)=>snapshot.docs.map((d)=>({...d.data(),id:d.id}));
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
-  subscribe(col('posts'), (s)=>{state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'publicações');
+  subscribe(col('posts'), (s)=>{
+    state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    // Uma publicação compartilhada pode ser aberta após o usuário entrar.
+    queueMicrotask(openLinkedPost);
+  },'publicações');
   subscribe(col('groups'), (s)=>{state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));},'comunidades');
   subscribe(col('events'), (s)=>{state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));},'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
@@ -228,6 +234,7 @@ function postCard(post) {
  <div class="post-actions"><button class="post-action ${liked?'liked':''}" data-action="like" data-id="${esc(post.id)}" aria-label="${liked?'Descurtir':'Curtir'}">${icon('heart')} ${liked?'Curtido':'Curtir'}</button>
  <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Comentar</button>
  <button class="post-action ${saved?'bookmarked':''}" data-action="save" data-id="${esc(post.id)}">${icon('bookmark')} ${saved?'Salvo':'Salvar'}</button>
+ <button class="post-action" data-action="share-post" data-id="${esc(post.id)}" aria-label="Compartilhar publicação">${icon('send')} Compartilhar</button>
  ${owner?`<button class="post-action" data-action="delete-post" data-id="${esc(post.id)}" aria-label="Excluir publicação">${icon('trash')}</button>`:`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
 }
 function filteredPosts(posts=state.posts) {
@@ -416,7 +423,11 @@ function render() {
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
-function closeModal(){document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
+function closeModal(){
+ if(state.modal==='comments'&&window.location.hash.startsWith('#post=')){
+   window.history.replaceState(null,'',window.location.pathname+window.location.search);
+ }
+ document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){state.tab=tab;state.modal=null;state.drafts.clear();render();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
@@ -438,6 +449,10 @@ async function startDirect(uid){
      state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  });
+}
+function openLinkedPost() {
+  const match = /^#post=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
+  if (match && state.user && !state.modal && state.posts.some(post=>post.id===match[1])) openComments(match[1]);
 }
 function openComments(postId){
  if(!state.posts.some(p=>p.id===postId))return;
@@ -476,6 +491,17 @@ async function onAction(btn) {
   case 'open-dm':await startDirect(id);return;
   case 'chat-community':state.chatMode='community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
+  case 'share-post':{
+    if(!state.posts.some(post=>post.id===id))return;
+    const link=new URL(window.location.href);
+    link.hash='post='+encodeURIComponent(id);
+    try{
+      if(navigator.share) await navigator.share({title:'Publicação no HobbyHub',url:link.href});
+      else if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(link.href);showToast('Link da publicação copiado!');}
+      else window.prompt('Copie o link da publicação:',link.href);
+    }catch(error){if(error?.name!=='AbortError'){console.error(error);showToast('Não foi possível compartilhar esta publicação.',true);}}
+    return;
+  }
   case 'logout':await attempt(async()=>{unsubscribeAll();await firebase.signOut(auth);showToast('Você saiu da sua conta. Até logo!');});return;
   case 'follow':await attempt(async()=>{
     if(!id||id===me())return;
@@ -518,6 +544,7 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
+window.addEventListener('hashchange',openLinkedPost);
 document.addEventListener('input',(event)=>{
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
 });
