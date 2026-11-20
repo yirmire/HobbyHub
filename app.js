@@ -218,7 +218,7 @@ function renderLayout() {
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
  return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row"><button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
- ${titleBar()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
+ ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
 function postCard(post) {
