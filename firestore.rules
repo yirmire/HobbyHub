@@ -123,6 +123,18 @@ service cloud.firestore {
           && request.resource.data.createdAt is number;
         allow update: if false;
       }
+      match /privateReads/{threadId} {
+        function validReadTime() {
+          return request.resource.data.keys().hasOnly(['lastReadAt'])
+            && request.resource.data.lastReadAt is number
+            && request.resource.data.lastReadAt >= 0;
+        }
+        allow read: if isMe(uid);
+        allow create: if isMe(uid) && threadMember(appId, threadId) && validReadTime();
+        allow update: if isMe(uid) && threadMember(appId, threadId) && validReadTime()
+          && request.resource.data.lastReadAt >= resource.data.lastReadAt;
+        allow delete: if false;
+      }
       match /testimonials/{authorId} {
         allow get: if isMe(uid) || isMe(authorId) || (loggedIn() && resource.data.approved == true);
         allow list: if isMe(uid) || (loggedIn() && resource.data.approved == true);
