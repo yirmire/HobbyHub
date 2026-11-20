@@ -71,6 +71,39 @@ for (const exists of [false,true]) {
   });
 }
 
+test('opens a conversation while a follow is awaiting confirmation', async () => {
+  const context = appContext();
+  let confirmFollow;
+  context.followWrite = new Promise(resolve => { confirmFollow = resolve; });
+  vm.runInContext(`
+    state.user={uid:'user-a'};
+    state.profile={name:'Alice'};
+    state.members=[{uid:'user-b',name:'Bruno'}];
+    render=()=>{};
+    showToast=()=>{};
+    db={};
+    firebase={
+      doc:(_db,...parts)=>parts.join('/'),
+      collection:()=>({}),
+      onSnapshot:()=>()=>{},
+      setDoc:()=>followWrite,
+      runTransaction:async(_db,callback)=>callback({
+        get:async()=>({exists:()=>false}),
+        set:()=>{}
+      })
+    };
+  `, context);
+  const follow = vm.runInContext(`onAction({dataset:{action:'follow',id:'user-b'}})`, context);
+  try {
+    assert.equal(vm.runInContext('state.updatingFollow', context), true);
+    await vm.runInContext(`onAction({dataset:{action:'open-dm',id:'user-b'}})`, context);
+    assert.equal(vm.runInContext('state.chatTarget?.uid', context), 'user-b');
+  } finally {
+    confirmFollow();
+    await follow;
+  }
+});
+
 test('local feed matches a city even with state suffix, but not a different city',()=>{
  const context=appContext();
  assert.equal(vm.runInContext(`state.profile={location:'Nova Friburgo, RJ'};locate('NOVA FRIBURGO - Rio de Janeiro')`,context),true);
