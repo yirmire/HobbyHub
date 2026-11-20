@@ -17,6 +17,41 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('unread navigation counts conversations and highlights each one in the list', () => {
+  const context = appContext();
+  const list = vm.runInContext(`
+    state.user={uid:'a'};
+    state.threads=[{id:'a_b',participants:['a','b']},{id:'a_c',participants:['a','c']}];
+    state.latestInboundAt.set('a_b',200);state.latestInboundAt.set('a_c',300);
+    state.privateReadAt.set('a_c',300);
+    renderMessages()
+  `, context);
+  assert.match(list, /chat-unread"[^>]+data-id="b"/);
+  assert.doesNotMatch(list, /chat-unread"[^>]+data-id="c"/);
+  const badges = vm.runInContext('renderSidebar() + renderBottomNav()', context);
+  assert.equal([...badges.matchAll(/1 conversa não lida/g)].length, 2);
+  assert.equal(vm.runInContext("state.privateReadAt.set('a_b',200);unreadBadge('messages')", context), '');
+});
+
+test('read markers advance to received messages only when the private chat is visible', async () => {
+  const context = appContext();
+  context.writes = [];
+  vm.runInContext(`
+    state.user={uid:'a'};state.chatTarget={uid:'b'};
+    state.tab='messages';state.chatMode='direct';
+    state.directMessages=[{senderId:'b',createdAt:200},{senderId:'a',createdAt:400}];
+    document.visibilityState='hidden';render=()=>{};db={};
+    firebase={doc:()=> 'marker',runTransaction:async(_db,operation)=>operation({
+      get:async()=>({data:()=>({lastReadAt:100})}),set:(_path,marker)=>writes.push(marker.lastReadAt)
+    })};
+  `, context);
+  await vm.runInContext('markOpenConversationRead()', context);
+  assert.deepEqual(context.writes, []);
+  await vm.runInContext("document.visibilityState='visible';markOpenConversationRead()", context);
+  assert.deepEqual(context.writes, [200]);
+  assert.equal(vm.runInContext("state.privateReadAt.get('a_b')", context), 200);
+});
+
 test('reports only the selected private message', async () => {
   const handlers = {};
   const context = appContext(handlers);
