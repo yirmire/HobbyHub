@@ -63,7 +63,7 @@ const state = {
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
-  eventGroupId:null,
+  eventGroupId:null, selectedEvent:null, eventsLoaded:false,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -199,7 +199,10 @@ function startSession() {
     state.groupsLoaded=true;
     queueMicrotask(openLinkedContent);
   },'comunidades');
-  subscribe(col('events'), (s)=>{state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));},'eventos');
+  subscribe(col('events'), (s)=>{
+    state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    state.eventsLoaded=true;queueMicrotask(openLinkedContent);
+  },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
     (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));watchLatestIncomingMessages();},'conversas privadas');
@@ -229,7 +232,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
-      state.eventGroupId=null;
+      state.eventGroupId=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -383,13 +386,13 @@ function renderGroups(){
  <div class="section-head"><h2>Descubra comunidades</h2><span class="pill">${list.length} grupos</span></div>
  ${list.length?`<div class="grid-two">${list.map(groupCard).join('')}</div>`:empty('🧩','A comunidade começa com você','Nenhum grupo encontrado por aqui. Que tal criar o primeiro?','Criar uma comunidade','group')}`;
 }
-function eventCard(event, inGroup=false) {
+function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
  const future=event.date>=today();
  const group=state.groups.find(item=>item.id===event.groupId);
  const canJoin=!event.groupId||group?.members?.includes(me());
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
- <h3>${esc(event.title)}</h3><p>${esc(short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
+ ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
@@ -494,6 +497,15 @@ function renderFirstVisit() {
 function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='first-visit')return renderFirstVisit();
+ if(state.modal==='event-detail'){
+   const event=state.events.find(item=>item.id===state.selectedEvent);
+   if(!event)return modalWrap('Evento indisponível','<p>Este evento não está mais disponível.</p>');
+   const group=state.groups.find(item=>item.id===event.groupId);
+   const joined=group?.members?.includes(me());
+   return modalWrap(event.title,`${eventCard(event,false,true)}
+   ${group&&!joined&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">Adicionar ao calendário</button>`:''}</div>`);
+ }
  if(state.modal==='compose')return modalWrap(state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
  <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}"></textarea></div>
@@ -618,7 +630,7 @@ function render() {
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
 function clearContentLink(){
- if(/^#(?:post|group)=/.test(window.location.hash)){
+ if(/^#(?:post|group|event)=/.test(window.location.hash)){
    window.history.replaceState(null,'',window.location.pathname+window.location.search);
  }
 }
@@ -658,7 +670,7 @@ function contentLink(type,id) {
  return link.href;
 }
 function openLinkedContent() {
- const match=/^#(post|group)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
+ const match=/^#(post|group|event)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
  if(!state.user||state.modal)return;
  if(!match){
    if(state.welcomePending&&state.groupsLoaded){state.welcomePending=false;openModal('first-visit');}
@@ -670,15 +682,50 @@ function openLinkedContent() {
  if(type==='group'&&state.groupsLoaded){
    state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');
  }
+ if(type==='event'&&state.eventsLoaded){
+   state.tab='events';state.selectedEvent=id;openModal('event-detail');
+ }
 }
 async function copyGroupInvite(id) {
  if(!state.groups.some(group=>group.id===id))return;
- const link=contentLink('group',id);
+ await copyContentLink(contentLink('group',id),'Link de convite copiado!','Copie o link do convite:');
+}
+async function copyContentLink(link, confirmation, promptLabel) {
  if(navigator.clipboard?.writeText){
-   try {await navigator.clipboard.writeText(link);showToast('Link de convite copiado!');return;}
+   try {await navigator.clipboard.writeText(link);showToast(confirmation);return;}
    catch(error){console.warn('Não foi possível copiar automaticamente:',error);}
  }
- window.prompt('Copie o link do convite:',link);
+ window.prompt(promptLabel,link);
+}
+function calendarFile(event, stamp=new Date()) {
+ const escapeText=value=>String(value??'').replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/[,;]/g,character=>'\\'+character);
+ const link=contentLink('event',event.id);
+ const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//HobbyHub//Eventos//PT-BR','BEGIN:VEVENT',
+   `UID:${escapeText(event.id)}@${window.location.hostname}`,
+   `DTSTAMP:${stamp.toISOString().replace(/[-:]|\.\d{3}/g,'')}`,
+   `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
+   `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(event.location)}`,
+   `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT','END:VCALENDAR'];
+ const encoder=new TextEncoder();
+ return lines.map(line=>{
+   let folded='',bytes=0;
+   for(const character of line){
+     const size=encoder.encode(character).length;
+     if(bytes+size>75){folded+='\r\n ';bytes=1;}
+     folded+=character;bytes+=size;
+   }
+   return folded;
+ }).join('\r\n')+'\r\n';
+}
+function downloadEventCalendar(event) {
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(event.date)||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(event.time)){
+   showToast('O evento precisa de uma data e um horário válidos.',true);return;
+ }
+ const url=URL.createObjectURL(new Blob([calendarFile(event)],{type:'text/calendar;charset=utf-8'}));
+ const link=document.createElement('a');
+ link.href=url;link.download='evento-hobbyhub.ics';
+ document.body.appendChild(link);link.click();link.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function openComments(postId){
  if(!state.posts.some(p=>p.id===postId))return;
@@ -754,6 +801,15 @@ async function onAction(btn) {
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;openModal('event');return;
+  case 'view-event':state.selectedEvent=id;openModal('event-detail');return;
+  case 'copy-event-link':
+    if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
+    return;
+  case 'event-calendar':{
+    const event=state.events.find(item=>item.id===id);
+    if(event?.attendees?.includes(me()))downloadEventCalendar(event);
+    return;
+  }
   case 'group-event':{
     const group=state.groups.find(item=>item.id===id);
     if(!group?.members?.includes(me()))return;
