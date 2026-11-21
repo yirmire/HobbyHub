@@ -17,6 +17,26 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('a pending moderator can accept, and only active moderators get controls for that group', () => {
+  const context = appContext();
+  const pending = vm.runInContext(`
+    state.user={uid:'member'};state.selectedGroup='g';state.modal='group-detail';
+    state.groups=[{id:'g',name:'Fotografia',createdBy:'owner',members:['owner','member']},
+      {id:'other',name:'Leitura',createdBy:'someone',members:['member','someone']}];
+    state.posts=[{id:'p',groupId:'g',content:'Publicação do grupo'},{id:'p2',groupId:'other',content:'Publicação de outro grupo'}];
+    state.groupRoles.set('g','pending');
+    renderModal()
+  `, context);
+  assert.match(pending, /Aceitar convite/);
+  assert.doesNotMatch(pending, /data-action="pin-group-post"/);
+  const active = vm.runInContext(`state.groupRoles.set('g','active');renderModal()`, context);
+  assert.match(active, /data-action="pin-group-post"/);
+  assert.match(active, /data-action="delete-post"/);
+  assert.match(active, /Deixar a moderação/);
+  assert.doesNotMatch(vm.runInContext(`state.selectedGroup='other';renderModal()`, context), /data-action="pin-group-post"/);
+  assert.doesNotMatch(vm.runInContext(`state.selectedGroup='g';state.groupRoles.delete('g');renderModal()`, context), /data-action="pin-group-post"/);
+});
+
 test('community tabs separate memberships and show the latest post and nearest active event', () => {
   const context = appContext();
   const mine = vm.runInContext(`

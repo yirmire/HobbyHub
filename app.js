@@ -67,6 +67,7 @@ const state = {
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
   eventFeedback:null,
+  groupRoles:new Map(), moderationSelection:null,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -215,6 +216,9 @@ function startSession() {
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
+  subscribe(col('members',me(),'moderation'),snapshot=>{
+    state.groupRoles=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().status]));
+  },'convites de moderação');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -245,6 +249,7 @@ async function init() {
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
       state.eventFeedback=null;
+      state.groupRoles.clear();state.moderationSelection=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -419,6 +424,7 @@ function groupCard(g, activity) {
  const joined=(g.members||[]).includes(me());
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
  <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
+ ${joined&&state.groupRoles.get(g.id)==='pending'?'<span class="pill">Convite para moderar</span>':''}
  ${activity?.post?`<div><small class="muted">Publicação mais recente</small><br><button class="text-action" data-action="comments" data-id="${esc(activity.post.id)}">${esc(short(activity.post.content,75))}</button></div>`:''}
  ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
@@ -616,6 +622,23 @@ function renderEventFeedback(event) {
  <label class="field">O que podemos melhorar? (opcional)<textarea class="textarea" name="comment" maxlength="500">${esc(mine?.comment||'')}</textarea></label>
  <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${mine?'Atualizar avaliação':'Enviar avaliação'}</button></form>`:''}</section>`;
 }
+function canManageGroup(group) {
+ return Boolean(group&&(group.createdBy===me()||(group.members?.includes(me())&&state.groupRoles.get(group.id)==='active')));
+}
+function renderGroupModeration(group) {
+ const role=group.members?.includes(me())?state.groupRoles.get(group.id):null;
+ const ownRole=role==='pending'?`<p>Você recebeu um convite para moderar esta comunidade.</p><div class="toggle-row"><button class="btn btn-primary btn-small" data-action="accept-group-role" data-id="${esc(group.id)}">Aceitar convite</button><button class="btn btn-ghost btn-small" data-action="leave-group-role" data-id="${esc(group.id)}">Recusar</button></div>`
+  :role==='active'?`<p>Você pode fixar publicações e remover conteúdo desta comunidade.</p><button class="btn btn-outline btn-small" data-action="leave-group-role" data-id="${esc(group.id)}">Deixar a moderação</button>`:'';
+ const selected=state.moderationSelection?.groupId===group.id?state.moderationSelection:null;
+ const candidates=(group.members||[]).filter(uid=>uid!==me());
+ const ownerControls=group.createdBy===me()?`<h3>Moderação</h3>${candidates.length?`
+  <label class="field">Membro da comunidade<select id="moderation-member" class="select" data-group="${esc(group.id)}"><option value="">Selecione um membro</option>${candidates.map(uid=>`<option value="${esc(uid)}" ${selected?.targetId===uid?'selected':''}>${esc(member(uid)?.name||`Membro ${uid.slice(0,6)}`)}</option>`).join('')}</select></label>
+  ${!selected?'':selected.loading?'<p class="mini">Consultando função…</p>':selected.error?`<p class="tip">${esc(selected.error)}</p>`:
+  selected.status?`<p class="mini">${selected.status==='active'?'Moderador ativo':'Convite pendente'}</p><button class="btn btn-outline btn-small" data-action="revoke-group-role">Revogar função ou convite</button>`:
+  '<button class="btn btn-primary btn-small" data-action="invite-group-role">Convidar para moderar</button>'}`
+  :'<p class="tip">Quando outra pessoa entrar no grupo, você poderá convidá-la para moderar.</p>'}`:'';
+ return ownRole||ownerControls?`<section class="card" style="padding:16px;margin:14px 0" aria-label="Moderação da comunidade">${ownerControls}${ownRole}</section>`:'';
+}
 function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='first-visit')return renderFirstVisit();
@@ -660,7 +683,7 @@ function renderModal() {
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
  <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
- <div class="toggle-row"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${group.createdBy===me()?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button>`:''}</div></article>`;
+ <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="delete-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
  ${welcoming?`<section class="card" style="padding:16px;margin:14px 0"><h3>${joined?'Faça sua primeira contribuição':'Participe desta comunidade'}</h3>
@@ -668,6 +691,7 @@ function renderModal() {
  <div class="toggle-row" style="flex-wrap:wrap">${joined?`${pinned?`<button class="btn btn-primary btn-small" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}<button class="btn ${pinned?'btn-outline':'btn-primary'} btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Se apresentar</button>`:`<button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button>`}</div></section>`:''}
  <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${pinned?renderGroupPost(pinned,true):''}
+ ${renderGroupModeration(group)}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
  ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
  <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
@@ -696,8 +720,9 @@ function renderModal() {
  }
  if(state.modal==='comments'){
  const post=state.posts.find(p=>p.id===state.selectedPost);
+ const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0 0">${esc(short(post.content,220))}</p></div>`:''}
- <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()?`<button data-action="delete-comment" data-id="${esc(c.id)}" aria-label="Excluir comentário">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
+ <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()||canModerate?`<button data-action="delete-comment" data-id="${esc(c.id)}" aria-label="Excluir comentário">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
  if(state.modal==='quiz'){
@@ -837,6 +862,23 @@ async function loadEventFeedback(event) {
 function openEventDetail(id) {
  state.selectedEvent=id;state.eventFeedback=null;openModal('event-detail');
  void loadEventFeedback(state.events.find(event=>event.id===id));
+}
+async function loadModerationSelection(groupId,targetId) {
+ const group=state.groups.find(item=>item.id===groupId);
+ if(group?.createdBy!==me()||!targetId||targetId===me()||!group.members?.includes(targetId)){
+   state.moderationSelection=null;render();return;
+ }
+ const selection={groupId,targetId,loading:true};
+ state.moderationSelection=selection;render();
+ try{
+   const snapshot=await firebase.getDoc(ref('members',targetId,'moderation',groupId));
+   selection.status=snapshot.data()?.status;
+ }catch(error){
+   selection.error=friendlyError(error);
+ }finally{
+   selection.loading=false;
+   if(state.moderationSelection===selection)render();
+ }
 }
 function openLinkedContent() {
  const match=/^#(post|group|event)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
@@ -1021,6 +1063,37 @@ async function onAction(btn) {
     state.eventGroupId=id;state.eventTemplate=null;openModal('event');return;
   }
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
+  case 'invite-group-role':
+  case 'revoke-group-role':await attempt(async()=>{
+    const selection=state.moderationSelection;
+    const group=state.groups.find(item=>item.id===selection?.groupId);
+    if(!selection||selection.loading||group?.createdBy!==me()||state.selectedGroup!==group.id)return;
+    const target=ref('members',selection.targetId,'moderation',group.id);
+    if(action==='invite-group-role'){
+      if(selection.status||!group.members?.includes(selection.targetId))return;
+      await firebase.setDoc(target,{status:'pending'});
+      showToast('Convite para moderar enviado.');
+    }else{
+      if(!selection.status)return;
+      await firebase.deleteDoc(target);
+      showToast('Função ou convite revogado.');
+    }
+    if(state.moderationSelection===selection)await loadModerationSelection(group.id,selection.targetId);
+  });return;
+  case 'accept-group-role':
+  case 'leave-group-role':await attempt(async()=>{
+    const status=state.groupRoles.get(id);
+    const target=ref('members',me(),'moderation',id);
+    if(action==='accept-group-role'){
+      if(status!=='pending')return;
+      await firebase.updateDoc(target,{status:'active'});
+      showToast('Convite aceito. Você agora é moderador.');
+    }else{
+      if(!status)return;
+      await firebase.deleteDoc(target);
+      showToast(status==='pending'?'Convite recusado.':'Você deixou a moderação.');
+    }
+  });return;
   case 'view-welcome-group':
     if(!state.groups.some(group=>group.id===id))return;
     state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');return;
@@ -1028,7 +1101,7 @@ async function onAction(btn) {
   case 'pin-group-post':
   case 'unpin-group-post':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===state.selectedGroup);
-    if(!group||group.createdBy!==me())return;
+    if(!canManageGroup(group))return;
     const groupRef=ref('groups',group.id);
     if(action==='pin-group-post'){
       if(!state.posts.some(post=>post.id===id&&post.groupId===group.id))return;
@@ -1118,8 +1191,13 @@ async function onAction(btn) {
   });return;
   case 'join-group':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===id);if(!group)return;
-    const joined=(group.members||[]).includes(me());
-    await firebase.updateDoc(ref('groups',id),{members:joined?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
+    const uid=me(),joined=group.members?.includes(uid),target=ref('groups',id);
+    if(joined){
+      const batch=firebase.writeBatch(db);
+      batch.update(target,{members:firebase.arrayRemove(uid)});
+      batch.delete(ref('members',uid,'moderation',id));
+      await batch.commit();
+    }else await firebase.updateDoc(target,{members:firebase.arrayUnion(uid)});
     showToast(joined?'Você saiu da comunidade.':'Bem-vindo à comunidade!');
   },'updatingGroup');return;
   case 'rsvp':await attempt(async()=>{
@@ -1149,6 +1227,9 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
+ if(event.target.id==='moderation-member'){
+   void loadModerationSelection(event.target.dataset.group,event.target.value);return;
+ }
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
  else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;

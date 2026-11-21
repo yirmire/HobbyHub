@@ -30,6 +30,20 @@ service cloud.firestore {
       return loggedIn()
         && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(id)).data.participants;
     }
+    function moderationPath(appId, uid, groupId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(uid)/moderation/$(groupId);
+    }
+    function managesGroup(appId, groupId, group) {
+      return isMe(group.get('createdBy', '')) || (loggedIn()
+        && request.auth.uid in group.members
+        && get(moderationPath(appId, request.auth.uid, groupId)).data.status == 'active');
+    }
+    function moderatesPost(appId, post) {
+      let groupId = post.get('groupId', '');
+      return loggedIn() && validText(groupId, 1, 120) && groupId.matches('[^/]+')
+        && managesGroup(appId, groupId,
+          get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
+    }
     function betweenUnblockedMembers(appId, participants) {
       return participants is list && participants.size() == 2
         && participants[0] is string && participants[1] is string
@@ -150,6 +164,20 @@ service cloud.firestore {
           && request.resource.data.revision >= resource.data.revision;
         allow delete: if false;
       }
+      match /moderation/{groupId} {
+        function groupData() {
+          return getAfter(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data;
+        }
+        function validRole(status) {
+          return request.resource.data.keys().hasOnly(['status'])
+            && request.resource.data.status == status && uid in groupData().members;
+        }
+        allow get: if isMe(uid) || isMe(get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.createdBy);
+        allow list: if isMe(uid);
+        allow create: if isMe(groupData().createdBy) && uid != request.auth.uid && validRole('pending');
+        allow update: if isMe(uid) && resource.data.status == 'pending' && validRole('active');
+        allow delete: if isMe(uid) || isMe(groupData().createdBy);
+      }
       match /testimonials/{authorId} {
         allow get: if isMe(uid) || isMe(authorId) || (loggedIn() && resource.data.approved == true);
         allow list: if isMe(uid) || (loggedIn() && resource.data.approved == true);
@@ -179,7 +207,7 @@ service cloud.firestore {
           || (exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId))
             && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId)).data.members));
       allow update: if onlyMyArrayMembership('likes');
-      allow delete: if loggedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || moderatesPost(appId, resource.data));
 
       match /comments/{commentId} {
         allow read: if loggedIn();
@@ -187,7 +215,8 @@ service cloud.firestore {
           && request.resource.data.userId == request.auth.uid
           && validText(request.resource.data.text, 1, 800)
           && request.resource.data.createdAt is number;
-        allow delete: if loggedIn() && resource.data.userId == request.auth.uid;
+        allow delete: if loggedIn() && (resource.data.userId == request.auth.uid
+          || moderatesPost(appId, get(/databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)).data));
         allow update: if false;
       }
     }
@@ -195,7 +224,7 @@ service cloud.firestore {
     match /artifacts/{appId}/public/data/groups/{groupId} {
       function canPinGroupPost() {
         let postId = request.resource.data.pinnedPostId;
-        return isMe(resource.data.get('createdBy', ''))
+        return managesGroup(appId, groupId, resource.data)
           && changedOnly(['pinnedPostId'])
           && postId is string
           && (postId == '' || (validText(postId, 1, 120)
@@ -211,7 +240,10 @@ service cloud.firestore {
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.description, 1, 600)
         && validText(request.resource.data.location, 1, 90);
-      allow update: if onlyMyArrayMembership('members') || canPinGroupPost();
+      allow update: if (onlyMyArrayMembership('members')
+          && (request.auth.uid in request.resource.data.members
+            || !existsAfter(moderationPath(appId, request.auth.uid, groupId))))
+        || canPinGroupPost();
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
     }
 

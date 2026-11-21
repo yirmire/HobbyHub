@@ -333,4 +333,50 @@ await request(recipient, 'GET', `${finished}/feedback/${recipient.localId}`, 200
 await request(recipient, 'GET', `${finished}/feedback`, 403);
 await request(other, 'GET', `${finished}/feedback/${recipient.localId}`, 403);
 
+const moderation = `public/data/members/${recipient.localId}/moderation`;
+const rolePath = `${moderation}/welcome-group`;
+const pendingRole = {status:str('pending')};
+const activeRole = {status:str('active')};
+await request(recipient, 'PATCH', rolePath, 403, pendingRole);
+await request(sender, 'PATCH', rolePath, 403, pendingRole);
+await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, {members:both});
+await request(sender, 'PATCH', rolePath, 200, pendingRole);
+await request(recipient, 'GET', moderation, 200);
+await request(other, 'GET', rolePath, 403);
+await request(recipient, 'PATCH', pin, 403, {pinnedPostId:str('welcome-post')});
+await request(sender, 'PATCH', rolePath, 403, activeRole);
+await request(recipient, 'PATCH', rolePath, 200, activeRole);
+await request(recipient, 'PATCH', pin, 200, {pinnedPostId:str('welcome-post')});
+await request(recipient, 'DELETE', 'public/data/posts/unrelated-post', 403);
+await request(recipient, 'POST', 'public/data/posts?documentId=moderated-post', 200, {
+  ...welcome,groupId:str('welcome-group'),userId:str(recipient.localId)
+});
+await request(sender, 'DELETE', 'public/data/posts/moderated-post', 200);
+const commentPath='public/data/posts/welcome-post/comments';
+await request(sender, 'POST', `${commentPath}?documentId=moderated-comment`, 200, {
+  userId:str(sender.localId),text:str('Comentário de teste'),createdAt:{integerValue:'1'}
+});
+await request(recipient, 'DELETE', `${commentPath}/moderated-comment`, 200);
+await request(sender, 'POST', 'public/data/posts?documentId=remove-in-group', 200, {...welcome,groupId:str('welcome-group')});
+await request(recipient, 'DELETE', 'public/data/posts/remove-in-group', 200);
+await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 403, {members:organizerOnly});
+await request(sender, 'DELETE', rolePath, 200);
+await request(recipient, 'PATCH', pin, 403, {pinnedPostId:str('')});
+await request(sender, 'PATCH', rolePath, 200, pendingRole);
+await request(recipient, 'PATCH', rolePath, 200, activeRole);
+const dbName=`projects/${project}/databases/(default)`;
+const resourcePrefix=`${dbName}/documents/artifacts/${project}/`;
+const leaving=await fetch(`http://${storeHost}/v1/${dbName}/documents:commit`, {
+  method:'POST',
+  headers:{'content-type':'application/json',authorization:`Bearer ${recipient.idToken}`},
+  body:JSON.stringify({writes:[
+    {update:{name:resourcePrefix+group,fields:{members:organizerOnly}},updateMask:{fieldPaths:['members']}},
+    {delete:resourcePrefix+rolePath}
+  ]})
+});
+assert.equal(leaving.status, 200, await leaving.text());
+await request(recipient, 'GET', rolePath, 404);
+await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, {members:both});
+await request(recipient, 'PATCH', pin, 403, {pinnedPostId:str('')});
+
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');
