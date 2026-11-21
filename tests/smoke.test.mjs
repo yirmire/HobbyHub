@@ -17,6 +17,27 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the event agenda combines search, hobby, community and date filters', () => {
+  const context = appContext();
+  const results = vm.runInContext(`
+    state.groups=[{id:'club',name:'Clube Litorâneo',location:'Santos, SP'},{id:'other',name:'Outro clube',location:'Santos'}];
+    state.events=[
+      {id:'match',title:'Passeio fotográfico',hobby:'Fotografia',groupId:'club',date:'2099-01-01',location:'Praça'},
+      {id:'history',title:'Encontro antigo',hobby:'Fotografia',groupId:'club',date:'2000-01-01',location:'Praça'},
+      {id:'hobby',title:'Outro hobby',hobby:'Leitura',groupId:'club',date:'2099-01-01'},
+      {id:'group',title:'Outra comunidade',hobby:'Fotografia',groupId:'other',date:'2099-01-01'},
+      {id:'city',title:'Outro local',hobby:'Fotografia',date:'2099-01-01',location:'Recife'}
+    ];
+    state.eventSearch='SANTOS';state.eventCommunity='club';state.eventHobby='Fotografia';
+    renderEvents()
+  `, context);
+  assert.match(results, /Passeio fotográfico/);
+  assert.match(results, /1 evento encontrado/);
+  assert.doesNotMatch(results, /Encontro antigo|Outro hobby|Outra comunidade|Outro local/);
+  assert.match(vm.runInContext(`state.eventFilter='past';renderEvents()`, context), /Encontro antigo/);
+  assert.match(vm.runInContext(`state.eventSearch='Campinas';renderEvents()`, context), /Nenhum evento encontrado/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
