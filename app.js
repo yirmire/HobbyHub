@@ -366,9 +366,22 @@ function filteredPosts(posts=state.posts) {
  const q=norm(state.search);if(q)found=found.filter(p=>norm([p.content,p.hobby,p.location,authorName(p)].join(' ')).includes(q));
  return found.slice(0,120);
 }
+function renderEventReminders(day=tomorrow()) {
+ const events=state.events.filter(event=>event.date===day&&event.cancelled!==true&&event.attendees?.includes(me()))
+  .sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
+ if(!events.length)return '';
+ return `<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Lembretes dos seus eventos">
+   <h2 style="font-size:16px;margin:0 0 8px">Seus eventos de amanhã</h2>
+   <div class="form-stack">${events.map(event=>`<div>
+     <strong>${esc(event.title)}</strong>
+     <p class="mini">${event.time?`Às ${esc(event.time)} · `:''}${esc(event.location||'Local a combinar')}</p>
+     <button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Abrir evento</button>
+   </div>`).join('')}</div>
+ </section>`;
+}
 function renderHome() {
  const feed=filteredPosts();
- return `<section class="hero"><span class="hero-overline">✦ CONECTE-SE PELO QUE VOCÊ AMA</span><h2>O próximo grande encontro começa com um interesse em comum.</h2><p>Encontre pessoas da sua cidade ou de qualquer lugar com as mesmas paixões que você.</p><button class="btn btn-white btn-small" data-action="tab" data-tab="explore">Explorar a comunidade ${icon('arrow')}</button></section>
+ return `${renderEventReminders()}<section class="hero"><span class="hero-overline">✦ CONECTE-SE PELO QUE VOCÊ AMA</span><h2>O próximo grande encontro começa com um interesse em comum.</h2><p>Encontre pessoas da sua cidade ou de qualquer lugar com as mesmas paixões que você.</p><button class="btn btn-white btn-small" data-action="tab" data-tab="explore">Explorar a comunidade ${icon('arrow')}</button></section>
  <div class="section-head"><h2>Explore seus interesses</h2><button class="text-action" data-action="quiz">Me surpreenda ${icon('spark')}</button></div>
  ${topicButtons(state.topic)}
  <div class="card composer-bar">${avatar(state.profile)}<button class="composer-prompt" data-action="compose">Qual hobby fez seu dia melhor hoje?</button><button class="circle-btn" data-action="compose" aria-label="Publicar">${icon('plus')}</button></div>
@@ -670,7 +683,13 @@ function renderModal() {
  }
  return '';
 }
-function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function localDateKey(date) {
+ return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+function today(){return localDateKey(new Date());}
+function tomorrow(date=new Date()){
+ return localDateKey(new Date(date.getFullYear(),date.getMonth(),date.getDate()+1));
+}
 function captureDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
    const values={};f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{values[el.name]=el.value;});
@@ -1076,7 +1095,10 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
-document.addEventListener('visibilitychange',()=>void markOpenConversationRead());
+document.addEventListener('visibilitychange',()=>{
+ if(document.visibilityState==='visible'&&state.user&&state.tab==='home')render();
+ void markOpenConversationRead();
+});
 document.addEventListener('change',(event)=>{
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
