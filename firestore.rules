@@ -44,6 +44,30 @@ service cloud.firestore {
         && managesGroup(appId, groupId,
           get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
     }
+    function publicPostPath(appId, postId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId);
+    }
+    function removedPostPath(appId, postId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/removedPosts/$(postId);
+    }
+    function moderationLogPath(appId, groupId, entryId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)/moderationLog/$(entryId);
+    }
+    function groupOwner(appId, groupId) {
+      return isMe(get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.createdBy);
+    }
+    function archivedPostRemoval(appId, postId, post) {
+      let archive = removedPostPath(appId, postId);
+      return moderatesPost(appId, post) && !exists(archive) && existsAfter(archive);
+    }
+    function restoresGroupPost(appId, postId, post) {
+      let groupId = post.get('groupId', '');
+      let archive = removedPostPath(appId, postId);
+      return validText(groupId, 1, 120) && groupId.matches('[^/]+') && groupOwner(appId, groupId)
+        && exists(archive) && !existsAfter(archive)
+        && get(archive).data.groupId == groupId
+        && getAfter(moderationLogPath(appId, groupId, get(archive).data.entryId)).data.post == post;
+    }
     function betweenUnblockedMembers(appId, participants) {
       return participants is list && participants.size() == 2
         && participants[0] is string && participants[1] is string
@@ -195,8 +219,9 @@ service cloud.firestore {
 
     match /artifacts/{appId}/public/data/posts/{postId} {
       allow read: if loggedIn();
-      allow create: if loggedIn()
-        && request.resource.data.userId == request.auth.uid
+      allow create: if loggedIn() && (ordinaryPost() || restoresGroupPost(appId, postId, request.resource.data));
+      function ordinaryPost() {
+        return request.resource.data.userId == request.auth.uid
         && request.resource.data.likes == []
         && validText(request.resource.data.content, 1, 2000)
         && validText(request.resource.data.hobby, 1, 60)
@@ -205,20 +230,38 @@ service cloud.firestore {
         && request.resource.data.createdAt is number
         && (!request.resource.data.keys().hasAny(['groupId'])
           || (exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId))
-            && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId)).data.members));
+            && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId)).data.members))
+        && !exists(removedPostPath(appId, postId));
+      }
       allow update: if onlyMyArrayMembership('likes');
-      allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || moderatesPost(appId, resource.data));
+      allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
 
       match /comments/{commentId} {
-        allow read: if loggedIn();
-        allow create: if loggedIn()
+        allow read: if loggedIn() && exists(publicPostPath(appId, postId));
+        allow create: if loggedIn() && exists(publicPostPath(appId, postId))
           && request.resource.data.userId == request.auth.uid
           && validText(request.resource.data.text, 1, 800)
           && request.resource.data.createdAt is number;
-        allow delete: if loggedIn() && (resource.data.userId == request.auth.uid
+        allow delete: if loggedIn() && exists(publicPostPath(appId, postId)) && (resource.data.userId == request.auth.uid
           || moderatesPost(appId, get(/databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)).data));
         allow update: if false;
       }
+    }
+
+    match /artifacts/{appId}/public/data/removedPosts/{postId} {
+      function validPointer(data) {
+        return data.keys().hasOnly(['groupId', 'entryId'])
+          && validText(data.groupId, 1, 120) && data.groupId.matches('[^/]+')
+          && validText(data.entryId, 1, 120) && data.entryId.matches('[^/]+');
+      }
+      allow create: if loggedIn() && validPointer(request.resource.data)
+        && moderatesPost(appId, {'groupId': request.resource.data.groupId})
+        && !exists(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId))
+        && getAfter(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId)).data.postId == postId;
+      allow delete: if loggedIn() && groupOwner(appId, resource.data.groupId)
+        && getAfter(publicPostPath(appId, postId)).data == get(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.post
+        && getAfter(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.restoredAt == request.time;
+      allow read, update: if false;
     }
 
     match /artifacts/{appId}/public/data/groups/{groupId} {
@@ -245,6 +288,34 @@ service cloud.firestore {
             || !existsAfter(moderationPath(appId, request.auth.uid, groupId))))
         || canPinGroupPost();
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
+
+      function canReviewModeration() {
+        return managesGroup(appId, groupId,
+          get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
+      }
+      match /moderationLog/{entryId} {
+        allow read: if loggedIn() && canReviewModeration();
+        allow create: if loggedIn() && canReviewModeration()
+          && request.resource.data.keys().hasOnly(['postId', 'post', 'reason', 'removedBy', 'removedAt'])
+          && validText(request.resource.data.postId, 1, 120)
+          && request.resource.data.postId.matches('[^/]+')
+          && validText(request.resource.data.reason, 1, 300)
+          && request.resource.data.removedBy == request.auth.uid
+          && request.resource.data.removedAt == request.time
+          && request.resource.data.post.groupId == groupId
+          && request.resource.data.post == get(publicPostPath(appId, request.resource.data.postId)).data
+          && !existsAfter(publicPostPath(appId, request.resource.data.postId))
+          && getAfter(removedPostPath(appId, request.resource.data.postId)).data == {'groupId': groupId, 'entryId': entryId};
+        allow update: if loggedIn() && groupOwner(appId, groupId)
+          && changedOnly(['restoredBy', 'restoredAt'])
+          && !resource.data.keys().hasAny(['restoredAt'])
+          && request.resource.data.restoredBy == request.auth.uid
+          && request.resource.data.restoredAt == request.time
+          && get(removedPostPath(appId, resource.data.postId)).data == {'groupId': groupId, 'entryId': entryId}
+          && !existsAfter(removedPostPath(appId, resource.data.postId))
+          && getAfter(publicPostPath(appId, resource.data.postId)).data == resource.data.post;
+        allow delete: if false;
+      }
     }
 
     match /artifacts/{appId}/public/data/events/{eventId} {
