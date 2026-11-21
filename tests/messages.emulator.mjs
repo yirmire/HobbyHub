@@ -455,4 +455,45 @@ await request(recipient, 'GET', rolePath, 404);
 await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, {members:both});
 await request(recipient, 'PATCH', pin, 403, {pinnedPostId:str('')});
 
+const queuePath=`${group}/reports`;
+const postReport=`${queuePath}/post-report`;
+const commentReport=`${queuePath}/comment-report`;
+const fileReport=(actor,path,targetType,text,commentId='')=>[{
+  update:{name:documents+path,fields:{targetType:str(targetType),postId:str('welcome-post'),
+    commentId:str(commentId),text,reason:str('Spam'),details:str(''),reporterId:str(actor.localId),status:str('pending')}},
+  updateTransforms:stamp('createdAt'),currentDocument:{exists:false}
+}];
+const welcomePost=await request(sender,'GET','public/data/posts/welcome-post',200);
+await moderate(other,fileReport(other,postReport,'post',welcomePost.fields.content),403);
+await moderate(sender,fileReport(sender,postReport,'post',welcomePost.fields.content),403);
+await moderate(recipient,fileReport(recipient,postReport,'post',str('Texto inventado')),403);
+await moderate(recipient,fileReport(recipient,postReport,'post',welcomePost.fields.content),200);
+await request(recipient,'GET',postReport,403);
+await request(other,'GET',queuePath,403);
+await request(sender,'GET',queuePath,200);
+const review=(actor,path,status,moderationId='')=>({
+  update:{name:documents+path,fields:{status:str(status),reviewedBy:str(actor.localId),moderationId:str(moderationId)}},
+  updateMask:{fieldPaths:['status','reviewedBy','moderationId']},updateTransforms:stamp('reviewedAt')
+});
+await moderate(recipient,[review(recipient,postReport,'kept')],403);
+await request(sender,'PATCH',rolePath,200,pendingRole);
+await request(recipient,'PATCH',rolePath,200,activeRole);
+await request(recipient,'GET',queuePath,200);
+await moderate(recipient,[review(recipient,postReport,'kept')],200);
+await moderate(sender,[review(sender,postReport,'kept')],403);
+await moderate(recipient,fileReport(recipient,commentReport,'comment',originalComment.fields.text,'moderated-comment'),200);
+const queueEntry=`${group}/moderationLog/queue-removal`;
+await moderate(recipient,[review(recipient,commentReport,'removed','queue-removal')],403);
+await moderate(recipient,[
+  {update:{name:documents+queueEntry,fields:{postId:str('welcome-post'),commentId:str('moderated-comment'),
+    comment:{mapValue:{fields:originalComment.fields}},reason:str('Spam'),removedBy:str(recipient.localId)}},
+    updateTransforms:stamp('removedAt')},
+  {update:{name:documents+commentPointer,fields:{groupId:str('welcome-group'),entryId:str('queue-removal')}}},
+  {delete:documents+selectedCommentPath},
+  review(recipient,commentReport,'removed','queue-removal')
+],200);
+await request(other,'GET',selectedCommentPath,404);
+await request(other,'GET',siblings,200);
+assert.equal((await request(sender,'GET',commentReport,200)).fields.status.stringValue,'removed');
+
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');

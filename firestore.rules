@@ -327,6 +327,52 @@ service cloud.firestore {
         return managesGroup(appId, groupId,
           get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
       }
+      match /reports/{reportId} {
+        function currentTarget(data) {
+          return data.targetType == 'post'
+            ? get(publicPostPath(appId, data.postId)).data
+            : get(publicCommentPath(appId, data.postId, data.commentId)).data;
+        }
+        function available(data) {
+          return exists(publicPostPath(appId, data.postId))
+            && get(publicPostPath(appId, data.postId)).data.groupId == groupId
+            && (data.targetType == 'post' || exists(publicCommentPath(appId, data.postId, data.commentId)));
+        }
+        function verifiedTarget(data) {
+          let post = get(publicPostPath(appId, data.postId)).data;
+          let target = currentTarget(data);
+          return post.groupId == groupId && target.userId is string && target.userId != request.auth.uid
+            && data.text == (data.targetType == 'post' ? target.content : target.text);
+        }
+        function linkedRemoval(data) {
+          let entry = getAfter(moderationLogPath(appId, groupId, data.moderationId)).data;
+          return entry.postId == resource.data.postId
+            && entry.get('commentId', '') == resource.data.commentId
+            && entry.removedBy == request.auth.uid && entry.removedAt == request.time;
+        }
+        allow read: if loggedIn() && canReviewModeration();
+        allow create: if loggedIn() && request.auth.uid in get(
+            /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members
+          && request.resource.data.keys().hasOnly(['targetType', 'postId', 'commentId', 'text', 'reason', 'details', 'reporterId', 'createdAt', 'status'])
+          && request.resource.data.reporterId == request.auth.uid
+          && request.resource.data.createdAt == request.time && request.resource.data.status == 'pending'
+          && validText(request.resource.data.postId, 1, 120) && request.resource.data.postId.matches('[^/]+')
+          && ((request.resource.data.targetType == 'post' && request.resource.data.commentId == '')
+            || (request.resource.data.targetType == 'comment' && validText(request.resource.data.commentId, 1, 120)
+              && request.resource.data.commentId.matches('[^/]+')))
+          && validText(request.resource.data.text, 1, 2000)
+          && validText(request.resource.data.reason, 1, 80) && validText(request.resource.data.details, 0, 500)
+          && verifiedTarget(request.resource.data);
+        allow update: if loggedIn() && canReviewModeration() && resource.data.status == 'pending'
+          && changedOnly(['status', 'reviewedAt', 'reviewedBy', 'moderationId'])
+          && request.resource.data.reviewedAt == request.time && request.resource.data.reviewedBy == request.auth.uid
+          && ((request.resource.data.moderationId == ''
+                && ((request.resource.data.status == 'kept' && available(resource.data))
+                  || (request.resource.data.status == 'unavailable' && !available(resource.data))))
+            || (request.resource.data.status == 'removed' && validText(request.resource.data.moderationId, 1, 120)
+              && request.resource.data.moderationId.matches('[^/]+') && linkedRemoval(request.resource.data)));
+        allow delete: if false;
+      }
       match /moderationLog/{entryId} {
         function recordsPostRemoval(data) {
           return data.keys().hasOnly(['postId', 'post', 'reason', 'removedBy', 'removedAt'])
