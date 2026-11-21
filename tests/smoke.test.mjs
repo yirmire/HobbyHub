@@ -17,6 +17,27 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('community events appear in their group with member-only confirmation', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'member'};
+    state.selectedGroup='g';state.modal='group-detail';
+    state.groups=[{id:'g',name:'Fotografia',members:['member']}];
+    state.events=[
+      {id:'e',groupId:'g',title:'Caminhada do grupo',date:'2099-01-01'},
+      {id:'other',groupId:'x',title:'Evento de outro grupo',date:'2099-01-01'}
+    ];
+    renderModal()
+  `, context);
+  assert.match(markup, /Caminhada do grupo/);
+  assert.match(markup, /Confirmar presença/);
+  assert.match(markup, /data-action="group-event"/);
+  assert.doesNotMatch(markup, /Evento de outro grupo/);
+  const visitor = vm.runInContext(`state.user={uid:'visitor'};renderModal()`, context);
+  assert.match(visitor, /disabled>Só para membros/);
+  assert.doesNotMatch(visitor, /data-action="group-event"/);
+});
+
 test('an invited visitor sees Participar before the first-contribution actions', () => {
   const context = appContext();
   context.window.location = {hash:'#group=g'};
