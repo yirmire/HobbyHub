@@ -42,6 +42,24 @@ test('comments left on a removed post do not render while the post is absent', (
   assert.doesNotMatch(content, /Comentário anterior|id="comment-form"/);
 });
 
+test('group moderators can open a reason form for just the selected comment', async () => {
+  const context = appContext();
+  const comments = vm.runInContext(`
+    state.user={uid:'moderator'};state.modal='comments';state.selectedPost='p';
+    state.groups=[{id:'g',createdBy:'owner',members:['moderator']}];
+    state.groupRoles.set('g','active');
+    state.posts=[{id:'p',groupId:'g',content:'Publicação'}];
+    state.comments=[{id:'c',userId:'owner',text:'Trecho selecionado'},{id:'sibling',userId:'owner',text:'Outro trecho'}];
+    renderModal()
+  `, context);
+  assert.match(comments, /data-action="moderate-comment" data-id="c"/);
+  await vm.runInContext(`onAction({dataset:{action:'moderate-comment',id:'c'}})`, context);
+  const form = vm.runInContext('renderModal()', context);
+  assert.match(form, /Remover comentário/);
+  assert.match(form, /Trecho selecionado/);
+  assert.doesNotMatch(form, /Outro trecho/);
+});
+
 test('a pending moderator can accept, and only active moderators get controls for that group', () => {
   const context = appContext();
   const pending = vm.runInContext(`
