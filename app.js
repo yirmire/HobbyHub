@@ -59,6 +59,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
+  eventSearch:'', eventHobby:'', eventCommunity:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
@@ -443,15 +444,34 @@ function eventCard(event, inGroup=false, detail=false) {
 }
 function renderEvents() {
  const day=today();
+ const query=norm(state.eventSearch);
+ const communities=new Map(state.groups.map(group=>[group.id,group]));
+ const hobbies=[...new Set(state.events.map(event=>event.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+ const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
+   .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
+ const filtering=Boolean(query||state.eventHobby||state.eventCommunity);
  const events=state.events.filter(event=>{
+   const group=communities.get(event.groupId);
+   if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
+   if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
+   if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(state.eventFilter==='all')return true;
    if(state.eventFilter==='mine')return event.attendees?.includes(me());
    if(state.eventFilter==='past')return event.date&&event.date<day;
    return event.date>=day;
+ }).sort((a,b)=>{
+   const order=`${a.date||''} ${a.time||''}`.localeCompare(`${b.date||''} ${b.time||''}`);
+   return state.eventFilter==='past'?-order:order;
  });
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
  <div class="filters">${[['upcoming','Próximos'],['mine','Tenho interesse'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button class="filter ${state.eventFilter===id?'active':''}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
- ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
+ <div class="card form-stack" style="padding:16px;margin:0 0 16px">
+ <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
+ <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
+ <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
+ <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
+ </div>
+ ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.'):empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
 function renderSaved() {
@@ -921,6 +941,7 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-topic':state.groupTopic=btn.dataset.topic;render();return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
+  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;state.eventTemplate=null;openModal('event');return;
@@ -1103,11 +1124,14 @@ document.addEventListener('change',(event)=>{
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
  else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;
+ else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
+ else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else return;
  render();
 });
 window.addEventListener('hashchange',openLinkedContent);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
 });
 document.addEventListener('submit',async(event)=>{
