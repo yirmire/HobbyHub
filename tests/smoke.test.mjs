@@ -17,6 +17,31 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('group moderation history offers restoration to the creator only and escapes reasons', () => {
+  const context = appContext();
+  const owner = vm.runInContext(`
+    state.user={uid:'owner'};state.modal='moderation-history';state.selectedGroup='g';
+    state.groups=[{id:'g',createdBy:'owner',members:['owner','moderator']}];
+    state.moderationHistory={groupId:'g',entries:[{id:'a',post:{content:'Texto original'},reason:'<b>Motivo</b>'}]};
+    renderModal()
+  `, context);
+  assert.match(owner, /Restaurar publicação/);
+  assert.match(owner, /&lt;b&gt;Motivo&lt;\/b&gt;/);
+  const moderator = vm.runInContext(`state.user={uid:'moderator'};state.groupRoles.set('g','active');renderModal()`, context);
+  assert.match(moderator, /Texto original/);
+  assert.doesNotMatch(moderator, /Restaurar publicação/);
+  assert.doesNotMatch(vm.runInContext(`state.groupRoles.clear();renderModal()`, context), /Texto original/);
+});
+
+test('comments left on a removed post do not render while the post is absent', () => {
+  const context = appContext();
+  const content = vm.runInContext(`
+    state.modal='comments';state.selectedPost='removed';state.comments=[{text:'Comentário anterior'}];renderModal()
+  `, context);
+  assert.match(content, /Publicação indisponível/);
+  assert.doesNotMatch(content, /Comentário anterior|id="comment-form"/);
+});
+
 test('a pending moderator can accept, and only active moderators get controls for that group', () => {
   const context = appContext();
   const pending = vm.runInContext(`
@@ -31,7 +56,7 @@ test('a pending moderator can accept, and only active moderators get controls fo
   assert.doesNotMatch(pending, /data-action="pin-group-post"/);
   const active = vm.runInContext(`state.groupRoles.set('g','active');renderModal()`, context);
   assert.match(active, /data-action="pin-group-post"/);
-  assert.match(active, /data-action="delete-post"/);
+  assert.match(active, /data-action="moderate-post"/);
   assert.match(active, /Deixar a moderação/);
   assert.doesNotMatch(vm.runInContext(`state.selectedGroup='other';renderModal()`, context), /data-action="pin-group-post"/);
   assert.doesNotMatch(vm.runInContext(`state.selectedGroup='g';state.groupRoles.delete('g');renderModal()`, context), /data-action="pin-group-post"/);
