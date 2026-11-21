@@ -63,7 +63,7 @@ const state = {
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
-  eventGroupId:null, selectedEvent:null, eventsLoaded:false,
+  eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
   eventFeedback:null,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
@@ -240,7 +240,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
-      state.eventGroupId=null;state.selectedEvent=null;state.eventsLoaded=false;
+      state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.eventReads.clear();state.eventReadsLoaded=false;
       state.eventFeedback=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -533,6 +533,10 @@ function feedbackAvailable(event) {
  const dateInBrasilia=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
  return event?.cancelled!==true&&/^\d{4}-\d{2}-\d{2}$/.test(event?.date)&&event.date<dateInBrasilia;
 }
+function canRepeatEvent(event) {
+ return feedbackAvailable(event)&&event.createdBy===me()
+  && (!event.groupId||state.groups.find(group=>group.id===event.groupId)?.members?.includes(me()));
+}
 function renderEventFeedback(event) {
  const organizer=event.createdBy===me(),eligible=event.attendees?.includes(me());
  if(!feedbackAvailable(event)||(!organizer&&!eligible))return '';
@@ -564,6 +568,7 @@ function renderModal() {
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
    <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
+   ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
    ${renderEventFeedback(event)}`);
@@ -612,10 +617,11 @@ function renderModal() {
  if(state.modal==='group')return modalWrap('Criar comunidade',`<form id="group-form" data-draft="true" class="form-stack"><div class="field"><label>Nome do grupo</label><input class="input" name="name" required minlength="3" maxlength="75" placeholder="Ex.: Fotógrafos da Serra"></div><div class="field"><label>Principal hobby</label>${topicSelect()}</div><div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="600" required placeholder="Que tipo de experiências vocês querem compartilhar?"></textarea></div><div class="field"><label>Cidade ou região</label><input class="input" name="location" maxlength="90" value="${esc(myLocation())}" required></div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar grupo ${icon('arrow')}</button></div></form>`);
  if(state.modal==='event'){
  const eventGroup=state.groups.find(group=>group.id===state.eventGroupId);
- return modalWrap(eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack"><div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça"></div>
+ const template=state.eventTemplate;
+ return modalWrap(template?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${template?'<p class="tip">Escolha uma nova data e um horário. Os participantes confirmam presença novamente.</p>':''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><div class="field"><label>Horário</label><input class="input" name="time" type="time" required></div></div>
- <div class="field"><label>Interesse</label>${topicSelect(eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo"></div>
- <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?"></textarea></div>
+ <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo" value="${esc(template?.location)}"></div>
+ <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar evento</button></div></form>`);
  }
@@ -898,8 +904,14 @@ async function onAction(btn) {
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':openModal(action);return;
-  case 'event':state.eventGroupId=null;openModal('event');return;
+  case 'event':state.eventGroupId=null;state.eventTemplate=null;openModal('event');return;
   case 'view-event':openEventDetail(id);return;
+  case 'repeat-event':{
+    const event=state.events.find(item=>item.id===id);
+    if(!canRepeatEvent(event))return;
+    state.eventGroupId=event.groupId||null;state.eventTemplate=event;
+    openModal('event');return;
+  }
   case 'view-event-notice':{
     const event=state.events.find(item=>item.id===id);
     const uid=me();
@@ -938,7 +950,7 @@ async function onAction(btn) {
   case 'group-event':{
     const group=state.groups.find(item=>item.id===id);
     if(!group?.members?.includes(me()))return;
-    state.eventGroupId=id;openModal('event');return;
+    state.eventGroupId=id;state.eventTemplate=null;openModal('event');return;
   }
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
   case 'view-welcome-group':
@@ -1116,10 +1128,14 @@ document.addEventListener('submit',async(event)=>{
   case 'event-form':await attempt(async()=>{
     if(val('date')<today())throw new Error('A data deve ser hoje ou no futuro.');
     const groupId=state.eventGroupId;
-    await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:me(),attendees:[me()],createdAt:now(),...(groupId?{groupId}:{})});
+    const uid=me(),isRepeat=Boolean(state.eventTemplate);
+    const created=await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
+    if(me()!==uid)return;
+    state.eventTemplate=null;
     closeModal();setTab(groupId?'groups':'events');
-    if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
-    showToast('Evento criado! Convide sua comunidade.');
+    if(isRepeat)openEventDetail(created.id);
+    else if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
+    showToast(isRepeat?'Nova edição criada! Copie o novo convite.':'Evento criado! Convide sua comunidade.');
   });return;
   case 'event-edit-form':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
