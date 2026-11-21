@@ -215,7 +215,9 @@ function startSession() {
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
-    for(const doc of snapshot.docs)state.eventReads.set(doc.id,Math.max(doc.data().revision||0,state.eventReads.get(doc.id)||0));
+    for(const doc of snapshot.docs){
+      if(!doc.metadata.hasPendingWrites)state.eventReads.set(doc.id,Math.max(doc.data().revision||0,state.eventReads.get(doc.id)||0));
+    }
     state.eventReadsLoaded=true;
   },'avisos de eventos');
 }
@@ -843,10 +845,17 @@ async function onAction(btn) {
   case 'view-event':state.selectedEvent=id;openModal('event-detail');return;
   case 'view-event-notice':{
     const event=state.events.find(item=>item.id===id);
-    if(!event?.attendees?.includes(me()))return;
+    const uid=me();
+    if(!event?.attendees?.includes(uid))return;
     state.selectedEvent=id;openModal('event-detail');
     try {
-      if(event.revision>(state.eventReads.get(id)||0))await firebase.setDoc(ref('members',me(),'eventReads',id),{revision:event.revision});
+      if(event.revision>(state.eventReads.get(id)||0)){
+        await firebase.setDoc(ref('members',uid,'eventReads',id),{revision:event.revision});
+        if(me()===uid){
+          state.eventReads.set(id,Math.max(event.revision,state.eventReads.get(id)||0));
+          render();
+        }
+      }
     } catch(error){console.error('Salvar aviso visto:',error);}
     return;
   }
