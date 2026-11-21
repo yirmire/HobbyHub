@@ -17,6 +17,25 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('only the organizer sees the feedback summary and confirmed guests can answer after the event date', () => {
+  const context = appContext();
+  const organizer = vm.runInContext(`
+    state.user={uid:'owner'};
+    const ended={id:'e',createdBy:'owner',date:'2000-01-01',attendees:['guest']};
+    state.eventFeedback={id:'e',entries:[{id:'guest',attended:true,comment:'<b>Repetir</b>'}]};
+    renderEventFeedback(ended)
+  `, context);
+  assert.match(organizer, /Resumo privado/);
+  assert.match(organizer, /1 compareceu/);
+  assert.match(organizer, /&lt;b&gt;Repetir&lt;\/b&gt;/);
+  const guest = vm.runInContext(`state.user={uid:'guest'};renderEventFeedback(ended)`, context);
+  assert.match(guest, /Você compareceu/);
+  assert.doesNotMatch(guest, /Resumo privado/);
+  assert.equal(vm.runInContext(`state.user={uid:'stranger'};renderEventFeedback(ended)`, context), '');
+  assert.equal(vm.runInContext(`state.user={uid:'guest'};renderEventFeedback({...ended,date:'2099-01-01'})`, context), '');
+  assert.equal(vm.runInContext(`renderEventFeedback({...ended,cancelled:true})`, context), '');
+});
+
 test('event invitations wait for login and display participation before the calendar action', () => {
   const context = appContext();
   context.window.location = {hash:'#event=e',pathname:'/HobbyHub/',origin:'https://example.test'};

@@ -65,6 +65,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
+  eventFeedback:null,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -241,6 +242,7 @@ async function init() {
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.eventReads.clear();state.eventReadsLoaded=false;
+      state.eventFeedback=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -422,14 +424,20 @@ function eventCard(event, inGroup=false, detail=false) {
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
+ ${!detail&&feedbackAvailable(event)&&(attending||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
  <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||!canJoin))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
 }
 function renderEvents() {
  const day=today();
- const events=state.events.filter(e=>state.eventFilter==='all'||(state.eventFilter==='mine'?(e.attendees||[]).includes(me()):(e.date||'')>=day));
+ const events=state.events.filter(event=>{
+   if(state.eventFilter==='all')return true;
+   if(state.eventFilter==='mine')return event.attendees?.includes(me());
+   if(state.eventFilter==='past')return event.date&&event.date<day;
+   return event.date>=day;
+ });
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters">${[['upcoming','Próximos'],['mine','Tenho interesse'],['all','Todos']].map(([id,title])=>`<button class="filter ${state.eventFilter===id?'active':''}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ <div class="filters">${[['upcoming','Próximos'],['mine','Tenho interesse'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button class="filter ${state.eventFilter===id?'active':''}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
  ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
@@ -521,6 +529,29 @@ function renderFirstVisit() {
  <div class="form-stack" style="margin:14px 0">${suggestions.length?suggestions.map(({group,local,shared})=>`<article class="card" style="padding:12px"><button type="button" class="text-action" data-action="view-welcome-group" data-id="${esc(group.id)}">${esc(group.name)}</button><p class="mini muted" style="margin:4px 0">${esc(group.hobby)} · ${esc(group.location||'Online')}${local?' · Da sua cidade':''}${shared?' · Hobby em comum':''}</p></article>`).join(''):'<p class="tip">Ainda não há sugestões com esse filtro.</p>'}</div>
  <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="tab" data-tab="groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
 }
+function feedbackAvailable(event) {
+ const dateInBrasilia=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
+ return event?.cancelled!==true&&/^\d{4}-\d{2}-\d{2}$/.test(event?.date)&&event.date<dateInBrasilia;
+}
+function renderEventFeedback(event) {
+ const organizer=event.createdBy===me(),eligible=event.attendees?.includes(me());
+ if(!feedbackAvailable(event)||(!organizer&&!eligible))return '';
+ const feedback=state.eventFeedback;
+ if(feedback?.id!==event.id||feedback.loading)return '<p class="tip">Carregando avaliações…</p>';
+ if(feedback.error)return `<p class="tip">${esc(feedback.error)}</p><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Tentar novamente</button>`;
+ const mine=feedback.entries.find(entry=>entry.id===me());
+ const present=feedback.entries.filter(entry=>entry.attended).length;
+ const absent=feedback.entries.length-present;
+ const comments=feedback.entries.filter(entry=>entry.comment);
+ return `<section class="card" style="padding:16px;margin-top:16px" aria-label="Avaliação do encontro">
+ <h3>Avaliação do encontro</h3>
+ ${organizer?`<div><h4>Resumo privado</h4><p>${feedback.entries.length} ${feedback.entries.length===1?'resposta':'respostas'} · ${present} ${present===1?'compareceu':'compareceram'} · ${absent} ${absent===1?'não compareceu':'não compareceram'}</p>
+ ${comments.length?`<ul style="padding-left:20px">${comments.map(entry=>`<li>${esc(entry.comment)}</li>`).join('')}</ul>`:''}</div>`:''}
+ ${eligible?`<form id="event-feedback-form" data-draft="true" data-draft-key="${esc(`feedback:${me()}:${event.id}`)}" class="form-stack"><p class="tip">Suas respostas ficam disponíveis para você e para o organizador.</p>
+ <label class="field">Você compareceu?<select name="attended" class="select" required><option value="">Selecione</option><option value="yes" ${mine?.attended===true?'selected':''}>Sim</option><option value="no" ${mine?.attended===false?'selected':''}>Não</option></select></label>
+ <label class="field">O que podemos melhorar? (opcional)<textarea class="textarea" name="comment" maxlength="500">${esc(mine?.comment||'')}</textarea></label>
+ <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${mine?'Atualizar avaliação':'Enviar avaliação'}</button></form>`:''}</section>`;
+}
 function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='first-visit')return renderFirstVisit();
@@ -534,7 +565,8 @@ function renderModal() {
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
    <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
-   ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}`);
+   ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
+   ${renderEventFeedback(event)}`);
  }
  if(state.modal==='event-edit'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
@@ -709,6 +741,31 @@ function contentLink(type,id) {
  link.hash=`${type}=${encodeURIComponent(id)}`;
  return link.href;
 }
+async function loadEventFeedback(event) {
+ const uid=me(),organizer=event?.createdBy===uid;
+ if(!feedbackAvailable(event)||(!organizer&&!event.attendees?.includes(uid)))return;
+ const feedback={id:event.id,loading:true,entries:[],error:''};
+ state.eventFeedback=feedback;render();
+ try{
+   const path=['events',event.id,'feedback'];
+   if(organizer){
+     const snapshot=await firebase.getDocs(col(...path));
+     feedback.entries=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}));
+   }else{
+     const snapshot=await firebase.getDoc(ref(...path,uid));
+     if(snapshot.exists())feedback.entries=[{...snapshot.data(),id:uid}];
+   }
+ }catch(error){
+   feedback.error=friendlyError(error);
+ }finally{
+   feedback.loading=false;
+   if(me()===uid&&state.eventFeedback===feedback&&state.modal==='event-detail')render();
+ }
+}
+function openEventDetail(id) {
+ state.selectedEvent=id;state.eventFeedback=null;openModal('event-detail');
+ void loadEventFeedback(state.events.find(event=>event.id===id));
+}
 function openLinkedContent() {
  const match=/^#(post|group|event)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
  if(!state.user||state.modal)return;
@@ -723,7 +780,7 @@ function openLinkedContent() {
    state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');
  }
  if(type==='event'&&state.eventsLoaded){
-   state.tab='events';state.selectedEvent=id;openModal('event-detail');
+   state.tab='events';openEventDetail(id);
  }
 }
 async function copyGroupInvite(id) {
@@ -842,12 +899,12 @@ async function onAction(btn) {
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;openModal('event');return;
-  case 'view-event':state.selectedEvent=id;openModal('event-detail');return;
+  case 'view-event':openEventDetail(id);return;
   case 'view-event-notice':{
     const event=state.events.find(item=>item.id===id);
     const uid=me();
     if(!event?.attendees?.includes(uid))return;
-    state.selectedEvent=id;openModal('event-detail');
+    openEventDetail(id);
     try {
       if(event.revision>(state.eventReads.get(id)||0)){
         await firebase.setDoc(ref('members',uid,'eventReads',id),{revision:event.revision});
@@ -1079,8 +1136,18 @@ document.addEventListener('submit',async(event)=>{
       transaction.update(target,{date,time,location,previousSchedule,revision});
       return true;
     });
-    if(state.modal==='event-edit'&&state.selectedEvent===event.id)openModal('event-detail');
+    if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);
     showToast(changed?'Evento atualizado.':'Nenhuma alteração no evento.');
+  });return;
+  case 'event-feedback-form':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent);
+    const uid=me(),answer=val('attended'),comment=val('comment');
+    if(!feedbackAvailable(event)||!event.attendees?.includes(uid)||!['yes','no'].includes(answer)||comment.length>500)return;
+    await firebase.setDoc(ref('events',event.id,'feedback',uid),{
+      attended:answer==='yes',comment,updatedAt:firebase.serverTimestamp()
+    });
+    if(me()===uid&&state.modal==='event-detail'&&state.selectedEvent===event.id)await loadEventFeedback(event);
+    showToast('Avaliação salva.');
   });return;
   case 'profile-form':await attempt(async()=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
