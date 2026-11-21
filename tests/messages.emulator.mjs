@@ -277,7 +277,7 @@ await request(recipient, 'PATCH', `${events}/standalone?updateMask.fieldPaths=at
 const updateDetails = `${events}/standalone?updateMask.fieldPaths=date&updateMask.fieldPaths=time&updateMask.fieldPaths=location&updateMask.fieldPaths=revision&updateMask.fieldPaths=previousSchedule`;
 const changedDetails = {
   date:str('2099-01-02'),time:str('14:30'),location:str('Biblioteca pública'),revision:{integerValue:'1'},
-  previousSchedule:{mapValue:{fields:{date:standalone.date,time:standalone.time,location:standalone.location}}}
+  previousSchedule:{mapValue:{fields:{date:standalone.date,time:standalone.time,location:standalone.location,revision:{integerValue:'1'}}}}
 };
 await request(recipient, 'PATCH', updateDetails, 403, changedDetails);
 const editedEvent = await request(sender, 'PATCH', updateDetails, 200, changedDetails);
@@ -302,5 +302,8 @@ await request(other, 'PATCH', `${events}/standalone?updateMask.fieldPaths=attend
   attendees: { arrayValue: { values: [...both.arrayValue.values, str(other.localId)] } }
 });
 await request(sender, 'PATCH', updateDetails, 403, {...changedDetails,revision:{integerValue:'3'}});
+await request(sender, 'PATCH', `${eventPath}?updateMask.fieldPaths=time&updateMask.fieldPaths=revision`, 200, {
+  time:str('11:00'),revision:{integerValue:'1'}
+});
 
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');
