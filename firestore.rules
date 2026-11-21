@@ -254,6 +254,29 @@ service cloud.firestore {
             || (resource.data.get('cancelled', false) != true && canAttend(resource.data))))
         || organizerChange();
       allow delete: if loggedIn() && resource.data.createdBy == request.auth.uid;
+
+      match /feedback/{uid} {
+        function eventData() {
+          return get(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId)).data;
+        }
+        function canGiveFeedback() {
+          let event = eventData();
+          let date = event.date.split('-');
+          return event.get('cancelled', false) != true
+            && uid in event.attendees
+            && event.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+            && (request.time - duration.value(3, 'h')).date()
+              > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
+        }
+        allow get: if isMe(uid) || isMe(eventData().createdBy);
+        allow list: if isMe(eventData().createdBy);
+        allow create, update: if isMe(uid) && canGiveFeedback()
+          && request.resource.data.keys().hasOnly(['attended', 'comment', 'updatedAt'])
+          && request.resource.data.attended is bool
+          && validText(request.resource.data.comment, 0, 500)
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
     }
 
     match /artifacts/{appId}/public/data/messages/{messageId} {
