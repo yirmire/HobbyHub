@@ -201,8 +201,15 @@ service cloud.firestore {
     }
 
     match /artifacts/{appId}/public/data/events/{eventId} {
+      function canAttend(data) {
+        let groupId = data.get('groupId', '');
+        return !data.keys().hasAny(['groupId'])
+          || (validText(groupId, 1, 120) && groupId.matches('[^/]+')
+            && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members);
+      }
       allow read: if loggedIn();
       allow create: if loggedIn()
+        && canAttend(request.resource.data)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.attendees == [request.auth.uid]
         && validText(request.resource.data.title, 3, 90)
@@ -211,7 +218,8 @@ service cloud.firestore {
         && validText(request.resource.data.description, 1, 800)
         && validText(request.resource.data.date, 10, 10)
         && validText(request.resource.data.time, 5, 5);
-      allow update: if onlyMyArrayMembership('attendees');
+      allow update: if onlyMyArrayMembership('attendees')
+        && (!(request.auth.uid in request.resource.data.attendees) || canAttend(resource.data));
       allow delete: if loggedIn() && resource.data.createdBy == request.auth.uid;
     }
 
