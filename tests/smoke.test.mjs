@@ -51,6 +51,23 @@ test('calendar data includes the clean event link and escapes user text', () => 
   assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
 });
 
+test('event notices show schedule changes and only reach confirmed members with unseen revisions', () => {
+  const context = appContext();
+  const initial = vm.runInContext(`
+    state.user={uid:'guest'};state.eventReadsLoaded=true;
+    state.events=[
+      {id:'e',title:'Caminhada',date:'2099-01-01',time:'14:30',location:'Praça',revision:1,attendees:['guest'],
+       previousSchedule:{date:'2099-01-01',time:'10:00',location:'Praça'}},
+      {id:'other',title:'Sem confirmação',date:'2099-01-01',revision:2,attendees:['another']}
+    ];
+    renderEventNotices()
+  `, context);
+  assert.match(initial, /Horário alterado de 10:00 para 14:30/);
+  assert.doesNotMatch(initial, /Sem confirmação/);
+  assert.equal(vm.runInContext(`state.eventReads.set('e',1);renderEventNotices()`, context), '');
+  assert.match(vm.runInContext(`state.events[0].revision=2;state.events[0].cancelled=true;renderEventNotices()`, context), /Evento cancelado/);
+});
+
 test('organizer controls are private and cancelled event links remain readable', () => {
   const context = appContext();
   const setup = `
