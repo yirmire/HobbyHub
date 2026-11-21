@@ -17,6 +17,43 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the organizer can repeat a finished event with a new date and fresh confirmations', async () => {
+  const handlers = {};
+  const context = appContext(handlers);
+  context.writes = [];
+  context.opened = [];
+  const organizer = vm.runInContext(`
+    state.user={uid:'owner'};
+    state.groups=[{id:'group',name:'Fotografia',hobby:'Fotografia',members:['owner']}];
+    state.events=[{id:'old',groupId:'group',createdBy:'owner',title:'Caminhada',date:'2000-01-01',time:'10:00',
+      hobby:'Fotografia',location:'Praça pública',description:'Encontro do grupo',attendees:['owner','guest'],revision:1}];
+    state.selectedEvent='old';state.modal='event-detail';renderModal()
+  `, context);
+  assert.match(organizer, /data-action="repeat-event"/);
+  assert.doesNotMatch(vm.runInContext(`state.user={uid:'guest'};renderModal()`, context), /data-action="repeat-event"/);
+  await vm.runInContext(`state.user={uid:'owner'};onAction({dataset:{action:'repeat-event',id:'old'}})`, context);
+  const form = vm.runInContext('renderModal()', context);
+  assert.match(form, /value="Caminhada"/);
+  assert.match(form, /value="Praça pública"/);
+  assert.match(form, /Encontro do grupo/);
+  assert.doesNotMatch(form, /2000-01-01|10:00/);
+  context.FormData = function () { return Object.entries({
+    title:'Caminhada',date:'2099-05-09',time:'14:30',hobby:'Fotografia',location:'Praça pública',description:'Encontro do grupo'
+  }); };
+  vm.runInContext(`
+    closeModal=()=>{};setTab=()=>{};showToast=()=>{};openEventDetail=id=>opened.push(id);
+    firebase={collection:()=> 'events',addDoc:(_path,value)=>{writes.push(value);return {id:'new'};}};
+  `, context);
+  await handlers.submit({target:{id:'event-form'},preventDefault(){}});
+  const newEvent = context.writes[0];
+  assert.equal(newEvent.groupId, 'group');
+  assert.equal(newEvent.date, '2099-05-09');
+  assert.deepEqual([...newEvent.attendees], ['owner']);
+  assert.equal('revision' in newEvent, false);
+  assert.deepEqual(context.opened, ['new']);
+  assert.equal(vm.runInContext('state.events[0].attendees.length', context), 2);
+});
+
 test('only the organizer sees the feedback summary and confirmed guests can answer after the event date', () => {
   const context = appContext();
   const organizer = vm.runInContext(`
