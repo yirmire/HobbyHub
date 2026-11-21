@@ -393,10 +393,11 @@ function eventCard(event, inGroup=false, detail=false) {
  const canJoin=!event.groupId||group?.members?.includes(me());
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
+ ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
- <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${!attending&&(!future||!canJoin)?'disabled':''}>${attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
+ <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||!canJoin))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
 }
 function renderEvents() {
  const day=today();
@@ -503,8 +504,20 @@ function renderModal() {
    const group=state.groups.find(item=>item.id===event.groupId);
    const joined=group?.members?.includes(me());
    return modalWrap(event.title,`${eventCard(event,false,true)}
-   ${group&&!joined&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
-   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">Adicionar ao calendário</button>`:''}</div>`);
+   ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
+   ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
+   ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}`);
+ }
+ if(state.modal==='event-edit'){
+   const event=state.events.find(item=>item.id===state.selectedEvent);
+   if(!event||event.createdBy!==me()||event.cancelled===true)return modalWrap('Edição indisponível','<p>Este evento não pode ser editado.</p>');
+   return modalWrap('Editar evento',`<form id="event-edit-form" data-draft="true" class="form-stack">
+     <label class="field">Data<input class="input" type="date" name="date" required min="${today()}" value="${esc(event.date)}"></label>
+     <label class="field">Horário<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
+     <label class="field">Local<input class="input" name="location" required maxlength="120" value="${esc(event.location)}"></label>
+     <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div>
+   </form>`);
  }
  if(state.modal==='compose')return modalWrap(state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
@@ -703,6 +716,7 @@ function calendarFile(event, stamp=new Date()) {
  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//HobbyHub//Eventos//PT-BR','BEGIN:VEVENT',
    `UID:${escapeText(event.id)}@${window.location.hostname}`,
    `DTSTAMP:${stamp.toISOString().replace(/[-:]|\.\d{3}/g,'')}`,
+   `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
    `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
    `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(event.location)}`,
    `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT','END:VCALENDAR'];
@@ -802,12 +816,23 @@ async function onAction(btn) {
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;openModal('event');return;
   case 'view-event':state.selectedEvent=id;openModal('event-detail');return;
+  case 'edit-event':{
+    const event=state.events.find(item=>item.id===id);
+    if(event?.createdBy===me()&&event.cancelled!==true){state.selectedEvent=id;openModal('event-edit');}
+    return;
+  }
+  case 'cancel-event':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===id);
+    if(!event||event.createdBy!==me()||event.cancelled===true||!confirm('Cancelar este evento? Quem abrir o convite verá o aviso de cancelamento.'))return;
+    await firebase.updateDoc(ref('events',id),{cancelled:true,revision:firebase.increment(1)});
+    showToast('Evento cancelado.');
+  });return;
   case 'copy-event-link':
     if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
     return;
   case 'event-calendar':{
     const event=state.events.find(item=>item.id===id);
-    if(event?.attendees?.includes(me()))downloadEventCalendar(event);
+    if(event?.cancelled!==true&&event?.attendees?.includes(me()))downloadEventCalendar(event);
     return;
   }
   case 'group-event':{
@@ -919,6 +944,7 @@ async function onAction(btn) {
   },'updatingGroup');return;
   case 'rsvp':await attempt(async()=>{
     const event=state.events.find(e=>e.id===id);if(!event)return;
+    if(event.cancelled===true)return;
     const attending=(event.attendees||[]).includes(me());
     if(!attending&&(event.date<today()||(event.groupId&&!state.groups.find(group=>group.id===event.groupId)?.members?.includes(me()))))return;
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
@@ -994,6 +1020,15 @@ document.addEventListener('submit',async(event)=>{
     closeModal();setTab(groupId?'groups':'events');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Evento criado! Convide sua comunidade.');
+  });return;
+  case 'event-edit-form':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent);
+    if(!event||event.createdBy!==me()||event.cancelled===true)return;
+    const date=val('date'),time=val('time'),location=val('location');
+    if(date<today()||!time||!location)throw new Error('Informe data, horário e local válidos.');
+    await firebase.updateDoc(ref('events',event.id),{date,time,location,revision:firebase.increment(1)});
+    if(state.modal==='event-edit'&&state.selectedEvent===event.id)openModal('event-detail');
+    showToast('Evento atualizado.');
   });return;
   case 'profile-form':await attempt(async()=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');

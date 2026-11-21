@@ -37,16 +37,37 @@ test('event invitations wait for login and display participation before the cale
 test('calendar data includes the clean event link and escapes user text', () => {
   const context = appContext();
   context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};
-  const event = {id:'e',title:'Foto, vídeo; encontro',description:'Linha 1\n'+ 'ç'.repeat(80),location:'Praça',date:'2099-05-07',time:'10:30'};
+  const event = {id:'e',title:'Foto, vídeo; encontro',description:'Linha 1\n'+ 'ç'.repeat(80),location:'Praça',date:'2099-05-07',time:'10:30',revision:2};
   context.event = event;
   const file = vm.runInContext(`calendarFile(event,new Date('2026-11-21T10:00:00Z'))`, context);
   assert.match(file, /DTSTART:20990507T103000/);
   assert.match(file, /DTSTAMP:20261121T100000Z/);
+  assert.match(file, /UID:e@example.test\r\n/);
+  assert.match(file, /SEQUENCE:2\r\n/);
   assert.match(file, /SUMMARY:Foto\\, vídeo\\; encontro/);
   assert.match(file, /LOCATION:Praça/);
   assert.match(file, /URL:https:\/\/example.test\/HobbyHub\/#event=e/);
   assert.doesNotMatch(file, /utm_source/);
   assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
+});
+
+test('organizer controls are private and cancelled event links remain readable', () => {
+  const context = appContext();
+  const setup = `
+    state.user={uid:'owner'};state.modal='event-detail';state.selectedEvent='e';
+    state.events=[{id:'e',createdBy:'owner',title:'Caminhada',date:'2099-01-01',attendees:['owner','guest'],revision:1}];
+    renderModal()
+  `;
+  const organizer = vm.runInContext(setup, context);
+  assert.match(organizer, /data-action="edit-event"/);
+  assert.match(organizer, /Baixar calendário atualizado/);
+  const guest = vm.runInContext(`state.user={uid:'guest'};renderModal()`, context);
+  assert.doesNotMatch(guest, /data-action="(?:edit|cancel)-event"/);
+  const cancelled = vm.runInContext(`state.events[0].cancelled=true;renderModal()`, context);
+  assert.match(cancelled, /Evento cancelado/);
+  assert.match(cancelled, /disabled>Cancelado/);
+  assert.match(cancelled, /Copiar link do evento/);
+  assert.doesNotMatch(cancelled, /data-action="event-calendar"/);
 });
 
 test('community events appear in their group with member-only confirmation', () => {
