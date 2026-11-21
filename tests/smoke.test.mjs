@@ -17,6 +17,25 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'guest'};
+    state.events=[
+      {id:'e',title:'Caminhada confirmada',date:'2099-01-01',time:'14:30',location:'Biblioteca nova',attendees:['guest']},
+      {id:'other',title:'Sem confirmação',date:'2099-01-01',attendees:['another']},
+      {id:'cancelled',title:'Inativo',date:'2099-01-01',attendees:['guest'],cancelled:true},
+      {id:'later',title:'Mais tarde',date:'2099-01-02',attendees:['guest']}
+    ];
+    renderEventReminders(tomorrow(new Date(2098,11,31,23)))
+  `, context);
+  assert.match(markup, /Caminhada confirmada/);
+  assert.match(markup, /14:30 · Biblioteca nova/);
+  assert.match(markup, /data-action="view-event" data-id="e"/);
+  assert.doesNotMatch(markup, /Sem confirmação|Inativo|Mais tarde/);
+  assert.equal(vm.runInContext(`state.events[0].cancelled=true;renderEventReminders('2099-01-01')`, context), '');
+});
+
 test('the organizer can repeat a finished event with a new date and fresh confirmations', async () => {
   const handlers = {};
   const context = appContext(handlers);
