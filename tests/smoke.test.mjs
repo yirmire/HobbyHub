@@ -17,6 +17,43 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('an invited visitor sees Participar before the first-contribution actions', () => {
+  const context = appContext();
+  context.window.location = {hash:'#group=g'};
+  const before = vm.runInContext(`
+    state.user={uid:'guest'};state.groupsLoaded=true;state.welcomePending=true;
+    state.groups=[{id:'g',name:'Fotografia',createdBy:'owner',members:['owner'],pinnedPostId:'p'}];
+    state.posts=[{id:'p',groupId:'g',content:'Conte seu hobby favorito'}];
+    openLinkedContent();renderModal()
+  `, context);
+  assert.match(before, /Participe desta comunidade/);
+  assert.doesNotMatch(before, /data-action="introduce-group"/);
+  assert.equal(vm.runInContext('state.welcomePending', context), false);
+  const after = vm.runInContext(`state.groups[0].members.push('guest');renderModal()`, context);
+  assert.match(after, /Responder à publicação fixada/);
+  assert.match(after, /data-action="introduce-group"/);
+});
+
+test('a new member without an invitation sees matching groups and can skip to the feed', () => {
+  const context = appContext();
+  context.window.location = {hash:''};
+  const first = vm.runInContext(`
+    state.user={uid:'new'};state.profile={location:'Santos, SP',hobbies:['Leitura']};
+    state.groups=[
+      {id:'outside',name:'Clube de outra cidade',location:'Campinas',hobby:'Games'},
+      {id:'matching',name:'Leitura em Santos',location:'Santos',hobby:'Leitura'},
+      {id:'already',name:'Grupo já seguido',location:'Santos',hobby:'Leitura',members:['new']}
+    ];
+    state.groupsLoaded=true;state.welcomePending=true;
+    openLinkedContent();renderModal()
+  `, context);
+  assert.match(first, /Boas-vindas ao HobbyHub/);
+  assert.match(first, /Pular e ir ao feed/);
+  assert.ok(first.indexOf('Leitura em Santos') < first.indexOf('Clube de outra cidade'));
+  assert.doesNotMatch(first, /Grupo já seguido/);
+  assert.equal(vm.runInContext("state.modal=null;openLinkedContent();state.modal", context), null);
+});
+
 test('a community invitation waits for sign-in and opens the intended group without query parameters', () => {
   const context = appContext();
   context.window.location = { pathname:'/HobbyHub/',origin:'https://example.test',hash:'#group=g_123',search:'?utm_source=chatgpt.com' };
