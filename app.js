@@ -315,7 +315,7 @@ function renderRight() {
 function eventChangeDescriptions(event) {
  if(event.cancelled===true)return ['O evento foi cancelado pelo organizador.'];
  const previous=event.previousSchedule;
- if(!previous)return ['Confira as informações atualizadas do evento.'];
+ if(previous?.revision!==event.revision)return ['Confira as informações atualizadas do evento.'];
  const formatDate=value=>String(value||'').split('-').reverse().join('/');
  const changes=[];
  if(previous.date!==event.date)changes.push(`Data alterada de ${formatDate(previous.date)} para ${formatDate(event.date)}.`);
@@ -1064,9 +1064,10 @@ document.addEventListener('submit',async(event)=>{
     const changed=await firebase.runTransaction(db,async transaction=>{
       const latest=(await transaction.get(target)).data();
       if(!latest||latest.cancelled===true)throw new Error('Este evento já foi cancelado ou removido.');
-      const previousSchedule={date:latest.date,time:latest.time,location:latest.location};
       if(date===latest.date&&time===latest.time&&location===latest.location)return false;
-      transaction.update(target,{date,time,location,previousSchedule,revision:(latest.revision||0)+1});
+      const revision=(latest.revision||0)+1;
+      const previousSchedule={date:latest.date,time:latest.time,location:latest.location,revision};
+      transaction.update(target,{date,time,location,previousSchedule,revision});
       return true;
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openModal('event-detail');
