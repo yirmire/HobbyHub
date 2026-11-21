@@ -60,9 +60,10 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
-  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, alerts:[], quizMood:null,
+  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
+  invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -222,12 +223,18 @@ async function init() {
     const app=firebase.initializeApp(FIREBASE_CONFIG);
     auth=firebase.getAuth(app);db=firebase.getFirestore(app);
     firebase.onAuthStateChanged(auth,async(user)=>{
+      const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
+      state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
-      if(user){try{state.profile=await ensureMember(user);startSession();}catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
+      if(user){try{
+        const profile=await ensureMember(user);
+        if(me()!==user.uid)return;
+        state.profile=profile;state.pendingSignup=null;startSession();
+      }catch(error){console.error(error);state.alerts=[`Não foi possível abrir seu perfil: ${friendlyError(error)}`];}}
       state.boot=false;render();
     },(error)=>{state.boot=false;state.initError=friendlyError(error);render();});
   } catch(error) {console.error(error);state.boot=false;state.initError='Não foi possível conectar ao Firebase. Verifique sua internet e tente recarregar.';render();}
@@ -464,11 +471,27 @@ function renderMessages() {
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
 function modalWrap(title,content){return `<div class="overlay" data-overlay="true"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;}
+function suggestedWelcomeGroups() {
+ const interests=new Set((state.profile?.hobbies||[]).map(norm));
+ const chosen=norm(state.welcomeHobby);
+ return state.groups.filter(group=>!(group.members||[]).includes(me())&&(!chosen||norm(group.hobby)===chosen))
+  .map(group=>({group,local:locate(group.location),shared:interests.has(norm(group.hobby))}))
+  .sort((a,b)=>(Number(b.shared)*2+Number(b.local))-(Number(a.shared)*2+Number(a.local))).slice(0,3);
+}
+function renderFirstVisit() {
+ const suggestions=suggestedWelcomeGroups();
+ const hobbies=[...new Set(state.groups.map(group=>group.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+ return modalWrap('Boas-vindas ao HobbyHub',`<p>Encontre uma comunidade para praticar um hobby com outras pessoas.</p>
+ <label class="field">Explorar por hobby<select class="select" id="welcome-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.welcomeHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
+ <div class="form-stack" style="margin:14px 0">${suggestions.length?suggestions.map(({group,local,shared})=>`<article class="card" style="padding:12px"><button type="button" class="text-action" data-action="view-welcome-group" data-id="${esc(group.id)}">${esc(group.name)}</button><p class="mini muted" style="margin:4px 0">${esc(group.hobby)} · ${esc(group.location||'Online')}${local?' · Da sua cidade':''}${shared?' · Hobby em comum':''}</p></article>`).join(''):'<p class="tip">Ainda não há sugestões com esse filtro.</p>'}</div>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="tab" data-tab="groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
+}
 function renderModal() {
  if(!state.modal)return '';
- if(state.modal==='compose')return modalWrap(state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
+ if(state.modal==='first-visit')return renderFirstVisit();
+ if(state.modal==='compose')return modalWrap(state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
- <div class="field"><label for="post-content">O que você gostaria de compartilhar?</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz..."></textarea></div>
+ <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}"></textarea></div>
  <div class="field-grid"><div class="field"><label>Seu interesse</label>${topicSelect(state.composingGroup?state.groups.find(g=>g.id===state.composingGroup)?.hobby:(state.topic==='Todos'?'Arte':state.topic))}</div><div class="field"><label>Formato</label><select class="select" name="format"><option value="text">Post simples</option><option value="highlight">Post em destaque</option></select></div></div>
  <div class="tip">A publicação pode ser vista por outras pessoas cadastradas. Não compartilhe dados pessoais sensíveis.</div>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
@@ -476,6 +499,7 @@ function renderModal() {
  const group=state.groups.find(g=>g.id===state.selectedGroup);
  if(!group)return modalWrap('Comunidade indisponível','<p>Esta comunidade não está mais disponível.</p>');
  const joined=(group.members||[]).includes(me());
+ const welcoming=state.invitedGroupId===group.id;
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
@@ -484,7 +508,10 @@ function renderModal() {
  <div class="toggle-row"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${group.createdBy===me()?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
- <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span><button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button><button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
+ ${welcoming?`<section class="card" style="padding:16px;margin:14px 0"><h3>${joined?'Faça sua primeira contribuição':'Participe desta comunidade'}</h3>
+ <p class="mini muted">${joined?pinned?'Responda à publicação fixada ou se apresente ao grupo.':'Conte ao grupo o que você gosta de fazer e o que quer aprender.':'Entre para publicar, conversar sobre o hobby e conhecer quem já participa.'}</p>
+ <div class="toggle-row" style="flex-wrap:wrap">${joined?`${pinned?`<button class="btn btn-primary btn-small" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}<button class="btn ${pinned?'btn-outline':'btn-primary'} btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Se apresentar</button>`:`<button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button>`}</div></section>`:''}
+ <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${pinned?renderGroupPost(pinned,true):''}
  <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
@@ -510,7 +537,7 @@ function renderModal() {
  const post=state.posts.find(p=>p.id===state.selectedPost);
  return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0 0">${esc(short(post.content,220))}</p></div>`:''}
  <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()?`<button data-action="delete-comment" data-id="${esc(c.id)}" aria-label="Excluir comentário">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
- <form id="comment-form" data-draft="true" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
+ <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
  if(state.modal==='quiz'){
  const categories={creative:['Arte','Fotografia','Música'],curious:['Leitura','Tecnologia','Games'],social:['Gastronomia','Esportes','Viagens'],calm:['Natureza','Bem-estar','Fotografia']};
@@ -555,6 +582,14 @@ function restoreDrafts(){
    f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{if(Object.hasOwn(values,el.name))el.value=values[el.name];});
  });
 }
+function clearSubmittedDraft(formId,key,field,value) {
+ const current=document.getElementById(formId);
+ if(current?.dataset.draftKey===key){
+   const input=current.elements[field];
+   if(input.value===value)input.value='';
+ }
+ if(state.drafts.get(key)?.[field]===value)state.drafts.delete(key);
+}
 function render() {
  const container=root();if(!container)return;
  const active=document.activeElement;
@@ -578,9 +613,9 @@ function clearContentLink(){
 }
 function closeModal(){
  clearContentLink();
- document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
+ document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
-function setTab(tab){clearContentLink();state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
+function setTab(tab){clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
  const sender=me();
@@ -613,11 +648,16 @@ function contentLink(type,id) {
 }
 function openLinkedContent() {
  const match=/^#(post|group)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
- if(!match||!state.user||state.modal)return;
+ if(!state.user||state.modal)return;
+ if(!match){
+   if(state.welcomePending&&state.groupsLoaded){state.welcomePending=false;openModal('first-visit');}
+   return;
+ }
+ state.welcomePending=false;
  const [,type,id]=match;
  if(type==='post'&&state.posts.some(post=>post.id===id))openComments(id);
  if(type==='group'&&state.groupsLoaded){
-   state.tab='groups';state.selectedGroup=id;openModal('group-detail');
+   state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');
  }
 }
 async function copyGroupInvite(id) {
@@ -700,9 +740,12 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-topic':state.groupTopic=btn.dataset.topic;render();return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
-  case 'compose':state.composingGroup=null;openModal('compose');return;
+  case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':case 'event':openModal(action);return;
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
+  case 'view-welcome-group':
+    if(!state.groups.some(group=>group.id===id))return;
+    state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');return;
   case 'copy-group-invite':await copyGroupInvite(id);return;
   case 'pin-group-post':
   case 'unpin-group-post':await attempt(async()=>{
@@ -720,7 +763,12 @@ async function onAction(btn) {
       });
     }
   });return;
-  case 'group-post':{const g=state.groups.find(x=>x.id===(id||state.selectedGroup));if(!g||(g.members||[]).includes(me())===false)return;state.composingGroup=g.id;openModal('compose');return;}
+  case 'group-post':
+  case 'introduce-group':{
+    const group=state.groups.find(g=>g.id===(id||state.selectedGroup));
+    if(!group||!(group.members||[]).includes(me()))return;
+    state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';openModal('compose');return;
+  }
   case 'close':closeModal();return;
   case 'edit-profile':openModal('edit-profile');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
@@ -795,7 +843,7 @@ async function onAction(btn) {
     const joined=(group.members||[]).includes(me());
     await firebase.updateDoc(ref('groups',id),{members:joined?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
     showToast(joined?'Você saiu da comunidade.':'Bem-vindo à comunidade!');
-  });return;
+  },'updatingGroup');return;
   case 'rsvp':await attempt(async()=>{
     const event=state.events.find(e=>e.id===id);if(!event)return;
     const attending=(event.attendees||[]).includes(me());
@@ -820,6 +868,7 @@ document.addEventListener('visibilitychange',()=>void markOpenConversationRead()
 document.addEventListener('change',(event)=>{
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
+ else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;
  else return;
  render();
 });
@@ -854,6 +903,7 @@ document.addEventListener('submit',async(event)=>{
     const content=val('content');if(!content||content.length>2000)return;
     const groupId=state.composingGroup;
     await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{})});
+    if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
@@ -885,9 +935,12 @@ document.addEventListener('submit',async(event)=>{
     showToast('Depoimento enviado para aprovação.');
   });return;
   case 'comment-form':await attempt(async()=>{
-    const text=val('text');if(!text||!state.selectedPost)return;
-    await firebase.addDoc(col('posts',state.selectedPost,'comments'),{userId:me(),userName:myName(),text,createdAt:now()});
-    form.querySelector('[name="text"]').value='';state.drafts.set('comment-form',{text:''});
+    const text=val('text'),postId=state.selectedPost;
+    if(!text||!postId)return;
+    await firebase.addDoc(col('posts',postId,'comments'),{userId:me(),userName:myName(),text,createdAt:now()});
+    const group=state.groups.find(item=>item.id===state.invitedGroupId);
+    if(group?.pinnedPostId===postId)state.invitedGroupId=null;
+    clearSubmittedDraft(form.id,form.dataset.draftKey,'text',data.text);
     showToast('Comentário publicado!');
   });return;
   case 'message-form':await attempt(async()=>{
@@ -900,12 +953,7 @@ document.addEventListener('submit',async(event)=>{
     }else{
       await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
     }
-    const current=document.getElementById('message-form');
-    if(current?.dataset.draftKey===key){
-      const input=current.elements.message;
-      if(input.value===data.message)input.value='';
-    }
-    if(state.drafts.get(key)?.message===data.message)state.drafts.delete(key);
+    clearSubmittedDraft(form.id,key,'message',data.message);
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
   case 'report-form':await attempt(async()=>{
     const target=state.reportTarget;
