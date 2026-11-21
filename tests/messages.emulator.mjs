@@ -351,14 +351,57 @@ await request(recipient, 'DELETE', 'public/data/posts/unrelated-post', 403);
 await request(recipient, 'POST', 'public/data/posts?documentId=moderated-post', 200, {
   ...welcome,groupId:str('welcome-group'),userId:str(recipient.localId)
 });
-await request(sender, 'DELETE', 'public/data/posts/moderated-post', 200);
+await request(sender, 'DELETE', 'public/data/posts/moderated-post', 403);
 const commentPath='public/data/posts/welcome-post/comments';
 await request(sender, 'POST', `${commentPath}?documentId=moderated-comment`, 200, {
   userId:str(sender.localId),text:str('Comentário de teste'),createdAt:{integerValue:'1'}
 });
 await request(recipient, 'DELETE', `${commentPath}/moderated-comment`, 200);
 await request(sender, 'POST', 'public/data/posts?documentId=remove-in-group', 200, {...welcome,groupId:str('welcome-group')});
-await request(recipient, 'DELETE', 'public/data/posts/remove-in-group', 200);
+const moderationPost='public/data/posts/remove-in-group';
+await request(recipient, 'DELETE', moderationPost, 403);
+const archivedComment=`${moderationPost}/comments/keep-comment`;
+await request(sender, 'POST', `${moderationPost}/comments?documentId=keep-comment`, 200, {
+  userId:str(sender.localId),text:str('Comentário que deve voltar'),createdAt:{integerValue:'1'}
+});
+const original=await request(sender, 'GET', moderationPost, 200);
+const databasePath=`projects/${project}/databases/(default)`;
+const documents=`${databasePath}/documents/artifacts/${project}/`;
+const log=`${group}/moderationLog/removal-1`;
+const pointer='public/data/removedPosts/remove-in-group';
+const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+async function moderate(user,writes,expected) {
+  const response=await fetch(`http://${storeHost}/v1/${databasePath}/documents:commit`, {
+    method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
+    body:JSON.stringify({writes})
+  });
+  assert.equal(response.status,expected,await response.text());
+}
+await moderate(recipient,[
+  {update:{name:documents+log,fields:{postId:str('remove-in-group'),post:{mapValue:{fields:original.fields}},
+    reason:str('Fora das regras do grupo'),removedBy:str(recipient.localId)}},updateTransforms:stamp('removedAt')},
+  {update:{name:documents+pointer,fields:{groupId:str('welcome-group'),entryId:str('removal-1')}}},
+  {delete:documents+moderationPost}
+],200);
+await request(other, 'GET', moderationPost, 404);
+await request(other, 'GET', archivedComment, 403);
+await request(other, 'GET', log, 403);
+await request(recipient, 'GET', log, 200);
+await request(sender, 'POST', 'public/data/posts?documentId=remove-in-group', 403, welcome);
+const restore=actor=>[
+  {update:{name:documents+moderationPost,fields:original.fields}},
+  {delete:documents+pointer},
+  {update:{name:documents+log,fields:{restoredBy:str(actor.localId)}},updateMask:{fieldPaths:['restoredBy']},updateTransforms:stamp('restoredAt')}
+];
+await moderate(recipient,restore(recipient),403);
+await moderate(sender,restore(sender),200);
+await request(other, 'GET', moderationPost, 200);
+const restoredComment=await request(other, 'GET', archivedComment, 200);
+assert.equal(restoredComment.fields.text.stringValue,'Comentário que deve voltar');
+const retainedHistory=await request(sender, 'GET', log, 200);
+assert.equal(retainedHistory.fields.reason.stringValue,'Fora das regras do grupo');
+assert.equal(retainedHistory.fields.restoredBy.stringValue,sender.localId);
 await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 403, {members:organizerOnly});
 await request(sender, 'DELETE', rolePath, 200);
 await request(recipient, 'PATCH', pin, 403, {pinnedPostId:str('')});
