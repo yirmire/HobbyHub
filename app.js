@@ -58,7 +58,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupTopic:'Todos', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   eventSearch:'', eventHobby:'', eventCommunity:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -242,6 +242,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
+      state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
       state.eventFeedback=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -313,7 +314,7 @@ function renderRight() {
  return `<aside class="rightbar"><div class="card right-card"><div class="right-title"><h3>Pessoas para conhecer</h3><button data-action="tab" data-tab="explore">Ver todas</button></div>
  ${people.length?people.map(p=>`<div class="suggestion">${avatar(p)}<div style="min-width:0;flex:1"><div class="label">${esc(short(p.name,18))}</div><div class="sublabel">${esc(short(p.location,22))}</div></div><button class="btn btn-soft btn-small" data-action="follow" data-id="${esc(p.uid)}">${icon('plus')}</button></div>`).join(''):'<p class="tip">Convide seus amigos para fazer parte da primeira turma.</p>'}</div>
  <div class="right-promo"><span class="eyebrow" style="color:#703d37">DESAFIO DA SEMANA</span><h3>Experimente algo novo.</h3><p>Descubra um hobby que combina com você.</p><button data-action="quiz">Fazer descoberta ${icon('arrow')}</button></div>
- <div class="card right-card"><div class="right-title"><h3>Comunidades em destaque</h3><button data-action="tab" data-tab="groups">Explorar</button></div>
+ <div class="card right-card"><div class="right-title"><h3>Comunidades em destaque</h3><button data-action="discover-groups">Explorar</button></div>
  ${groups.length?groups.map(g=>`<div class="suggestion"><span class="avatar">${emoji(g.hobby)}</span><div style="min-width:0;flex:1"><div class="label">${esc(short(g.name,23))}</div><div class="sublabel">${(g.members||[]).length} membros</div></div></div>`).join(''):'<p class="tip">As primeiras comunidades estão esperando criadores.</p>'}</div>
  </aside>`;
 }
@@ -410,23 +411,49 @@ function renderExplore() {
  <div class="section-head"><h2>Pessoas com interesses parecidos</h2><span class="pill">${people.length} perfis</span></div>
  <div class="field-grid" style="margin-bottom:14px"><label class="field">Hobby<select class="select" id="explore-hobby"><option value="">Todos os hobbies</option>${options(hobbies,state.exploreHobby)}</select></label><label class="field">Cidade<select class="select" id="explore-city"><option value="">Todas as cidades</option>${options(cities,state.exploreCity)}</select></label></div>
  ${people.length?`<div style="display:grid;gap:10px">${people.slice(0,20).map(personCard).join('')}</div>`:empty('👋','Sua turma está chegando','Ainda não encontramos perfis com essa busca. Compartilhe o HobbyHub com seus amigos.')}
- <div class="section-head"><h2>Comunidades para explorar</h2><button class="text-action" data-action="tab" data-tab="groups">Ver todas</button></div>
- ${groups.length?`<div class="grid-two">${groups.slice(0,4).map(groupCard).join('')}</div>`:empty('🪴','Nenhum grupo encontrado','Crie uma comunidade para reunir pessoas com esse interesse.','Criar grupo','group')}
+ <div class="section-head"><h2>Comunidades para explorar</h2><button class="text-action" data-action="discover-groups">Ver todas</button></div>
+ ${groups.length?`<div class="grid-two">${groups.slice(0,4).map(group=>groupCard(group)).join('')}</div>`:empty('🪴','Nenhum grupo encontrado','Crie uma comunidade para reunir pessoas com esse interesse.','Criar grupo','group')}
  ${q?`<div class="section-head"><h2>Publicações encontradas</h2></div>${posts.length?posts.map(postCard).join(''):empty('🔎','Nenhuma publicação','Tente outra palavra-chave para encontrar mais conteúdo.')}`:''}`;
 }
-function groupCard(g) {
+function groupCard(g, activity) {
  const joined=(g.members||[]).includes(me());
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
  <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
+ ${activity?.post?`<div><small class="muted">Publicação mais recente</small><br><button class="text-action" data-action="comments" data-id="${esc(activity.post.id)}">${esc(short(activity.post.content,75))}</button></div>`:''}
+ ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
  <button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(g.id)}">${joined?'Participando':'+ Participar'}</button></div></article>`;
 }
+function groupHighlights(groups, now=new Date()) {
+ const activity=new Map(groups.map(group=>[group.id,{}]));
+ for(const post of state.posts){
+   const entry=activity.get(post.groupId);
+   if(entry&&(!entry.post||(post.createdAt||0)>(entry.post.createdAt||0)))entry.post=post;
+ }
+ const moment=`${localDateKey(now)} ${now.toTimeString().slice(0,5)}`;
+ for(const event of state.events){
+   const entry=activity.get(event.groupId);
+   const schedule=`${event.date||''} ${event.time||''}`;
+   if(!entry||event.cancelled===true||schedule<moment)continue;
+   if(!entry.event||schedule<`${entry.event.date} ${entry.event.time||''}`)entry.event=event;
+ }
+ return activity;
+}
 function renderGroups(){
- const list=state.groups.filter(g=>state.groupTopic==='Todos'||g.hobby===state.groupTopic).filter(g=>!state.search||norm([g.name,g.hobby,g.description,g.location].join(' ')).includes(norm(state.search)));
+ const discovering=state.groupView==='discover',query=norm(state.search);
+ const groups=state.groups.filter(group=>Boolean(group.members?.includes(me()))!==discovering);
+ const hobbies=[...new Set(groups.map(group=>group.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+ const cities=new Map(groups.filter(group=>typeof group.location==='string'&&cityKey(group.location)).map(group=>[cityKey(group.location),group.location]));
+ const hobby=hobbies.includes(state.groupHobby)?state.groupHobby:'';
+ const city=cities.has(state.groupCity)?state.groupCity:'';
+ const list=groups.filter(group=>(!query||norm([group.name,group.hobby,group.description,group.location].join(' ')).includes(query))
+   && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city))));
+ const activity=discovering?null:groupHighlights(list);
  return `<div class="card" style="padding:25px;margin-bottom:19px;background:linear-gradient(115deg,var(--panel),var(--purple2));display:flex;align-items:center;justify-content:space-between;gap:18px"><div><div class="eyebrow">O PODER DE FAZER JUNTO</div><h2 style="font-size:21px;margin:8px 0">Seu hobby merece uma comunidade.</h2><p class="muted mini" style="margin:0">Crie um grupo, faça novas amizades e inspire outras pessoas.</p></div><button class="btn btn-primary btn-small" data-action="group">${icon('plus')} Criar grupo</button></div>
- ${topicButtons(state.groupTopic,'group-topic')}
- <div class="section-head"><h2>Descubra comunidades</h2><span class="pill">${list.length} grupos</span></div>
- ${list.length?`<div class="grid-two">${list.map(groupCard).join('')}</div>`:empty('🧩','A comunidade começa com você','Nenhum grupo encontrado por aqui. Que tal criar o primeiro?','Criar uma comunidade','group')}`;
+ <div class="filters"><button class="filter ${!discovering?'active':''}" data-action="group-view" data-value="mine" aria-pressed="${!discovering}">Minhas comunidades</button><button class="filter ${discovering?'active':''}" data-action="group-view" data-value="discover" aria-pressed="${discovering}">Descobrir</button></div>
+ ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
+ <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
+ ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id))).join('')}</div>`:discovering?empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
@@ -560,7 +587,7 @@ function renderFirstVisit() {
  return modalWrap('Boas-vindas ao HobbyHub',`<p>Encontre uma comunidade para praticar um hobby com outras pessoas.</p>
  <label class="field">Explorar por hobby<select class="select" id="welcome-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.welcomeHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <div class="form-stack" style="margin:14px 0">${suggestions.length?suggestions.map(({group,local,shared})=>`<article class="card" style="padding:12px"><button type="button" class="text-action" data-action="view-welcome-group" data-id="${esc(group.id)}">${esc(group.name)}</button><p class="mini muted" style="margin:4px 0">${esc(group.hobby)} · ${esc(group.location||'Online')}${local?' · Da sua cidade':''}${shared?' · Hobby em comum':''}</p></article>`).join(''):'<p class="tip">Ainda não há sugestões com esse filtro.</p>'}</div>
- <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="tab" data-tab="groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="discover-groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
 }
 function feedbackAvailable(event) {
  const dateInBrasilia=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
@@ -939,7 +966,8 @@ async function onAction(btn) {
   case 'explore':redirectToExplore();return;
   case 'feed':state.feed=btn.dataset.value;render();return;
   case 'topic':state.topic=btn.dataset.topic;render();return;
-  case 'group-topic':state.groupTopic=btn.dataset.topic;render();return;
+  case 'group-view':state.groupView=btn.dataset.value==='discover'?'discover':'mine';render();return;
+  case 'discover-groups':state.groupView='discover';setTab('groups');return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
@@ -1126,6 +1154,8 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
+ else if(event.target.id==='group-hobby')state.groupHobby=event.target.value;
+ else if(event.target.id==='group-city')state.groupCity=event.target.value;
  else return;
  render();
 });
@@ -1169,7 +1199,7 @@ document.addEventListener('submit',async(event)=>{
   case 'group-form':await attempt(async()=>{
     const name=val('name');if(name.length<3)return;
     await firebase.addDoc(col('groups'),{name,hobby:val('hobby'),description:val('description'),location:val('location'),createdBy:me(),members:[me()],createdAt:now()});
-    closeModal();setTab('groups');showToast('Comunidade criada com sucesso!');
+    closeModal();state.groupView='mine';setTab('groups');showToast('Comunidade criada com sucesso!');
   });return;
   case 'event-form':await attempt(async()=>{
     if(val('date')<today())throw new Error('A data deve ser hoje ou no futuro.');
