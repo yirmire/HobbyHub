@@ -57,7 +57,7 @@ test('event notices show schedule changes and only reach confirmed members with 
     state.user={uid:'guest'};state.eventReadsLoaded=true;
     state.events=[
       {id:'e',title:'Caminhada',date:'2099-01-01',time:'14:30',location:'Praça',revision:1,attendees:['guest'],
-       previousSchedule:{date:'2099-01-01',time:'10:00',location:'Praça'}},
+       previousSchedule:{date:'2099-01-01',time:'10:00',location:'Praça',revision:1}},
       {id:'other',title:'Sem confirmação',date:'2099-01-01',revision:2,attendees:['another']}
     ];
     renderEventNotices()
