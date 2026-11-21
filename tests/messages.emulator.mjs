@@ -274,16 +274,27 @@ await request(recipient, 'PATCH', rsvp, 200, { attendees: organizerOnly });
 const { groupId: _groupId, ...standalone } = eventFields;
 await request(sender, 'POST', `${events}?documentId=standalone`, 200, standalone);
 await request(recipient, 'PATCH', `${events}/standalone?updateMask.fieldPaths=attendees`, 200, { attendees: both });
-const updateDetails = `${events}/standalone?updateMask.fieldPaths=date&updateMask.fieldPaths=time&updateMask.fieldPaths=location&updateMask.fieldPaths=revision`;
-const changedDetails = {date:str('2099-01-02'),time:str('14:30'),location:str('Biblioteca pública'),revision:{integerValue:'1'}};
+const updateDetails = `${events}/standalone?updateMask.fieldPaths=date&updateMask.fieldPaths=time&updateMask.fieldPaths=location&updateMask.fieldPaths=revision&updateMask.fieldPaths=previousSchedule`;
+const changedDetails = {
+  date:str('2099-01-02'),time:str('14:30'),location:str('Biblioteca pública'),revision:{integerValue:'1'},
+  previousSchedule:{mapValue:{fields:{date:standalone.date,time:standalone.time,location:standalone.location}}}
+};
 await request(recipient, 'PATCH', updateDetails, 403, changedDetails);
 const editedEvent = await request(sender, 'PATCH', updateDetails, 200, changedDetails);
 assert.equal(editedEvent.fields.attendees.arrayValue.values.length, 2);
 assert.equal(editedEvent.fields.time.stringValue, '14:30');
+const seen = `public/data/members/${recipient.localId}/eventReads/standalone`;
+const revision = value => ({revision:{integerValue:String(value)}});
+await request(recipient, 'PATCH', seen, 200, revision(1));
+await request(sender, 'GET', seen, 403);
+await request(recipient, 'PATCH', seen, 403, revision(2));
+await request(other, 'PATCH', `public/data/members/${other.localId}/eventReads/standalone`, 403, revision(1));
 const cancel = `${events}/standalone?updateMask.fieldPaths=cancelled&updateMask.fieldPaths=revision`;
 const cancelled = {cancelled:{booleanValue:true},revision:{integerValue:'2'}};
 await request(recipient, 'PATCH', cancel, 403, cancelled);
 await request(sender, 'PATCH', cancel, 200, cancelled);
+await request(recipient, 'PATCH', seen, 200, revision(2));
+await request(recipient, 'PATCH', seen, 403, revision(1));
 const cancelledEvent = await request(other, 'GET', `${events}/standalone`, 200);
 assert.equal(cancelledEvent.fields.cancelled.booleanValue, true);
 assert.equal(cancelledEvent.fields.attendees.arrayValue.values.length, 2);
