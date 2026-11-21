@@ -8,7 +8,7 @@ function appContext(handlers = {}) {
   const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
     .replace(/\binit\(\);\s*$/, '');
   const context = vm.createContext({
-    console, Date, URL, setTimeout, clearTimeout, navigator: {},
+    console, Date, URL, TextEncoder, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
     window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0 },
     document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
@@ -16,6 +16,38 @@ function appContext(handlers = {}) {
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
   return context;
 }
+
+test('event invitations wait for login and display participation before the calendar action', () => {
+  const context = appContext();
+  context.window.location = {hash:'#event=e',pathname:'/HobbyHub/',origin:'https://example.test'};
+  vm.runInContext(`state.eventsLoaded=true;openLinkedContent()`, context);
+  assert.equal(vm.runInContext('state.modal', context), null);
+  const guest = vm.runInContext(`
+    state.user={uid:'guest'};state.groups=[{id:'g',name:'Fotografia',members:[]}];
+    state.events=[{id:'e',groupId:'g',title:'Caminhada',date:'2099-01-01',attendees:[]}];
+    openLinkedContent();renderModal()
+  `, context);
+  assert.match(guest, /Caminhada/);
+  assert.match(guest, /Participar da comunidade/);
+  assert.doesNotMatch(guest, /data-action="event-calendar"/);
+  const joined = vm.runInContext(`state.groups[0].members.push('guest');state.events[0].attendees.push('guest');renderModal()`, context);
+  assert.match(joined, /Adicionar ao calendário/);
+});
+
+test('calendar data includes the clean event link and escapes user text', () => {
+  const context = appContext();
+  context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};
+  const event = {id:'e',title:'Foto, vídeo; encontro',description:'Linha 1\n'+ 'ç'.repeat(80),location:'Praça',date:'2099-05-07',time:'10:30'};
+  context.event = event;
+  const file = vm.runInContext(`calendarFile(event,new Date('2026-11-21T10:00:00Z'))`, context);
+  assert.match(file, /DTSTART:20990507T103000/);
+  assert.match(file, /DTSTAMP:20261121T100000Z/);
+  assert.match(file, /SUMMARY:Foto\\, vídeo\\; encontro/);
+  assert.match(file, /LOCATION:Praça/);
+  assert.match(file, /URL:https:\/\/example.test\/HobbyHub\/#event=e/);
+  assert.doesNotMatch(file, /utm_source/);
+  assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
+});
 
 test('community events appear in their group with member-only confirmation', () => {
   const context = appContext();
