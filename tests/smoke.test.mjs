@@ -17,6 +17,38 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('community tabs separate memberships and show the latest post and nearest active event', () => {
+  const context = appContext();
+  const mine = vm.runInContext(`
+    state.user={uid:'a'};
+    state.groups=[
+      {id:'mine',name:'Meu clube',members:['a'],hobby:'Fotografia',location:'São Paulo'},
+      {id:'discovery',name:'Fotografia no litoral',members:['b'],hobby:'Fotografia',location:'Santos, SP'},
+      {id:'wrongCity',name:'Fotografia da serra',members:['b'],hobby:'Fotografia',location:'Petrópolis'},
+      {id:'wrongHobby',name:'Leitores do litoral',members:['b'],hobby:'Leitura',location:'Santos'}
+    ];
+    state.posts=[
+      {id:'old',groupId:'mine',content:'Post antigo',createdAt:1},
+      {id:'fresh',groupId:'mine',content:'Post mais recente',createdAt:2}
+    ];
+    state.events=[
+      {id:'later',groupId:'mine',title:'Evento posterior',date:'2099-01-02',time:'15:00'},
+      {id:'cancelled',groupId:'mine',title:'Evento cancelado',date:'2099-01-01',time:'10:00',cancelled:true},
+      {id:'next',groupId:'mine',title:'Próximo encontro',date:'2099-01-01',time:'15:00'}
+    ];
+    renderGroups()
+  `, context);
+  assert.match(mine, /Meu clube/);
+  assert.match(mine, /data-action="comments" data-id="fresh"/);
+  assert.match(mine, /data-action="view-event" data-id="next"/);
+  assert.doesNotMatch(mine, /Post antigo|Evento posterior|Evento cancelado|Fotografia no litoral/);
+  const discovery = vm.runInContext(`
+    state.groupView='discover';state.groupHobby='Fotografia';state.groupCity='santos';renderGroups()
+  `, context);
+  assert.match(discovery, /Fotografia no litoral/);
+  assert.doesNotMatch(discovery, /Meu clube|Fotografia da serra|Leitores do litoral/);
+});
+
 test('the event agenda combines search, hobby, community and date filters', () => {
   const context = appContext();
   const results = vm.runInContext(`
