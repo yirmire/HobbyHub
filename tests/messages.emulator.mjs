@@ -306,4 +306,31 @@ await request(sender, 'PATCH', `${eventPath}?updateMask.fieldPaths=time&updateMa
   time:str('11:00'),revision:{integerValue:'1'}
 });
 
+const finished = `${events}/finished`;
+await request(sender, 'POST', `${events}?documentId=finished`, 200, {...standalone,date:str('2000-01-01')});
+await request(recipient, 'PATCH', `${finished}?updateMask.fieldPaths=attendees`, 200, {attendees:both});
+async function sendFeedback(user, eventId, expected) {
+  const database = `projects/${project}/databases/(default)`;
+  const response = await fetch(`http://${storeHost}/v1/${database}/documents:commit`, {
+    method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
+    body:JSON.stringify({writes:[{
+      update:{name:`${database}/documents/artifacts/${project}/public/data/events/${eventId}/feedback/${user.localId}`,
+        fields:{attended:{booleanValue:true},comment:str('Repetir o encontro')}},
+      updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]
+    }]})
+  });
+  assert.equal(response.status, expected, await response.text());
+}
+await sendFeedback(sender, 'group-event', 403);
+await sendFeedback(recipient, 'standalone', 403);
+await sendFeedback(other, 'finished', 403);
+await sendFeedback(recipient, 'finished', 200);
+await sendFeedback(recipient, 'finished', 200);
+const summary = await request(sender, 'GET', `${finished}/feedback`, 200);
+assert.equal(summary.documents.length, 1);
+await request(recipient, 'GET', `${finished}/feedback/${recipient.localId}`, 200);
+await request(recipient, 'GET', `${finished}/feedback`, 403);
+await request(other, 'GET', `${finished}/feedback/${recipient.localId}`, 403);
+
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');
