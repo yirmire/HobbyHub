@@ -69,6 +69,7 @@ const state = {
   eventFeedback:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
+  moderationQueue:null,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -252,6 +253,7 @@ async function init() {
       state.eventFeedback=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
+      state.moderationQueue=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -640,7 +642,19 @@ function renderGroupModeration(group) {
   '<button class="btn btn-primary btn-small" data-action="invite-group-role">Convidar para moderar</button>'}`
   :'<p class="tip">Quando outra pessoa entrar no grupo, você poderá convidá-la para moderar.</p>'}`:'';
  return ownRole||ownerControls?`<section class="card" style="padding:16px;margin:14px 0" aria-label="Moderação da comunidade">${ownerControls}${ownRole}
- ${canManageGroup(group)?`<button class="text-action" data-action="moderation-history" data-id="${esc(group.id)}">Histórico de moderação</button>`:''}</section>`:'';
+ ${canManageGroup(group)?`<div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="group-report-queue" data-id="${esc(group.id)}">Denúncias</button><button class="text-action" data-action="moderation-history" data-id="${esc(group.id)}">Histórico de moderação</button></div>`:''}</section>`:'';
+}
+function renderGroupReportQueue(group) {
+ if(!canManageGroup(group))return modalWrap('Denúncias indisponíveis','<p>Você não tem acesso às denúncias deste grupo.</p>');
+ const queue=state.moderationQueue?.groupId===group.id?state.moderationQueue:null;
+ const pending=queue?.entries?.filter(entry=>entry.status==='pending');
+ return modalWrap('Denúncias da comunidade',`<div class="form-stack">
+ ${queue?.error?`<p class="tip">${esc(queue.error)}</p>`:!pending?'<p>Carregando denúncias…</p>':pending.length?pending.map(entry=>`
+   <article class="card" style="padding:12px"><strong>${entry.targetType==='comment'?'Comentário':'Publicação'}</strong>
+   <p>${esc(entry.text)}</p><p class="mini">Motivo: ${esc(entry.reason)}</p>${entry.details?`<p class="mini">${esc(entry.details)}</p>`:''}
+   <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="keep-group-report" data-id="${esc(entry.id)}">Manter conteúdo</button>
+   <button class="btn btn-primary btn-small" data-action="remove-group-report" data-id="${esc(entry.id)}">Retirar com motivo</button></div></article>`).join(''):'<p class="tip">Nenhuma denúncia pendente nesta comunidade.</p>'}
+ <button class="text-action" data-action="view-group" data-id="${esc(group.id)}">Voltar à comunidade</button></div>`);
 }
 function renderModerationHistory(group) {
  const history=state.moderationHistory;
@@ -665,6 +679,7 @@ function renderModerationHistory(group) {
 function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='first-visit')return renderFirstVisit();
+ if(state.modal==='group-report-queue')return renderGroupReportQueue(state.groups.find(group=>group.id===state.selectedGroup));
  if(state.modal==='moderation-history')return renderModerationHistory(state.groups.find(group=>group.id===state.selectedGroup));
  if(state.modal==='moderate-post'){
    const target=state.groupRemoval;
@@ -673,11 +688,11 @@ function renderModal() {
    const comment=target?.commentId?state.comments.find(item=>item.id===target.commentId):null;
    const isComment=Boolean(target?.commentId);
    const label=isComment?'comentário':'publicação';
-   if(!post||(isComment&&!comment)||!canManageGroup(group))return modalWrap('Remoção indisponível','<p>Este conteúdo não pode ser moderado agora.</p>');
+   if((!target?.reportId&&(!post||(isComment&&!comment)))||!canManageGroup(group))return modalWrap('Remoção indisponível','<p>Este conteúdo não pode ser moderado agora.</p>');
    return modalWrap(`Remover ${label}`,`<form id="moderate-post-form" data-draft="true" class="form-stack">
-   <p>${esc(short(isComment?comment.text:post.content,220))}</p><label class="field">Motivo da remoção<textarea class="textarea" name="reason" required maxlength="300"></textarea></label>
+   <p>${esc(short(target.reportId?target.preview:isComment?comment.text:post.content,220))}</p><label class="field">Motivo da remoção<textarea class="textarea" name="reason" required maxlength="300"></textarea></label>
    <p class="tip">${isComment?'O comentário ficará oculto. O criador pode restaurá-lo pelo histórico.':'A publicação e os comentários ficarão ocultos. O criador pode restaurá-los pelo histórico.'}</p>
-   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="${isComment?'comments':'view-group'}" data-id="${esc(isComment?post.id:group.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Remover ${label}</button></div></form>`);
+   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="${target.reportId?'group-report-queue':isComment?'comments':'view-group'}" data-id="${esc(target.reportId?group.id:isComment?post.id:group.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Remover ${label}</button></div></form>`);
  }
  if(state.modal==='event-detail'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
@@ -720,7 +735,7 @@ function renderModal() {
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
  <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
- <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
+ <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
  ${welcoming?`<section class="card" style="padding:16px;margin:14px 0"><h3>${joined?'Faça sua primeira contribuição':'Participe desta comunidade'}</h3>
@@ -759,8 +774,9 @@ function renderModal() {
  const post=state.posts.find(p=>p.id===state.selectedPost);
  if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está disponível no momento.</p>');
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
+ const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
  return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0 0">${esc(short(post.content,220))}</p></div>`:''}
- <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
+ <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small>${belongsToGroup&&c.userId!==me()?` <button class="text-action" data-action="report-group-comment" data-id="${esc(c.id)}">Denunciar comentário</button>`:''}</div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
  if(state.modal==='quiz'){
@@ -786,8 +802,8 @@ function renderModal() {
  }
  if(state.modal==='report'&&state.reportTarget){
  const target=state.reportTarget;
- const label={post:'publicação',profile:'perfil',testimonial:'depoimento',communityMessage:'mensagem',privateMessage:'mensagem'}[target.targetType];
- return modalWrap(`Denunciar ${label}`,`<p class="tip">${target.targetType==='privateMessage'?'A equipe de moderação receberá apenas a mensagem selecionada, o motivo e os detalhes que você incluir.':'A denúncia será revisada pela equipe de moderação.'}</p>
+ const label={post:'publicação',comment:'comentário',profile:'perfil',testimonial:'depoimento',communityMessage:'mensagem',privateMessage:'mensagem'}[target.targetType];
+ return modalWrap(`Denunciar ${label}`,`<p class="tip">${target.groupId?'A denúncia será revisada pela moderação desta comunidade.':target.targetType==='privateMessage'?'A equipe de moderação receberá apenas a mensagem selecionada, o motivo e os detalhes que você incluir.':'A denúncia será revisada pela equipe de moderação.'}</p>
  ${target.targetText?`<blockquote class="card" style="padding:12px;margin:12px 0">${esc(short(target.targetText,280))}</blockquote>`:''}
  <form id="report-form" data-draft="true" class="form-stack"><label class="field">Motivo<select name="reason" class="select"><option>Spam</option><option>Assédio ou ofensa</option><option>Golpe ou fraude</option><option>Conteúdo impróprio</option><option>Outro</option></select></label><label class="field">Detalhes (opcional)<textarea class="textarea" name="details" maxlength="500" placeholder="Descreva o problema..."></textarea></label><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Enviar denúncia</button></form>`);
  }
@@ -929,6 +945,17 @@ async function loadModerationHistory(groupId) {
  }catch(error){history.error=friendlyError(error);}
  if(me()===uid&&state.moderationHistory===history&&state.modal==='moderation-history')render();
 }
+async function loadGroupReportQueue(groupId) {
+ const uid=me();
+ const queue={groupId,entries:null,error:''};
+ state.moderationQueue=queue;render();
+ try{
+   const list=firebase.query(col('groups',groupId,'reports'),firebase.orderBy('createdAt','desc'));
+   const snapshot=await firebase.getDocs(list);
+   queue.entries=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}));
+ }catch(error){queue.error=friendlyError(error);}
+ if(me()===uid&&state.moderationQueue===queue&&state.modal==='group-report-queue')render();
+}
 function moderationTargetRefs(postId,commentId) {
  return commentId
    ? {content:ref('posts',postId,'comments',commentId),pointer:ref('posts',postId,'removedComments',commentId)}
@@ -1009,6 +1036,14 @@ function openReport(type,id) {
  if(type==='post'){
    const post=state.posts.find(item=>item.id===id);
    if(!post||post.userId===me())return;
+   if(state.groups.find(group=>group.id===post.groupId)?.members?.includes(me())){
+     target={targetType:'post',groupId:post.groupId,postId:post.id,commentId:'',targetText:post.content};
+   }
+ }else if(type==='comment'){
+   const post=state.posts.find(item=>item.id===state.selectedPost);
+   const comment=state.comments.find(item=>item.id===id);
+   if(!post||!comment||comment.userId===me()||!state.groups.find(group=>group.id===post.groupId)?.members?.includes(me()))return;
+   target={targetType:'comment',groupId:post.groupId,postId:post.id,commentId:id,targetText:comment.text};
  }else{
    let item;
    let parentId='';
@@ -1123,6 +1158,36 @@ async function onAction(btn) {
     state.selectedGroup=id;state.moderationHistory=null;openModal('moderation-history');
     await loadModerationHistory(id);return;
   }
+  case 'group-report-queue':{
+    const group=state.groups.find(item=>item.id===id);
+    if(!canManageGroup(group))return;
+    state.selectedGroup=id;state.moderationQueue=null;openModal('group-report-queue');
+    await loadGroupReportQueue(id);return;
+  }
+  case 'keep-group-report':
+  case 'remove-group-report':await attempt(async()=>{
+    const queue=state.moderationQueue,uid=me();
+    const group=state.groups.find(item=>item.id===state.selectedGroup);
+    const report=queue?.groupId===group?.id?queue?.entries?.find(item=>item.id===id&&item.status==='pending'):null;
+    if(!canManageGroup(group)||!report)return;
+    if(action==='remove-group-report'){
+      state.groupRemoval={groupId:group.id,postId:report.postId,commentId:report.commentId,reportId:id,preview:report.text};
+      openModal('moderate-post');return;
+    }
+    const reportRef=ref('groups',group.id,'reports',id);
+    const status=await firebase.runTransaction(db,async transaction=>{
+      if((await transaction.get(reportRef)).data()?.status!=='pending')throw new Error('Esta denúncia já foi revisada.');
+      const post=(await transaction.get(ref('posts',report.postId))).data();
+      const visible=post?.groupId===group.id
+        && (!report.commentId||(await transaction.get(ref('posts',report.postId,'comments',report.commentId))).exists());
+      const status=visible?'kept':'unavailable';
+      transaction.update(reportRef,{status,reviewedBy:uid,reviewedAt:firebase.serverTimestamp(),moderationId:''});
+      return status;
+    });
+    if(me()!==uid)return;
+    if(state.modal==='group-report-queue'&&state.selectedGroup===group.id)await loadGroupReportQueue(group.id);
+    showToast(status==='kept'?'Denúncia revisada. Conteúdo mantido.':'Conteúdo indisponível. Denúncia encerrada.');
+  });return;
   case 'moderate-post':
   case 'moderate-comment':{
     const commentId=action==='moderate-comment'?id:null;
@@ -1299,6 +1364,7 @@ async function onAction(btn) {
   case 'delete-comment':if(!confirm('Excluir este comentário?'))return;
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',state.selectedPost,'comments',id));showToast('Comentário excluído.');});return;
   case 'report-post':openReport('post',id);return;
+  case 'report-group-comment':openReport('comment',id);return;
   case 'report-content':openReport(btn.dataset.type,id);return;
   default:return;
  }
@@ -1418,14 +1484,18 @@ document.addEventListener('submit',async(event)=>{
       if(!post||post.groupId!==target.groupId)throw new Error('Esta publicação já está indisponível.');
       const snapshot=target.commentId?(await transaction.get(content)).data():post;
       if(!snapshot)throw new Error('Este comentário já está indisponível.');
+      const reportRef=target.reportId?ref('groups',target.groupId,'reports',target.reportId):null;
+      if(reportRef&&(await transaction.get(reportRef)).data()?.status!=='pending')throw new Error('Esta denúncia já foi revisada.');
       transaction.set(entryRef,{postId:target.postId,...(target.commentId?{commentId:target.commentId,comment:snapshot}:{post}),reason,removedBy:uid,removedAt:firebase.serverTimestamp()});
       transaction.set(pointer,{groupId:target.groupId,entryId:entryRef.id});
       transaction.delete(content);
+      if(reportRef)transaction.update(reportRef,{status:'removed',reviewedBy:uid,reviewedAt:firebase.serverTimestamp(),moderationId:entryRef.id});
     });
     if(me()!==uid)return;
     if(state.groupRemoval===target&&state.modal==='moderate-post'){
       state.groupRemoval=null;state.selectedGroup=target.groupId;
-      if(target.commentId)openComments(target.postId);
+      if(target.reportId){openModal('group-report-queue');await loadGroupReportQueue(target.groupId);}
+      else if(target.commentId)openComments(target.postId);
       else openModal('group-detail');
     }
     showToast(target.commentId?'Comentário retirado. O registro está no histórico de moderação.':'Publicação retirada. O registro está no histórico de moderação.');
@@ -1470,7 +1540,12 @@ document.addEventListener('submit',async(event)=>{
   case 'report-form':await attempt(async()=>{
     const target=state.reportTarget;
     if(!target||!me())return;
-    await firebase.addDoc(col('reports'),{...target,reporterId:me(),reason:val('reason'),details:val('details'),createdAt:now()});
+    const fields={reporterId:me(),reason:val('reason'),details:val('details')};
+    if(target.groupId)await firebase.addDoc(col('groups',target.groupId,'reports'),{
+      ...fields,targetType:target.targetType,postId:target.postId,commentId:target.commentId,
+      text:target.targetText,createdAt:firebase.serverTimestamp(),status:'pending'
+    });
+    else await firebase.addDoc(col('reports'),{...target,...fields,createdAt:now()});
     if(state.modal==='report'&&state.reportTarget===target)closeModal();
     showToast('Denúncia registrada para análise.');
   });return;
