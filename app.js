@@ -650,11 +650,16 @@ function renderModerationHistory(group) {
    const date=entry.removedAt?.toDate?.();
    const who=member(entry.removedBy)?.name||'Moderador da comunidade';
    const stamp=date?date.toLocaleString('pt-BR'):'';
-   return `<article class="card" style="padding:12px"><strong>${entry.restoredAt?'Restaurada':'Removida'}</strong>
-   <p>${esc(short(entry.post?.content,220))}</p><p class="mini">Motivo: ${esc(entry.reason)}</p>
+   const isComment=Boolean(entry.commentId);
+   const label=isComment?'Comentário':'Publicação';
+   const stateLabel=entry.restoredAt?(isComment?'restaurado':'restaurada'):(isComment?'retirado':'retirada');
+   const canRestore=group.createdBy===me()&&!entry.restoredAt;
+   const postVisible=!isComment||state.posts.some(post=>post.id===entry.postId);
+   return `<article class="card" style="padding:12px"><strong>${label} ${stateLabel}</strong>
+   <p>${esc(short(isComment?entry.comment?.text:entry.post?.content,220))}</p><p class="mini">Motivo: ${esc(entry.reason)}</p>
    <p class="mini muted">${esc(who)}${stamp?` · ${esc(stamp)}`:''}</p>
-   ${!entry.restoredAt&&group.createdBy===me()?`<button class="btn btn-outline btn-small" data-action="restore-group-post" data-id="${esc(entry.id)}">Restaurar publicação</button>`:''}</article>`;
- }).join(''):'<p class="tip">Nenhuma publicação foi removida pela moderação.</p>';
+   ${canRestore?(postVisible?`<button class="btn btn-outline btn-small" data-action="restore-group-post" data-id="${esc(entry.id)}">Restaurar ${label.toLowerCase()}</button>`:'<p class="tip">Restaure a publicação antes de restaurar este comentário.</p>'):''}</article>`;
+ }).join(''):'<p class="tip">Nenhum conteúdo foi retirado pela moderação.</p>';
  return modalWrap('Histórico de moderação',`<div class="form-stack">${list}<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">Voltar à comunidade</button></div>`);
 }
 function renderModal() {
@@ -665,11 +670,14 @@ function renderModal() {
    const target=state.groupRemoval;
    const group=state.groups.find(item=>item.id===target?.groupId);
    const post=state.posts.find(item=>item.id===target?.postId&&item.groupId===group?.id);
-   if(!post||!canManageGroup(group))return modalWrap('Remoção indisponível','<p>Esta publicação não pode ser moderada agora.</p>');
-   return modalWrap('Remover publicação',`<form id="moderate-post-form" data-draft="true" class="form-stack">
-   <p>${esc(short(post.content,220))}</p><label class="field">Motivo da remoção<textarea class="textarea" name="reason" required maxlength="300"></textarea></label>
-   <p class="tip">A publicação e os comentários ficarão ocultos. O criador pode restaurá-los pelo histórico.</p>
-   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-group" data-id="${esc(group.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Remover publicação</button></div></form>`);
+   const comment=target?.commentId?state.comments.find(item=>item.id===target.commentId):null;
+   const isComment=Boolean(target?.commentId);
+   const label=isComment?'comentário':'publicação';
+   if(!post||(isComment&&!comment)||!canManageGroup(group))return modalWrap('Remoção indisponível','<p>Este conteúdo não pode ser moderado agora.</p>');
+   return modalWrap(`Remover ${label}`,`<form id="moderate-post-form" data-draft="true" class="form-stack">
+   <p>${esc(short(isComment?comment.text:post.content,220))}</p><label class="field">Motivo da remoção<textarea class="textarea" name="reason" required maxlength="300"></textarea></label>
+   <p class="tip">${isComment?'O comentário ficará oculto. O criador pode restaurá-lo pelo histórico.':'A publicação e os comentários ficarão ocultos. O criador pode restaurá-los pelo histórico.'}</p>
+   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="${isComment?'comments':'view-group'}" data-id="${esc(isComment?post.id:group.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Remover ${label}</button></div></form>`);
  }
  if(state.modal==='event-detail'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
@@ -752,7 +760,7 @@ function renderModal() {
  if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está disponível no momento.</p>');
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0 0">${esc(short(post.content,220))}</p></div>`:''}
- <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()||canModerate?`<button data-action="delete-comment" data-id="${esc(c.id)}" aria-label="Excluir comentário">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
+ <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small></div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
  if(state.modal==='quiz'){
@@ -920,6 +928,11 @@ async function loadModerationHistory(groupId) {
    history.entries=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}));
  }catch(error){history.error=friendlyError(error);}
  if(me()===uid&&state.moderationHistory===history&&state.modal==='moderation-history')render();
+}
+function moderationTargetRefs(postId,commentId) {
+ return commentId
+   ? {content:ref('posts',postId,'comments',commentId),pointer:ref('posts',postId,'removedComments',commentId)}
+   : {content:ref('posts',postId),pointer:ref('removedPosts',postId)};
 }
 function openLinkedContent() {
  const match=/^#(post|group|event)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
@@ -1110,26 +1123,31 @@ async function onAction(btn) {
     state.selectedGroup=id;state.moderationHistory=null;openModal('moderation-history');
     await loadModerationHistory(id);return;
   }
-  case 'moderate-post':{
-    const post=state.posts.find(item=>item.id===id);
+  case 'moderate-post':
+  case 'moderate-comment':{
+    const commentId=action==='moderate-comment'?id:null;
+    const post=state.posts.find(item=>item.id===(commentId?state.selectedPost:id));
     const group=state.groups.find(item=>item.id===post?.groupId);
-    if(!post||!canManageGroup(group))return;
-    state.groupRemoval={groupId:group.id,postId:id};openModal('moderate-post');return;
+    if(!post||!canManageGroup(group)||(commentId&&!state.comments.some(comment=>comment.id===commentId)))return;
+    state.groupRemoval={groupId:group.id,postId:post.id,commentId};openModal('moderate-post');return;
   }
   case 'restore-group-post':await attempt(async()=>{
     const uid=me(),groupId=state.selectedGroup;
     if(state.groups.find(group=>group.id===groupId)?.createdBy!==uid)return;
     const entryRef=ref('groups',groupId,'moderationLog',id);
-    await firebase.runTransaction(db,async transaction=>{
+    const isComment=await firebase.runTransaction(db,async transaction=>{
       const entry=(await transaction.get(entryRef)).data();
-      if(!entry||entry.restoredAt)throw new Error('Esta publicação já foi restaurada ou está indisponível.');
-      transaction.set(ref('posts',entry.postId),entry.post);
-      transaction.delete(ref('removedPosts',entry.postId));
+      if(!entry||entry.restoredAt)throw new Error('Este conteúdo já foi restaurado ou está indisponível.');
+      if(entry.commentId&&!(await transaction.get(ref('posts',entry.postId))).exists())throw new Error('Restaure a publicação antes deste comentário.');
+      const {content,pointer}=moderationTargetRefs(entry.postId,entry.commentId);
+      transaction.set(content,entry.commentId?entry.comment:entry.post);
+      transaction.delete(pointer);
       transaction.update(entryRef,{restoredBy:uid,restoredAt:firebase.serverTimestamp()});
+      return Boolean(entry.commentId);
     });
     if(me()!==uid)return;
     if(state.modal==='moderation-history'&&state.selectedGroup===groupId)await loadModerationHistory(groupId);
-    showToast('Publicação restaurada com os comentários.');
+    showToast(isComment?'Comentário restaurado.':'Publicação restaurada com os comentários.');
   });return;
   case 'invite-group-role':
   case 'revoke-group-role':await attempt(async()=>{
@@ -1394,18 +1412,23 @@ document.addEventListener('submit',async(event)=>{
     const uid=me(),target=state.groupRemoval,reason=val('reason');
     if(!target||!reason||reason.length>300||!canManageGroup(state.groups.find(group=>group.id===target.groupId)))return;
     const postRef=ref('posts',target.postId),entryRef=firebase.doc(col('groups',target.groupId,'moderationLog'));
+    const {content,pointer}=moderationTargetRefs(target.postId,target.commentId);
     await firebase.runTransaction(db,async transaction=>{
       const post=(await transaction.get(postRef)).data();
       if(!post||post.groupId!==target.groupId)throw new Error('Esta publicação já está indisponível.');
-      transaction.set(entryRef,{postId:target.postId,post,reason,removedBy:uid,removedAt:firebase.serverTimestamp()});
-      transaction.set(ref('removedPosts',target.postId),{groupId:target.groupId,entryId:entryRef.id});
-      transaction.delete(postRef);
+      const snapshot=target.commentId?(await transaction.get(content)).data():post;
+      if(!snapshot)throw new Error('Este comentário já está indisponível.');
+      transaction.set(entryRef,{postId:target.postId,...(target.commentId?{commentId:target.commentId,comment:snapshot}:{post}),reason,removedBy:uid,removedAt:firebase.serverTimestamp()});
+      transaction.set(pointer,{groupId:target.groupId,entryId:entryRef.id});
+      transaction.delete(content);
     });
     if(me()!==uid)return;
     if(state.groupRemoval===target&&state.modal==='moderate-post'){
-      state.groupRemoval=null;state.selectedGroup=target.groupId;openModal('group-detail');
+      state.groupRemoval=null;state.selectedGroup=target.groupId;
+      if(target.commentId)openComments(target.postId);
+      else openModal('group-detail');
     }
-    showToast('Publicação retirada. O registro está no histórico de moderação.');
+    showToast(target.commentId?'Comentário retirado. O registro está no histórico de moderação.':'Publicação retirada. O registro está no histórico de moderação.');
   });return;
   case 'profile-form':await attempt(async()=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
