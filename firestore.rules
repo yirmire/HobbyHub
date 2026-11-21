@@ -50,6 +50,12 @@ service cloud.firestore {
     function removedPostPath(appId, postId) {
       return /databases/$(database)/documents/artifacts/$(appId)/public/data/removedPosts/$(postId);
     }
+    function publicCommentPath(appId, postId, commentId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)/comments/$(commentId);
+    }
+    function removedCommentPath(appId, postId, commentId) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)/removedComments/$(commentId);
+    }
     function moderationLogPath(appId, groupId, entryId) {
       return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)/moderationLog/$(entryId);
     }
@@ -237,14 +243,41 @@ service cloud.firestore {
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
 
       match /comments/{commentId} {
+        function restoresComment() {
+          let pointer = get(removedCommentPath(appId, postId, commentId)).data;
+          let groupId = get(publicPostPath(appId, postId)).data.get('groupId', '');
+          return pointer.groupId == groupId && groupOwner(appId, groupId)
+            && !existsAfter(removedCommentPath(appId, postId, commentId))
+            && getAfter(moderationLogPath(appId, groupId, pointer.entryId)).data.comment == request.resource.data;
+        }
         allow read: if loggedIn() && exists(publicPostPath(appId, postId));
-        allow create: if loggedIn() && exists(publicPostPath(appId, postId))
+        allow create: if loggedIn() && exists(publicPostPath(appId, postId)) && (
+          (!exists(removedCommentPath(appId, postId, commentId))
           && request.resource.data.userId == request.auth.uid
           && validText(request.resource.data.text, 1, 800)
-          && request.resource.data.createdAt is number;
+          && request.resource.data.createdAt is number) || restoresComment());
         allow delete: if loggedIn() && exists(publicPostPath(appId, postId)) && (resource.data.userId == request.auth.uid
-          || moderatesPost(appId, get(/databases/$(database)/documents/artifacts/$(appId)/public/data/posts/$(postId)).data));
+          || (moderatesPost(appId, get(publicPostPath(appId, postId)).data)
+            && !exists(removedCommentPath(appId, postId, commentId))
+            && existsAfter(removedCommentPath(appId, postId, commentId))));
         allow update: if false;
+      }
+      match /removedComments/{commentId} {
+        function validCommentPointer(data) {
+          let post = get(publicPostPath(appId, postId)).data;
+          let log = moderationLogPath(appId, data.groupId, data.entryId);
+          return data.keys().hasOnly(['groupId', 'entryId'])
+            && data.groupId == post.groupId && moderatesPost(appId, post)
+            && validText(data.entryId, 1, 120) && data.entryId.matches('[^/]+')
+            && !exists(log) && getAfter(log).data.postId == postId
+            && getAfter(log).data.commentId == commentId;
+        }
+        allow create: if loggedIn() && validCommentPointer(request.resource.data);
+        allow delete: if loggedIn() && groupOwner(appId, resource.data.groupId)
+          && getAfter(publicCommentPath(appId, postId, commentId)).data
+            == get(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.comment
+          && getAfter(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.restoredAt == request.time;
+        allow read, update: if false;
       }
     }
 
@@ -257,7 +290,8 @@ service cloud.firestore {
       allow create: if loggedIn() && validPointer(request.resource.data)
         && moderatesPost(appId, {'groupId': request.resource.data.groupId})
         && !exists(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId))
-        && getAfter(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId)).data.postId == postId;
+        && getAfter(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId)).data.postId == postId
+        && !getAfter(moderationLogPath(appId, request.resource.data.groupId, request.resource.data.entryId)).data.keys().hasAny(['commentId']);
       allow delete: if loggedIn() && groupOwner(appId, resource.data.groupId)
         && getAfter(publicPostPath(appId, postId)).data == get(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.post
         && getAfter(moderationLogPath(appId, resource.data.groupId, resource.data.entryId)).data.restoredAt == request.time;
@@ -294,26 +328,45 @@ service cloud.firestore {
           get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
       }
       match /moderationLog/{entryId} {
+        function recordsPostRemoval(data) {
+          return data.keys().hasOnly(['postId', 'post', 'reason', 'removedBy', 'removedAt'])
+            && data.post.groupId == groupId
+            && data.post == get(publicPostPath(appId, data.postId)).data
+            && !existsAfter(publicPostPath(appId, data.postId))
+            && getAfter(removedPostPath(appId, data.postId)).data == {'groupId': groupId, 'entryId': entryId};
+        }
+        function recordsCommentRemoval(data) {
+          return data.keys().hasOnly(['postId', 'commentId', 'comment', 'reason', 'removedBy', 'removedAt'])
+            && validText(data.commentId, 1, 120) && data.commentId.matches('[^/]+')
+            && get(publicPostPath(appId, data.postId)).data.groupId == groupId
+            && data.comment == get(publicCommentPath(appId, data.postId, data.commentId)).data
+            && !existsAfter(publicCommentPath(appId, data.postId, data.commentId))
+            && getAfter(removedCommentPath(appId, data.postId, data.commentId)).data == {'groupId': groupId, 'entryId': entryId};
+        }
+        function restoresLogEntry(entry) {
+          return entry.keys().hasAny(['commentId'])
+            ? (get(removedCommentPath(appId, entry.postId, entry.commentId)).data == {'groupId': groupId, 'entryId': entryId}
+              && !existsAfter(removedCommentPath(appId, entry.postId, entry.commentId))
+              && getAfter(publicCommentPath(appId, entry.postId, entry.commentId)).data == entry.comment)
+            : (get(removedPostPath(appId, entry.postId)).data == {'groupId': groupId, 'entryId': entryId}
+              && !existsAfter(removedPostPath(appId, entry.postId))
+              && getAfter(publicPostPath(appId, entry.postId)).data == entry.post);
+        }
         allow read: if loggedIn() && canReviewModeration();
         allow create: if loggedIn() && canReviewModeration()
-          && request.resource.data.keys().hasOnly(['postId', 'post', 'reason', 'removedBy', 'removedAt'])
           && validText(request.resource.data.postId, 1, 120)
           && request.resource.data.postId.matches('[^/]+')
           && validText(request.resource.data.reason, 1, 300)
           && request.resource.data.removedBy == request.auth.uid
           && request.resource.data.removedAt == request.time
-          && request.resource.data.post.groupId == groupId
-          && request.resource.data.post == get(publicPostPath(appId, request.resource.data.postId)).data
-          && !existsAfter(publicPostPath(appId, request.resource.data.postId))
-          && getAfter(removedPostPath(appId, request.resource.data.postId)).data == {'groupId': groupId, 'entryId': entryId};
+          && (request.resource.data.keys().hasAny(['commentId'])
+            ? recordsCommentRemoval(request.resource.data) : recordsPostRemoval(request.resource.data));
         allow update: if loggedIn() && groupOwner(appId, groupId)
           && changedOnly(['restoredBy', 'restoredAt'])
           && !resource.data.keys().hasAny(['restoredAt'])
           && request.resource.data.restoredBy == request.auth.uid
           && request.resource.data.restoredAt == request.time
-          && get(removedPostPath(appId, resource.data.postId)).data == {'groupId': groupId, 'entryId': entryId}
-          && !existsAfter(removedPostPath(appId, resource.data.postId))
-          && getAfter(publicPostPath(appId, resource.data.postId)).data == resource.data.post;
+          && restoresLogEntry(resource.data);
         allow delete: if false;
       }
     }
