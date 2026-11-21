@@ -63,6 +63,7 @@ const state = {
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
+  eventGroupId:null,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -228,6 +229,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
+      state.eventGroupId=null;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -381,21 +383,24 @@ function renderGroups(){
  <div class="section-head"><h2>Descubra comunidades</h2><span class="pill">${list.length} grupos</span></div>
  ${list.length?`<div class="grid-two">${list.map(groupCard).join('')}</div>`:empty('🧩','A comunidade começa com você','Nenhum grupo encontrado por aqui. Que tal criar o primeiro?','Criar uma comunidade','group')}`;
 }
-function eventCard(event) {
+function eventCard(event, inGroup=false) {
  const attending=(event.attendees||[]).includes(me());
- const future=event.date >= new Date().toISOString().slice(0,10);
+ const future=event.date>=today();
+ const group=state.groups.find(item=>item.id===event.groupId);
+ const canJoin=!event.groupId||group?.members?.includes(me());
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  <h3>${esc(event.title)}</h3><p>${esc(short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
+ ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
- <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${!future&&!attending?'disabled':''}>${attending?'Confirmado ✓':future?'Tenho interesse':'Encerrado'}</button></div></article>`;
+ <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${!attending&&(!future||!canJoin)?'disabled':''}>${attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
 }
 function renderEvents() {
  const day=today();
  const events=state.events.filter(e=>state.eventFilter==='all'||(state.eventFilter==='mine'?(e.attendees||[]).includes(me()):(e.date||'')>=day));
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
  <div class="filters">${[['upcoming','Próximos'],['mine','Tenho interesse'],['all','Todos']].map(([id,title])=>`<button class="filter ${state.eventFilter===id?'active':''}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
- ${events.length?`<div class="grid-two">${events.map(eventCard).join('')}</div>`:empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
+ ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
 function renderSaved() {
@@ -503,6 +508,7 @@ function renderModal() {
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
+ const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
  <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
  <div class="toggle-row"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${group.createdBy===me()?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button>`:''}</div></article>`;
@@ -513,17 +519,22 @@ function renderModal() {
  <div class="toggle-row" style="flex-wrap:wrap">${joined?`${pinned?`<button class="btn btn-primary btn-small" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}<button class="btn ${pinned?'btn-outline':'btn-primary'} btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Se apresentar</button>`:`<button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button>`}</div></section>`:''}
  <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${pinned?renderGroupPost(pinned,true):''}
+ <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
+ ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
  <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
  }
  if(state.modal==='group')return modalWrap('Criar comunidade',`<form id="group-form" data-draft="true" class="form-stack"><div class="field"><label>Nome do grupo</label><input class="input" name="name" required minlength="3" maxlength="75" placeholder="Ex.: Fotógrafos da Serra"></div><div class="field"><label>Principal hobby</label>${topicSelect()}</div><div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="600" required placeholder="Que tipo de experiências vocês querem compartilhar?"></textarea></div><div class="field"><label>Cidade ou região</label><input class="input" name="location" maxlength="90" value="${esc(myLocation())}" required></div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar grupo ${icon('arrow')}</button></div></form>`);
- if(state.modal==='event')return modalWrap('Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack"><div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça"></div>
+ if(state.modal==='event'){
+ const eventGroup=state.groups.find(group=>group.id===state.eventGroupId);
+ return modalWrap(eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack"><div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça"></div>
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><div class="field"><label>Horário</label><input class="input" name="time" type="time" required></div></div>
- <div class="field"><label>Interesse</label>${topicSelect()}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo"></div>
+ <div class="field"><label>Interesse</label>${topicSelect(eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo"></div>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?"></textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar evento</button></div></form>`);
+ }
  if(state.modal==='edit-profile'){
  const p=state.profile;
  return modalWrap('Editar perfil',`<form id="profile-form" data-draft="true" class="form-stack"><div class="field-grid"><div class="field"><label>Seu nome</label><input class="input" name="name" value="${esc(p.name)}" maxlength="60" required></div><div class="field"><label>Avatar (emoji)</label><input class="input" name="avatar" value="${esc(p.avatar)}" maxlength="8" required></div></div>
@@ -741,7 +752,13 @@ async function onAction(btn) {
   case 'group-topic':state.groupTopic=btn.dataset.topic;render();return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
-  case 'group':case 'event':openModal(action);return;
+  case 'group':openModal(action);return;
+  case 'event':state.eventGroupId=null;openModal('event');return;
+  case 'group-event':{
+    const group=state.groups.find(item=>item.id===id);
+    if(!group?.members?.includes(me()))return;
+    state.eventGroupId=id;openModal('event');return;
+  }
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
   case 'view-welcome-group':
     if(!state.groups.some(group=>group.id===id))return;
@@ -847,8 +864,9 @@ async function onAction(btn) {
   case 'rsvp':await attempt(async()=>{
     const event=state.events.find(e=>e.id===id);if(!event)return;
     const attending=(event.attendees||[]).includes(me());
+    if(!attending&&(event.date<today()||(event.groupId&&!state.groups.find(group=>group.id===event.groupId)?.members?.includes(me()))))return;
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
-    showToast(attending?'Interesse removido.':'Sua participação foi marcada como interesse!');
+    showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
   case 'delete-post':if(!confirm('Excluir esta publicação definitivamente?'))return;
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',id));showToast('Publicação excluída.');});return;
@@ -915,8 +933,11 @@ document.addEventListener('submit',async(event)=>{
   });return;
   case 'event-form':await attempt(async()=>{
     if(val('date')<today())throw new Error('A data deve ser hoje ou no futuro.');
-    await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:me(),attendees:[me()],createdAt:now()});
-    closeModal();setTab('events');showToast('Evento criado! Convide sua comunidade.');
+    const groupId=state.eventGroupId;
+    await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:me(),attendees:[me()],createdAt:now(),...(groupId?{groupId}:{})});
+    closeModal();setTab(groupId?'groups':'events');
+    if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
+    showToast('Evento criado! Convide sua comunidade.');
   });return;
   case 'profile-form':await attempt(async()=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
