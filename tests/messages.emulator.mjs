@@ -252,4 +252,27 @@ const groupForVisitor = await request(recipient, 'GET', group, 200);
 assert.equal(groupForVisitor.fields.pinnedPostId.stringValue, 'welcome-post');
 await request(sender, 'PATCH', pin, 200, { pinnedPostId: str('') });
 
+const events = 'public/data/events';
+const eventFields = {
+  title: str('Caminhada'), description: str('Encontro do grupo'), hobby: str('Fotografia'),
+  location: str('Praça pública'), date: str('2099-01-01'), time: str('10:00'), groupId: str('welcome-group'),
+  createdBy: str(sender.localId), attendees: { arrayValue: { values: [str(sender.localId)] } }
+};
+const eventPath = `${events}/group-event`;
+await request(sender, 'POST', `${events}?documentId=group-event`, 200, eventFields);
+await request(recipient, 'POST', events, 403, {
+  ...eventFields, createdBy: str(recipient.localId), attendees: { arrayValue: { values: [str(recipient.localId)] } }
+});
+const both = { arrayValue: { values: [str(sender.localId), str(recipient.localId)] } };
+const organizerOnly = { arrayValue: { values: [str(sender.localId)] } };
+const rsvp = `${eventPath}?updateMask.fieldPaths=attendees`;
+await request(recipient, 'PATCH', rsvp, 403, { attendees: both });
+await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, { members: both });
+await request(recipient, 'PATCH', rsvp, 200, { attendees: both });
+await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, { members: organizerOnly });
+await request(recipient, 'PATCH', rsvp, 200, { attendees: organizerOnly });
+const { groupId: _groupId, ...standalone } = eventFields;
+await request(sender, 'POST', `${events}?documentId=standalone`, 200, standalone);
+await request(recipient, 'PATCH', `${events}/standalone?updateMask.fieldPaths=attendees`, 200, { attendees: both });
+
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');
