@@ -64,6 +64,7 @@ const state = {
   reportTarget:null,
   groupsLoaded:false,
   eventGroupId:null, selectedEvent:null, eventsLoaded:false,
+  eventReads:new Map(), eventReadsLoaded:false,
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -213,6 +214,10 @@ function startSession() {
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
+  subscribe(col('members',me(),'eventReads'),snapshot=>{
+    for(const doc of snapshot.docs)state.eventReads.set(doc.id,Math.max(doc.data().revision||0,state.eventReads.get(doc.id)||0));
+    state.eventReadsLoaded=true;
+  },'avisos de eventos');
 }
 async function init() {
   document.body.classList.toggle('dark',state.dark);
@@ -233,6 +238,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.selectedEvent=null;state.eventsLoaded=false;
+      state.eventReads.clear();state.eventReadsLoaded=false;
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -306,12 +312,30 @@ function renderRight() {
  ${groups.length?groups.map(g=>`<div class="suggestion"><span class="avatar">${emoji(g.hobby)}</span><div style="min-width:0;flex:1"><div class="label">${esc(short(g.name,23))}</div><div class="sublabel">${(g.members||[]).length} membros</div></div></div>`).join(''):'<p class="tip">As primeiras comunidades estão esperando criadores.</p>'}</div>
  </aside>`;
 }
+function eventChangeDescriptions(event) {
+ if(event.cancelled===true)return ['O evento foi cancelado pelo organizador.'];
+ const previous=event.previousSchedule;
+ if(!previous)return ['Confira as informações atualizadas do evento.'];
+ const formatDate=value=>String(value||'').split('-').reverse().join('/');
+ const changes=[];
+ if(previous.date!==event.date)changes.push(`Data alterada de ${formatDate(previous.date)} para ${formatDate(event.date)}.`);
+ if(previous.time!==event.time)changes.push(`Horário alterado de ${previous.time} para ${event.time}.`);
+ if(previous.location!==event.location)changes.push(`Local alterado de ${previous.location} para ${event.location}.`);
+ return changes.length?changes:['Confira as informações atualizadas do evento.'];
+}
+function renderEventNotices() {
+ if(!state.eventReadsLoaded)return '';
+ const notices=state.events.filter(event=>event.date>=today()&&event.attendees?.includes(me())&&event.revision>(state.eventReads.get(event.id)||0));
+ if(!notices.length)return '';
+ return `<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Avisos dos seus eventos"><h2 style="font-size:16px;margin:0 0 8px">Avisos dos seus eventos</h2>
+ <div class="form-stack">${notices.slice(0,3).map(event=>`<div><strong>${event.cancelled===true?'Evento cancelado':'O evento mudou'} · ${esc(event.title)}</strong><p class="mini">${esc(eventChangeDescriptions(event)[0])}</p><button class="text-action" data-action="view-event-notice" data-id="${esc(event.id)}">Ver aviso</button></div>`).join('')}</div></section>`;
+}
 function renderLayout() {
  if(!state.profile)return `<div class="splash"><span class="splash-mark">✳</span><h1>HobbyHub</h1><p>Preparando seu perfil...</p>${state.alerts.length?`<div class="error-banner">${esc(state.alerts[0])}</div><button data-action="logout" class="btn btn-outline">Sair da conta</button>`:''}</div>`;
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
  return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row"><button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
- ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
+ ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
 function postCard(post) {
@@ -504,6 +528,7 @@ function renderModal() {
    const group=state.groups.find(item=>item.id===event.groupId);
    const joined=group?.members?.includes(me());
    return modalWrap(event.title,`${eventCard(event,false,true)}
+   ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
    <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
@@ -816,6 +841,15 @@ async function onAction(btn) {
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;openModal('event');return;
   case 'view-event':state.selectedEvent=id;openModal('event-detail');return;
+  case 'view-event-notice':{
+    const event=state.events.find(item=>item.id===id);
+    if(!event?.attendees?.includes(me()))return;
+    state.selectedEvent=id;openModal('event-detail');
+    try {
+      if(event.revision>(state.eventReads.get(id)||0))await firebase.setDoc(ref('members',me(),'eventReads',id),{revision:event.revision});
+    } catch(error){console.error('Salvar aviso visto:',error);}
+    return;
+  }
   case 'edit-event':{
     const event=state.events.find(item=>item.id===id);
     if(event?.createdBy===me()&&event.cancelled!==true){state.selectedEvent=id;openModal('event-edit');}
@@ -1026,9 +1060,17 @@ document.addEventListener('submit',async(event)=>{
     if(!event||event.createdBy!==me()||event.cancelled===true)return;
     const date=val('date'),time=val('time'),location=val('location');
     if(date<today()||!time||!location)throw new Error('Informe data, horário e local válidos.');
-    await firebase.updateDoc(ref('events',event.id),{date,time,location,revision:firebase.increment(1)});
+    const target=ref('events',event.id);
+    const changed=await firebase.runTransaction(db,async transaction=>{
+      const latest=(await transaction.get(target)).data();
+      if(!latest||latest.cancelled===true)throw new Error('Este evento já foi cancelado ou removido.');
+      const previousSchedule={date:latest.date,time:latest.time,location:latest.location};
+      if(date===latest.date&&time===latest.time&&location===latest.location)return false;
+      transaction.update(target,{date,time,location,previousSchedule,revision:(latest.revision||0)+1});
+      return true;
+    });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openModal('event-detail');
-    showToast('Evento atualizado.');
+    showToast(changed?'Evento atualizado.':'Nenhuma alteração no evento.');
   });return;
   case 'profile-form':await attempt(async()=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
