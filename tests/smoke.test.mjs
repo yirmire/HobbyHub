@@ -68,6 +68,22 @@ test('event notices show schedule changes and only reach confirmed members with 
   assert.match(vm.runInContext(`state.events[0].revision=2;state.events[0].cancelled=true;renderEventNotices()`, context), /Evento cancelado/);
 });
 
+test('an event notice stays unread until the server confirms the receipt', async () => {
+  const context = appContext();
+  let confirmWrite;
+  context.pendingWrite = new Promise(resolve => { confirmWrite = resolve; });
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    state.events=[{id:'e',revision:1,attendees:['guest']}];
+    firebase={doc:()=> 'receipt',setDoc:()=>pendingWrite};
+  `, context);
+  const opening = vm.runInContext(`onAction({dataset:{action:'view-event-notice',id:'e'}})`, context);
+  assert.equal(vm.runInContext("state.eventReads.has('e')", context), false);
+  confirmWrite();
+  await opening;
+  assert.equal(vm.runInContext("state.eventReads.get('e')", context), 1);
+});
+
 test('organizer controls are private and cancelled event links remain readable', () => {
   const context = appContext();
   const setup = `
