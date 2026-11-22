@@ -198,6 +198,32 @@ test('Meus eventos lists confirmed events chronologically and keeps cancellation
   assert.match(empty, /Ver próximos eventos/);
 });
 
+test('community polls present private ballots, totals after voting, and no controls after closing', () => {
+  const context = appContext();
+  const open = vm.runInContext(`
+    state.user={uid:'member'};
+    state.selectedGroup='club';
+    state.groups=[{id:'club',createdBy:'owner',members:['owner','member']}];
+    state.pollDetail={groupId:'club',poll:{id:'poll',question:'Passeio <especial>?',options:{a:'Sábado',b:'Domingo',c:'',d:''},
+      endsAt:{toMillis:()=>Date.now()+10000,toDate:()=>new Date()}},loading:false};
+    renderPoll()
+  `, context);
+  assert.match(open, /Passeio &lt;especial&gt;/);
+  assert.match(open, /Votar nesta opção/);
+  assert.match(open, /Os resultados aparecem depois que você votar/);
+  assert.doesNotMatch(vm.runInContext('renderGroupPolls()', context), /Criar enquete/);
+  vm.runInContext("state.groupRoles.set('club','active')", context);
+  assert.match(vm.runInContext('renderGroupPolls()', context), /Criar enquete/);
+  const voted = vm.runInContext("state.pollDetail.choice='b';state.pollDetail.totals={a:1,b:3,c:0,d:0};renderPoll()", context);
+  assert.match(voted, /3 votos · 75%/);
+  assert.match(voted, /disabled>Seu voto/);
+  assert.match(voted, /Mudar para esta opção/);
+  const closed = vm.runInContext("state.pollDetail.poll.endsAt.toMillis=()=>0;renderPoll()", context);
+  assert.match(closed, /Encerrada em/);
+  assert.doesNotMatch(closed, /data-action="vote-poll"/);
+  assert.match(vm.runInContext("state.groups[0].members=['owner'];renderPoll()", context), /Enquete indisponível/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
