@@ -72,6 +72,7 @@ const state = {
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
   moderationQueue:null, groupPolls:null, pollDetail:null,
+  pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
@@ -123,6 +124,8 @@ function unsubscribeAll() {
  state.inboundUnsubs.clear();
  for(const unsubscribe of state.reportNoticeUnsubs.values())unsubscribe();
  state.reportNoticeUnsubs.clear();state.reportNotices.clear();
+ for(const watch of state.pollWatches.values())watch.unsubscribe();
+ state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -208,7 +211,7 @@ function startSession() {
   subscribe(col('groups'), (s)=>{
     state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
     state.groupsLoaded=true;
-    watchReportNotices();
+    watchReportNotices();watchPollNotices();
     queueMicrotask(openLinkedContent);
   },'comunidades');
   subscribe(col('events'), (s)=>{
@@ -333,6 +336,54 @@ function watchReportNotices() {
    state.reportNoticeUnsubs.set(id,unsubscribe);
  }
 }
+function watchPollNotices(){
+ const uid=me(),joined=new Set(state.groups.filter(group=>group.members?.includes(uid)).map(group=>group.id));
+ for(const [id,watch] of state.pollWatches){
+   if(joined.has(id))continue;
+   watch.unsubscribe();state.pollWatches.delete(id);
+ }
+ for(const id of joined){
+   if(state.pollWatches.has(id))continue;
+   const watch={polls:[],ballots:new Map()};
+   state.pollWatches.set(id,watch);
+   const recent=firebase.query(col('groups',id,'polls'),firebase.orderBy('createdAt','desc'),firebase.limit(12));
+   watch.unsubscribe=firebase.onSnapshot(recent,snapshot=>{
+     if(me()!==uid||state.pollWatches.get(id)!==watch)return;
+     watch.polls=snapshot.docs.map(doc=>({...doc.data(),id:doc.id})).filter(poll=>poll.createdAt&&poll.endsAt);
+     const active=new Set(watch.polls.map(poll=>poll.id));
+     for(const key of watch.ballots.keys())if(!active.has(key))watch.ballots.delete(key);
+     refreshPollNotices();render();
+   },error=>{
+     if(state.pollWatches.get(id)!==watch)return;
+     console.error('HobbyHub poll notifications:',error);
+     state.pollWatches.delete(id);refreshPollNotices();render();
+   });
+ }
+ refreshPollNotices();
+}
+function refreshPollNotices(){
+ clearTimeout(state.pollNoticeTimer);
+ const uid=me(),moment=now();
+ let next=Infinity;
+ for(const [groupId,watch] of state.pollWatches){
+   for(const poll of watch.polls){
+     const deadline=poll.endsAt.toMillis();
+     if(deadline>moment){next=Math.min(next,deadline);continue;}
+     if(watch.ballots.has(poll.id))continue;
+     watch.ballots.set(poll.id,null);
+     const current=()=>me()===uid&&state.pollWatches.get(groupId)===watch&&watch.ballots.has(poll.id);
+     firebase.getDocFromServer(ref('groups',groupId,'polls',poll.id,'votes',uid)).then(snapshot=>{
+       if(!current())return;
+       watch.ballots.set(poll.id,snapshot.exists());render();
+     }).catch(error=>{
+       if(!current())return;
+       watch.ballots.delete(poll.id);
+       console.error('HobbyHub poll ballot:',error);
+     });
+   }
+ }
+ if(Number.isFinite(next))state.pollNoticeTimer=setTimeout(()=>{refreshPollNotices();render();},Math.max(1,next-moment));
+}
 function notificationFields(type,postId='',commentId=''){
  return {type,actorId:me(),postId,commentId,createdAt:firebase.serverTimestamp()};
 }
@@ -344,6 +395,14 @@ function notificationItems(){
    for(const item of state.reportNotices.get(group.id)||[])items.push({
      type:'report',groupId:group.id,key:'report-'+group.id+':'+item.id,createdAt:item.createdAt
    });
+ }
+ for(const [groupId,watch] of state.pollWatches){
+   if(!pollMember(groupId))continue;
+   for(const poll of watch.polls){
+     const base={groupId,poll,actorId:poll.createdBy};
+     if(!pollClosed(poll))items.push({...base,type:'poll-open',key:'poll-open:'+groupId+':'+poll.id,createdAt:poll.createdAt});
+     else if(watch.ballots.get(poll.id))items.push({...base,type:'poll-result',key:'poll-result:'+groupId+':'+poll.id,createdAt:poll.endsAt});
+   }
  }
  return items.filter(item=>!state.blockedIds.includes(item.actorId))
    .map(item=>{
@@ -375,9 +434,11 @@ function renderNotifications(){
      follow:actor+' começou a seguir você.',
      comment:actor+' comentou na sua publicação.',
      testimonial:actor+' enviou um depoimento para você.',
-     report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.'
+     report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
+     'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
+     'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado'}[item.type];
    return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
  return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
@@ -1381,7 +1442,9 @@ async function onAction(btn) {
   }
   case 'view-poll':{
     const groupId=state.selectedGroup;
-    const poll=state.groupPolls?.groupId===groupId&&state.groupPolls.entries?.find(item=>item.id===id);
+    const listed=state.groupPolls?.groupId===groupId&&state.groupPolls.entries?.find(item=>item.id===id);
+    const detail=state.pollDetail;
+    const poll=listed||(detail?.groupId===groupId&&detail.poll.id===id?detail.poll:null);
     if(poll&&pollMember(groupId))await openPoll(groupId,poll);
     return;
   }
@@ -1538,6 +1601,10 @@ async function onAction(btn) {
     const notice=notificationItems().find(item=>item.readKey===id);
     if(!notice)return;
     markNotificationsRead([notice]);
+    if(notice.type==='poll-open'||notice.type==='poll-result'){
+      state.selectedGroup=notice.groupId;
+      await openPoll(notice.groupId,notice.poll);return;
+    }
     if(notice.type==='report'){
       state.selectedGroup=notice.groupId;state.moderationQueue=null;openModal('group-report-queue');
       await loadGroupReportQueue(notice.groupId);return;
@@ -1637,6 +1704,7 @@ async function onAction(btn) {
       batch.delete(ref('members',uid,'moderation',id));
       await batch.commit();
     }else await firebase.updateDoc(target,{members:firebase.arrayUnion(uid)});
+    if(me()===uid)watchPollNotices();
     showToast(joined?'Você saiu da comunidade.':'Bem-vindo à comunidade!');
   },'updatingGroup');return;
   case 'rsvp':await attempt(async()=>{
@@ -1663,7 +1731,7 @@ document.addEventListener('click',async(event)=>{
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
 document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible'&&state.user&&state.tab==='home')render();
+ if(document.visibilityState==='visible'&&state.user){watchPollNotices();render();}
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{

@@ -224,6 +224,32 @@ test('community polls present private ballots, totals after voting, and no contr
   assert.match(vm.runInContext("state.groups[0].members=['owner'];renderPoll()", context), /Enquete indisponível/);
 });
 
+test('poll notifications show open polls to members and final counts to voters', async () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'member'};
+    state.groups=[
+      {id:'club',name:'Fotografia',members:['member']},
+      {id:'elsewhere',name:'Privado',members:['other']}
+    ];
+    const timestamp=ms=>({toMillis:()=>ms});
+    const poll=(id,question,deadline)=>({id,question,createdAt:timestamp(now()-5000),endsAt:timestamp(deadline)});
+    state.pollWatches.set('club',{polls:[
+      poll('new','Novo passeio',now()+5000),poll('voted','Resultado do museu',now()-1000),poll('ignored','Sem voto',now()-1000)
+    ],ballots:new Map([['voted',true],['ignored',false]])});
+    state.pollWatches.set('elsewhere',{polls:[poll('private','Apenas associados',now()+5000)],ballots:new Map()});
+    openPoll=async(group,poll)=>{state.selectedGroup=group;state.pollDetail={groupId:group,poll};};
+  `, context);
+  const html = vm.runInContext('renderNotifications()', context);
+  assert.match(html, /Nova enquete em Fotografia · Novo passeio/);
+  assert.match(html, /Resultado da enquete em Fotografia · Resultado do museu/);
+  assert.doesNotMatch(html, /Sem voto|Apenas associados/);
+  const openResult = `onAction({dataset:{action:'open-notification',id:notificationItems().find(item=>item.type==='poll-result').readKey}})`;
+  await vm.runInContext(openResult, context);
+  assert.equal(vm.runInContext('state.pollDetail.poll.id', context), 'voted');
+  assert.match(vm.runInContext('notificationButton()', context), /1 não lidas/);
+});
+
 test('a closed poll drafts a group event with the sole winning option for active moderators', async () => {
   const context = appContext();
   vm.runInContext(`
