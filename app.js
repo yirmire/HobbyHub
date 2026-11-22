@@ -854,7 +854,10 @@ async function openPoll(groupId,poll){
    const vote=await firebase.getDoc(ref(...path,'votes',uid));
    if(state.pollDetail!==detail||me()!==uid||!pollMember(groupId))return;
    detail.choice=vote.data()?.option||null;
-   if(detail.choice||pollClosed(poll))detail.totals=(await firebase.getDoc(ref(...path,'totals','main'))).data();
+   if(detail.choice||pollClosed(poll)){
+     const tally=ref(...path,'totals','main');
+     detail.totals=await firebase.runTransaction(db,async transaction=>(await transaction.get(tally)).data());
+   }
  }catch(error){detail.error=friendlyError(error);}
  finally{
    detail.loading=false;
