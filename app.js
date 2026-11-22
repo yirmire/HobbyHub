@@ -71,7 +71,7 @@ const state = {
   eventFeedback:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
-  moderationQueue:null,
+  moderationQueue:null, groupPolls:null, pollDetail:null,
   notifications:[], reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
@@ -264,7 +264,7 @@ async function init() {
       state.eventFeedback=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
-      state.moderationQueue=null;state.notifications=[];
+      state.moderationQueue=null;state.notifications=[];state.groupPolls=null;state.pollDetail=null;
       state.notificationReads=new Set();
       if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -799,8 +799,82 @@ function renderModerationHistory(group) {
  }).join(''):'<p class="tip">Nenhum conteúdo foi retirado pela moderação.</p>';
  return modalWrap('Histórico de moderação',`<div class="form-stack">${list}<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">Voltar à comunidade</button></div>`);
 }
+const pollOptions=['a','b','c','d'];
+const pollClosed=poll=>poll.endsAt.toMillis()<=now();
+const pollDeadline=poll=>poll.endsAt.toDate().toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});
+const pollMember=groupId=>state.groups.some(group=>group.id===groupId&&group.members?.includes(me()));
+function renderGroupPolls(){
+ const groupId=state.selectedGroup;
+ if(!pollMember(groupId))return modalWrap('Enquetes','<p>Entre na comunidade para acompanhar as enquetes.</p>');
+ const group=state.groups.find(item=>item.id===groupId);
+ const data=state.groupPolls?.groupId===groupId?state.groupPolls:null;
+ const entries=data?.entries;
+ const list=entries?.map(poll=>`<div class="card" style="padding:13px">
+ <button class="text-action" data-action="view-poll" data-id="${esc(poll.id)}">${esc(poll.question)}</button>
+ <p class="mini muted">${pollClosed(poll)?'Encerrada':'Aberta até '+esc(pollDeadline(poll))}</p></div>`).join('');
+ return modalWrap('Enquetes da comunidade',`<div class="form-stack">
+ ${canManageGroup(group)?'<button class="btn btn-primary btn-small" data-action="create-poll">Criar enquete</button>':''}
+ ${data?.error?`<p class="tip">${esc(data.error)}</p>`:entries?list||'<p class="tip">Ainda não há enquetes nesta comunidade.</p>':'<p class="tip">Carregando enquetes…</p>'}
+ <button class="text-action" data-action="view-group" data-id="${esc(groupId)}">Voltar à comunidade</button></div>`);
+}
+function renderPoll(){
+ const detail=state.pollDetail;
+ if(!detail||!pollMember(detail.groupId))return modalWrap('Enquete indisponível','<p>Entre na comunidade para acessar esta enquete.</p>');
+ const {poll,choice,totals,error,loading}=detail;
+ const closed=pollClosed(poll);
+ const options=pollOptions.filter(key=>poll.options[key]);
+ const total=totals?options.reduce((sum,key)=>sum+totals[key],0):0;
+ const items=options.map(key=>`<div class="card" style="padding:13px">
+ <strong>${esc(poll.options[key])}</strong>
+ ${totals?`<p class="mini muted">${totals[key]} ${totals[key]===1?'voto':'votos'} · ${total?Math.round(100*totals[key]/total):0}%</p>`:''}
+ ${closed?'':`<button class="btn btn-outline btn-small" data-action="vote-poll" data-id="${key}" ${choice===key||loading||state.busy?'disabled':''}>${choice===key?'Seu voto':choice?'Mudar para esta opção':'Votar nesta opção'}</button>`}</div>`).join('');
+ return modalWrap(poll.question,`<div class="form-stack">
+ <p class="mini muted">${closed?'Encerrada em':'Aberta até'} ${esc(pollDeadline(poll))}</p>
+ ${items}
+ ${error?`<p class="tip">${esc(error)}</p>`:loading?'<p class="tip">Carregando votação…</p>':totals?`<p class="mini muted">${total} ${total===1?'voto':'votos'}</p>`:'<p class="tip">Os resultados aparecem depois que você votar ou quando a enquete encerrar.</p>'}
+ <div class="toggle-row"><button class="text-action" data-action="group-polls" data-id="${esc(detail.groupId)}">Voltar às enquetes</button>
+ <button class="text-action" data-action="view-poll" data-id="${esc(poll.id)}">Atualizar</button></div></div>`);
+}
+async function loadGroupPolls(groupId){
+ const data={groupId,entries:null,error:''};
+ state.groupPolls=data;
+ try{
+   const list=firebase.query(col('groups',groupId,'polls'),firebase.orderBy('createdAt','desc'));
+   const result=await firebase.getDocs(list);
+   data.entries=result.docs.map(doc=>({...doc.data(),id:doc.id}));
+ }catch(error){data.error=friendlyError(error);}
+ if(state.groupPolls===data&&state.modal==='group-polls')render();
+}
+async function openPoll(groupId,poll){
+ const detail={groupId,poll,choice:null,totals:null,loading:true,error:''};
+ const uid=me(),path=['groups',groupId,'polls',poll.id];
+ state.pollDetail=detail;
+ openModal('poll-detail');
+ try{
+   const vote=await firebase.getDoc(ref(...path,'votes',uid));
+   if(state.pollDetail!==detail||me()!==uid||!pollMember(groupId))return;
+   detail.choice=vote.data()?.option||null;
+   if(detail.choice||pollClosed(poll))detail.totals=(await firebase.getDoc(ref(...path,'totals','main'))).data();
+ }catch(error){detail.error=friendlyError(error);}
+ finally{
+   detail.loading=false;
+   if(state.pollDetail===detail&&state.modal==='poll-detail')render();
+ }
+}
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='group-polls')return renderGroupPolls();
+ if(state.modal==='poll-detail')return renderPoll();
+ if(state.modal==='poll-create'){
+   const group=state.groups.find(item=>item.id===state.selectedGroup);
+   if(!pollMember(group?.id)||!canManageGroup(group))return modalWrap('Enquete indisponível','<p>A criação de enquetes é restrita ao criador e a moderadores ativos.</p>');
+   return modalWrap('Criar enquete',`<form id="poll-form" data-draft="true" class="form-stack">
+   <label class="field">Pergunta<input class="input" name="question" required minlength="3" maxlength="160"></label>
+   ${pollOptions.map((key,index)=>`<label class="field">Opção ${index+1}${index>1?' (opcional)':''}<input class="input" name="${key}" maxlength="80" ${index<2?'required':''}></label>`).join('')}
+   <label class="field">Encerrar em<select class="select" name="days"><option value="1">1 dia</option><option value="3">3 dias</option><option value="7">7 dias</option></select></label>
+   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="group-polls" data-id="${esc(group.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Publicar enquete</button></div></form>`);
+ }
+
  if(state.modal==='notifications')return renderNotifications();
  if(state.modal==='first-visit')return renderFirstVisit();
  if(state.modal==='group-report-queue')return renderGroupReportQueue(state.groups.find(group=>group.id===state.selectedGroup));
@@ -868,6 +942,7 @@ function renderModal() {
  <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${pinned?renderGroupPost(pinned,true):''}
  ${renderGroupModeration(group)}
+ ${joined?`<div class="section-head"><h2>Enquetes</h2><button class="text-action" data-action="group-polls" data-id="${esc(group.id)}">Ver enquetes</button></div>`:''}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
  ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
  <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
@@ -1276,6 +1351,43 @@ async function onAction(btn) {
     if(!group?.members?.includes(me()))return;
     state.eventGroupId=id;state.eventTemplate=null;openModal('event');return;
   }
+  case 'group-polls':{
+    if(!pollMember(id))return;
+    state.selectedGroup=id;
+    openModal('group-polls');
+    await loadGroupPolls(id);return;
+  }
+  case 'create-poll':{
+    const group=state.groups.find(item=>item.id===state.selectedGroup);
+    if(pollMember(group?.id)&&canManageGroup(group))openModal('poll-create');
+    return;
+  }
+  case 'view-poll':{
+    const groupId=state.selectedGroup;
+    const poll=state.groupPolls?.groupId===groupId&&state.groupPolls.entries?.find(item=>item.id===id);
+    if(poll&&pollMember(groupId))await openPoll(groupId,poll);
+    return;
+  }
+  case 'vote-poll':await attempt(async()=>{
+    const detail=state.pollDetail;
+    if(!detail||detail.loading||!pollOptions.includes(id))return;
+    const {groupId,poll}=detail;
+    if(!pollMember(groupId))return;
+    if(pollClosed(poll)){await openPoll(groupId,poll);showToast('Esta enquete já encerrou.');return;}
+    if(!poll.options[id])return;
+    const uid=me(),path=['groups',groupId,'polls',poll.id];
+    const ballot=ref(...path,'votes',uid),totals=ref(...path,'totals','main');
+    await firebase.runTransaction(db,async transaction=>{
+      const previous=(await transaction.get(ballot)).data()?.option;
+      if(previous===id)return;
+      const changes={[id]:firebase.increment(1)};
+      if(previous)changes[previous]=firebase.increment(-1);
+      transaction.set(ballot,{option:id});
+      transaction.update(totals,changes);
+    });
+    if(me()===uid&&state.pollDetail===detail&&state.modal==='poll-detail')await openPoll(groupId,poll);
+    if(me()===uid)showToast('Voto registrado!');
+  });return;
   case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
   case 'moderation-history':{
     const group=state.groups.find(item=>item.id===id);
@@ -1627,6 +1739,24 @@ document.addEventListener('submit',async(event)=>{
     });
     if(me()===uid&&state.modal==='event-detail'&&state.selectedEvent===event.id)await loadEventFeedback(event);
     showToast('Avaliação salva.');
+  });return;
+  case 'poll-form':await attempt(async()=>{
+    const group=state.groups.find(item=>item.id===state.selectedGroup);
+    if(!pollMember(group?.id)||!canManageGroup(group))return;
+    const question=val('question'),days=Number(val('days'));
+    const choices=pollOptions.map(val).filter(Boolean);
+    if(question.length<3||choices.length<2||!([1,3,7].includes(days)))throw new Error('Informe uma pergunta e pelo menos duas opções.');
+    if(new Set(choices.map(norm)).size!==choices.length)throw new Error('Escreva opções diferentes entre si.');
+    const options=Object.fromEntries(pollOptions.map((key,index)=>[key,choices[index]||'']));
+    const poll=firebase.doc(col('groups',group.id,'polls')),uid=me();
+    const batch=firebase.writeBatch(db);
+    batch.set(poll,{question,options,createdBy:uid,createdAt:firebase.serverTimestamp(),endsAt:firebase.Timestamp.fromMillis(now()+days*86400000)});
+    batch.set(ref('groups',group.id,'polls',poll.id,'totals','main'),{a:0,b:0,c:0,d:0});
+    await batch.commit();
+    if(me()===uid&&state.selectedGroup===group.id&&state.modal==='poll-create'){
+      openModal('group-polls');await loadGroupPolls(group.id);
+    }
+    if(me()===uid)showToast('Enquete publicada!');
   });return;
   case 'moderate-post-form':await attempt(async()=>{
     const uid=me(),target=state.groupRemoval,reason=val('reason');
