@@ -156,6 +156,48 @@ test('the event agenda combines search, hobby, community and date filters', () =
   assert.match(vm.runInContext(`state.eventSearch='Campinas';renderEvents()`, context), /Nenhum evento encontrado/);
 });
 
+test('the personal agenda recommends active events by profile hobby or community membership', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'reader'};
+    state.profile={hobbies:[' Fotografia analógica ']};
+    state.groups=[{id:'joined',name:'Clube local',members:['reader']},{id:'external',name:'Outro clube',members:['other']}];
+    state.events=[
+      {id:'hobby',title:'Câmera e filme',date:'2099-06-02',hobby:'FOTOGRAFIA ANALOGICA'},
+      {id:'community',title:'Corrida do clube',date:'2099-06-01',time:'16:00',groupId:'joined',hobby:'Corrida'},
+      {id:'earlier-today',title:'Corrida concluída hoje',date:'2099-06-01',time:'09:00',groupId:'joined'},
+      {id:'outside',title:'Corrida de fora',date:'2099-06-01',groupId:'external',hobby:'Corrida'},
+      {id:'past',title:'Corrida antiga do clube',date:'2000-01-01',groupId:'joined'},
+      {id:'cancelled',title:'Corrida cancelada do clube',date:'2099-06-03',groupId:'joined',cancelled:true}
+    ];
+    state.eventFilter='recommended';renderEvents(new Date(2099,5,1,10))
+  `, context);
+  assert.match(markup, /Corrida do clube[\s\S]*Câmera e filme/);
+  assert.doesNotMatch(markup, /Corrida de fora|Corrida antiga do clube|Corrida concluída hoje|Corrida cancelada do clube/);
+  const filtered = vm.runInContext("state.eventCommunity='joined';renderEvents(new Date(2099,5,1,10))", context);
+  assert.match(filtered, /Corrida do clube/);
+  assert.doesNotMatch(filtered, /Câmera e filme/);
+});
+
+test('Meus eventos lists confirmed events chronologically and keeps cancellation details visible', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'reader'};
+    state.events=[
+      {id:'later',title:'Encontro da tarde',date:'2099-07-01',time:'15:00',location:'Praça',attendees:['reader']},
+      {id:'earlier',title:'Encontro da manhã',date:'2099-07-01',time:'08:00',location:'Parque',attendees:['reader']},
+      {id:'cancelled',title:'Encontro cancelado',date:'2099-06-30',cancelled:true,attendees:['reader']},
+      {id:'outside',title:'Sem confirmação',date:'2099-06-30',attendees:['other']}
+    ];
+    state.eventFilter='mine';renderEvents()
+  `, context);
+  assert.match(markup, /Encontro cancelado[\s\S]*Evento cancelado[\s\S]*Encontro da manhã[\s\S]*Parque[\s\S]*Encontro da tarde[\s\S]*Praça/);
+  assert.doesNotMatch(markup, /Sem confirmação/);
+  const empty = vm.runInContext('state.events=[];renderEvents()', context);
+  assert.match(empty, /Você ainda não confirmou nenhum evento/);
+  assert.match(empty, /Ver próximos eventos/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
