@@ -383,8 +383,15 @@ await moderate(sender,[arrival(checkinEvent,other)],403);
 await moderate(sender,[arrival(eventPath,sender)],403);
 await moderate(sender,[arrival(checkinEvent,recipient)],200);
 await request(sender,'GET',`${checkinEvent}/checkins`,200);
-await request(recipient,'GET',`${checkinEvent}/checkins/${recipient.localId}`,403);
+await request(recipient,'GET',`${checkinEvent}/checkins/${recipient.localId}`,200);
+await request(recipient,'GET',`${checkinEvent}/checkins`,403);
+await request(other,'GET',`${checkinEvent}/checkins/${recipient.localId}`,403);
 await moderate(sender,[arrival(checkinEvent,recipient)],403);
+await request({idToken:'owner'},'PATCH',`${finished}/checkins/${other.localId}`,200,{
+  checkedAt:{timestampValue:'2020-01-01T12:00:00.000Z'}
+});
+await request(other,'GET',`${finished}/checkins/${other.localId}`,200);
+await sendFeedback(other,'finished',200);
 await request(recipient,'DELETE',`${checkinEvent}/checkins/${recipient.localId}`,403);
 await request(sender,'DELETE',`${checkinEvent}/checkins/${recipient.localId}`,200);
 await request(sender,'PATCH',`${checkinEvent}?updateMask.fieldPaths=cancelled&updateMask.fieldPaths=revision`,200,{cancelled:{booleanValue:true},revision:{integerValue:'1'}});

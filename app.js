@@ -68,6 +68,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
+  personalHistory:{records:new Map(),loading:false,error:false},
   eventOfferTimer:null, eventBulletins:new Map(), eventCheckins:null,
   eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
@@ -219,7 +220,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;scheduleEventOffers();watchEventBulletins();queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();watchEventBulletins();void loadPersonalHistory();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -267,6 +268,7 @@ async function init() {
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
+      state.personalHistory={records:new Map(),loading:false,error:false};
       state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
@@ -722,7 +724,8 @@ function eventCard(event, inGroup=false, detail=false) {
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
- ${!detail&&feedbackAvailable(event)&&(attending||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
+ ${hasPersonalCheckin(event)?'<p class="pill">Presença registrada</p>':''}
+ ${!detail&&feedbackAvailable(event)&&(canReviewEvent(event)||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length}${limited?' de '+event.capacity+' vagas ocupadas':' interessados'}</span>
  <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>
  ${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p><button class="text-action" data-action="release-event-seat" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>Liberar vaga</button>`:position>=0&&future&&event.cancelled!==true?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
@@ -814,6 +817,35 @@ function renderEventOrganizerPanel(event){
  ${finished?renderEventFeedback(event):''}
  </section>`;
 }
+function historyKey(event){return `${event.id}:${event.date}:${event.revision||0}`;}
+function hasPersonalCheckin(event){
+ return Boolean(event&&state.personalHistory.records.get(historyKey(event)));
+}
+function canReviewEvent(event,uid=me()){
+ return Boolean(uid&&(event?.attendees?.includes(uid)||(uid===me()&&hasPersonalCheckin(event))));
+}
+async function loadPersonalHistory(){
+ const uid=me(),history=state.personalHistory;
+ if(!uid||history.loading||state.eventFilter!=='history'||state.tab!=='events')return;
+ const missing=state.events.filter(event=>feedbackAvailable(event)&&!history.records.has(historyKey(event))).reverse();
+ if(!missing.length)return;
+ history.loading=true;history.error=false;render();
+ for(let offset=0;offset<missing.length;offset+=8){
+   const results=await Promise.allSettled(missing.slice(offset,offset+8).map(async event=>{
+     const record=await firebase.getDocFromServer(ref('events',event.id,'checkins',uid));
+     return [historyKey(event),record.exists()];
+   }));
+   if(me()!==uid||state.personalHistory!==history)return;
+   for(const result of results){
+     if(result.status==='fulfilled')history.records.set(...result.value);
+     else history.error=true;
+   }
+   if(state.tab==='events'&&state.eventFilter==='history')render();
+   else break;
+ }
+ history.loading=false;
+ if(state.tab==='events'&&state.eventFilter==='history')render();
+}
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
@@ -832,6 +864,7 @@ function renderEvents(now=new Date()) {
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me());
+   if(eventFilter==='history')return feedbackAvailable(event)&&canReviewEvent(event);
    if(eventFilter==='waitlist')return event.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
    if(eventFilter==='past')return event.date&&event.date<day;
    if(eventFilter==='recommended')return event.cancelled!==true
@@ -840,22 +873,25 @@ function renderEvents(now=new Date()) {
    return event.date>=day;
  }).sort((a,b)=>{
    const order=`${a.date||''} ${a.time||''}`.localeCompare(`${b.date||''} ${b.time||''}`);
-   return eventFilter==='past'?-order:order;
+   return eventFilter==='past'||eventFilter==='history'?-order:order;
  });
  const emptyAgenda=filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.')
    :eventFilter==='recommended'?empty('🗓️','Nenhum encontro recomendado por enquanto','As sugestões aparecem quando há eventos dos seus hobbies ou das comunidades de que você participa.','Ver próximos eventos','upcoming-events')
    :eventFilter==='mine'?empty('🗓️','Você ainda não confirmou nenhum evento','Confira os próximos encontros para encontrar um evento de que queira participar.','Ver próximos eventos','upcoming-events')
+   :eventFilter==='history'?empty('🗓️','Nenhum evento no seu histórico','Os encontros encerrados que você confirmou ou em que fez check-in aparecem por aqui.')
    :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
- ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:emptyAgenda}
+ ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
+ ${eventFilter==='history'&&state.personalHistory.error?'<p class="tip">Alguns check-ins não puderam ser carregados. <button class="text-action" data-action="refresh-event-history">Tentar novamente</button></p>':''}
+ ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:eventFilter==='history'&&state.personalHistory.loading?'':emptyAgenda}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
 function renderSaved() {
@@ -1014,7 +1050,7 @@ async function loadEventQuestions(eventId,questionId=''){
  }
 }
 function renderEventFeedback(event) {
- const organizer=event.createdBy===me(),eligible=event.attendees?.includes(me());
+ const organizer=event.createdBy===me(),eligible=canReviewEvent(event);
  if(!feedbackAvailable(event)||(!organizer&&!eligible))return '';
  const feedback=state.eventFeedback;
  if(feedback?.id!==event.id||feedback.loading)return '<p class="tip">Carregando avaliações…</p>';
@@ -1361,7 +1397,12 @@ function closeModal(){
  clearContentLink();
  document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
-function setTab(tab){clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();void markOpenConversationRead();window.scrollTo({top:0,behavior:'instant'});}
+function setTab(tab){
+ clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
+ void markOpenConversationRead();
+ if(tab==='events')void loadPersonalHistory();
+ window.scrollTo({top:0,behavior:'instant'});
+}
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
  const sender=me();
@@ -1394,7 +1435,7 @@ function contentLink(type,id) {
 }
 async function loadEventFeedback(event) {
  const uid=me(),organizer=event?.createdBy===uid;
- if(!feedbackAvailable(event)||(!organizer&&!event.attendees?.includes(uid)))return;
+ if(!feedbackAvailable(event)||(!organizer&&!canReviewEvent(event,uid)))return;
  const feedback={id:event.id,loading:true,entries:[],error:''};
  state.eventFeedback=feedback;render();
  try{
@@ -1638,7 +1679,8 @@ async function onAction(btn) {
     });
     if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail')await loadEventQuestions(event.id);
   });return;
-  case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
+  case 'event-filter':state.eventFilter=btn.dataset.value;render();await loadPersonalHistory();return;
+  case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
@@ -2021,7 +2063,7 @@ document.addEventListener('click',async(event)=>{
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
 document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();render();}
+ if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();void loadPersonalHistory();render();}
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
@@ -2160,7 +2202,7 @@ document.addEventListener('submit',async(event)=>{
   case 'event-feedback-form':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
     const uid=me(),answer=val('attended'),comment=val('comment');
-    if(!feedbackAvailable(event)||!event.attendees?.includes(uid)||!['yes','no'].includes(answer)||comment.length>500)return;
+    if(!feedbackAvailable(event)||!canReviewEvent(event,uid)||!['yes','no'].includes(answer)||comment.length>500)return;
     await firebase.setDoc(ref('events',event.id,'feedback',uid),{
       attended:answer==='yes',comment,updatedAt:firebase.serverTimestamp()
     });
