@@ -68,7 +68,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
-  eventOfferTimer:null, eventBulletins:new Map(),
+  eventOfferTimer:null, eventBulletins:new Map(), eventCheckins:null,
   eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
@@ -267,7 +267,7 @@ async function init() {
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
-      state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;
+      state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.groupPolls=null;state.pollDetail=null;
@@ -766,6 +766,19 @@ function renderEventBulletins(event){
  <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Publicar recado</button></form>`:''}
  </section>`;
 }
+const eventCheckinDay=()=>new Date(now()-3*60*60*1000).toISOString().slice(0,10);
+function canCheckInEvent(event){
+ return Boolean(me()&&event?.createdBy===me()&&event.cancelled!==true&&event.date===eventCheckinDay());
+}
+async function loadEventCheckins(eventId){
+ const uid=me(),data={eventId,present:null,error:''};
+ state.eventCheckins=data;
+ try{
+   const result=await firebase.getDocs(col('events',eventId,'checkins'));
+   data.present=new Set(result.docs.map(doc=>doc.id));
+ }catch(error){data.error=friendlyError(error);}
+ if(me()===uid&&state.eventCheckins===data&&state.modal==='event-detail'&&state.selectedEvent===eventId)render();
+}
 function renderEventOrganizerPanel(event){
  if(!me()||event.createdBy!==me())return '';
  const attendees=[...new Set(event.attendees||[])];
@@ -774,7 +787,10 @@ function renderEventOrganizerPanel(event){
  const reserved=active&&limited&&eventSeatOffer(event,event.waitlist?.[0])?1:0;
  const free=limited?Math.max(0,event.capacity-attendees.length-reserved):0;
  const waiting=(event.waitlist?.length||0)-reserved;
- const names=attendees.map(uid=>({uid,name:member(uid)?.name||'Perfil indisponível'}))
+ const checkins=state.eventCheckins?.eventId===event.id?state.eventCheckins:null;
+ const present=checkins?.present;
+ const editable=Boolean(present)&&canCheckInEvent(event);
+ const names=[...new Set([...attendees,...(present||[])])].map(uid=>({uid,name:member(uid)?.name||'Perfil indisponível'}))
    .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
  return `<section class="card form-stack" style="padding:14px;margin:16px 0" aria-label="Painel do organizador">
  <h3>Painel do organizador</h3>
@@ -784,8 +800,14 @@ function renderEventOrganizerPanel(event){
  <div><dt>Reservas pendentes</dt><dd><strong>${reserved}</strong></dd></div>
  <div><dt>Pessoas aguardando na fila</dt><dd><strong>${waiting}</strong></dd></div>`:''}
  </dl>
- <h4>Participantes confirmados</h4>
- ${names.length?`<ul style="padding-left:20px;margin:0">${names.map(({uid,name})=>`<li>${esc(name)}${uid===me()?' (organizador)':''}</li>`).join('')}</ul>`:'<p class="tip">Nenhuma presença confirmada.</p>'}
+ <h4>Participantes confirmados e check-in</h4>
+ <p class="tip">${checkins?.error?esc(checkins.error):present?`${present.size} ${present.size===1?'pessoa presente':'pessoas presentes'}`:'Carregando check-ins…'}</p>
+ ${!editable&&event.cancelled!==true&&event.date>eventCheckinDay()?'<p class="tip">O check-in fica disponível no dia do encontro.</p>':''}
+ ${names.length?`<ul class="form-stack" style="padding-left:20px;margin:0">${names.map(({uid,name})=>{
+   const checked=present?.has(uid),confirmed=attendees.includes(uid);
+   return `<li><div class="toggle-row" style="flex-wrap:wrap"><span>${esc(name)}${uid===me()?' (organizador)':''}${checked?' <strong>· Presente</strong>':''}${confirmed?'':' · Confirmação retirada'}</span>
+   ${editable&&(checked||confirmed)?`<button class="text-action" data-action="${checked?'undo-event-checkin':'record-event-checkin'}" data-id="${esc(uid)}" ${state.busy?'disabled':''}>${checked?'Desfazer check-in':'Marcar chegada'}</button>`:''}</div></li>`;
+ }).join('')}</ul>`:'<p class="tip">Nenhuma presença confirmada.</p>'}
  </section>`;
 }
 function renderEvents(now=new Date()) {
@@ -921,7 +943,7 @@ function renderFirstVisit() {
  <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="discover-groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
 }
 function feedbackAvailable(event) {
- const dateInBrasilia=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
+ const dateInBrasilia=eventCheckinDay();
  return event?.cancelled!==true&&/^\d{4}-\d{2}-\d{2}$/.test(event?.date)&&event.date<dateInBrasilia;
 }
 function canRepeatEvent(event) {
@@ -1388,7 +1410,8 @@ async function loadEventFeedback(event) {
  }
 }
 function openEventDetail(id,questionId='') {
- state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;openModal('event-detail');
+ state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;openModal('event-detail');
+ if(me()&&state.events.some(event=>event.id===id&&event.createdBy===me()))void loadEventCheckins(id);
  if(state.events.some(event=>event.id===id))void loadEventQuestions(id,questionId);
  void loadEventFeedback(state.events.find(event=>event.id===id));
 }
@@ -1574,6 +1597,20 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=btn.dataset.value==='discover'?'discover':'mine';render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
+  case 'record-event-checkin':
+  case 'undo-event-checkin':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent),uid=me();
+    if(state.modal!=='event-detail'||!canCheckInEvent(event)||state.eventCheckins?.eventId!==event.id)return;
+    const recording=action==='record-event-checkin';
+    if(recording&&!event.attendees?.includes(id))return;
+    const record=ref('events',event.id,'checkins',id);
+    await firebase.runTransaction(db,async transaction=>{
+      const exists=(await transaction.get(record)).exists();
+      if(recording&&!exists)transaction.set(record,{checkedAt:firebase.serverTimestamp()});
+      if(!recording&&exists)transaction.delete(record);
+    });
+    if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail')await loadEventCheckins(event.id);
+  });return;
   case 'refresh-event-questions':
     if(state.modal==='event-detail')await loadEventQuestions(state.selectedEvent);
     return;
