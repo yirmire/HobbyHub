@@ -323,12 +323,34 @@ test('limited events offer the reserved seat only to the head of the waitlist', 
     state.events=[event];
   `, context);
   assert.match(vm.runInContext('eventCard(event)', context), /Confirmar vaga/);
+  assert.match(vm.runInContext('eventCard(event)', context), /Liberar vaga/);
   assert.match(vm.runInContext('renderNotifications()', context), /Uma vaga está reservada para você · Oficina/);
   const second = vm.runInContext("state.user={uid:'second'};eventCard(event)", context);
   assert.match(second, /Sair da lista de espera/);
   assert.match(second, /posição 2/);
+  assert.doesNotMatch(second, /Liberar vaga/);
   assert.doesNotMatch(vm.runInContext('renderNotifications()', context), /Uma vaga/);
   assert.match(vm.runInContext("state.user={uid:'other'};eventCard(event)", context), /Entrar na lista de espera/);
+});
+
+test('the waiting-list agenda shows current entries and releasing a seat leaves its queue', async () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.eventFilter='waitlist';
+    const event={id:'office',title:'Oficina em espera',date:'2099-01-01',capacity:2,attendees:['host'],
+      waitlist:['reader','other'],offerAt:{toMillis:()=>now()-1000}};
+    state.events=[event,{...event,id:'cancelled',cancelled:true,title:'Encontro cancelado'},
+      {...event,id:'another',title:'Outra fila',waitlist:['other']}];
+    changeEventSeat=async(id,intent,uid)=>{state.release={id,intent,uid};event.waitlist.shift();return 'left-queue';};
+    showToast=()=>{};
+  `, context);
+  const agenda = vm.runInContext('renderEvents()', context);
+  assert.match(agenda, /Oficina em espera[\s\S]*Sua vaga está reservada até[\s\S]*Liberar vaga/);
+  assert.doesNotMatch(agenda, /Encontro cancelado|Outra fila/);
+  await vm.runInContext("onAction({dataset:{action:'release-event-seat',id:'office'}})", context);
+  assert.equal(vm.runInContext('state.release.intent', context), 'leave-queue');
+  assert.match(vm.runInContext('renderEvents()', context), /Você não está em nenhuma lista de espera/);
 });
 
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
