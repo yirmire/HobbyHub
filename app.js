@@ -76,7 +76,7 @@ const state = {
   moderationQueue:null, groupPolls:null, pollDetail:null,
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
-  invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -275,7 +275,7 @@ async function init() {
       state.moderationQueue=null;state.notifications=[];state.groupPolls=null;state.pollDetail=null;
       state.notificationReads=new Set();
       if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
-      state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
+      state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -782,6 +782,9 @@ async function loadEventCheckins(eventId){
  }catch(error){data.error=friendlyError(error);}
  if(me()===uid&&state.eventCheckins===data&&state.modal==='event-detail'&&state.selectedEvent===eventId)render();
 }
+function canComposeEventRecap(event){
+ return Boolean(me()&&event?.createdBy===me()&&event.groupId&&pollMember(event.groupId)&&feedbackAvailable(event));
+}
 function renderEventOrganizerPanel(event){
  if(!me()||event.createdBy!==me())return '';
  const attendees=[...new Set(event.attendees||[])];
@@ -815,6 +818,7 @@ function renderEventOrganizerPanel(event){
    ${editable&&(checked||confirmed)?`<button class="text-action" data-action="${checked?'undo-event-checkin':'record-event-checkin'}" data-id="${esc(uid)}" ${state.busy?'disabled':''}>${checked?'Desfazer check-in':'Marcar chegada'}</button>`:''}</div></li>`;
  }).join('')}</ul>`:'<p class="tip">Nenhuma presença confirmada.</p>'}
  ${finished?renderEventFeedback(event):''}
+ ${canComposeEventRecap(event)?`<button class="btn btn-outline btn-small" data-action="compose-event-recap" data-id="${esc(event.id)}">Publicar relato do encontro</button>`:''}
  </section>`;
 }
 function historyKey(event){return `${event.id}:${event.date}:${event.revision||0}`;}
@@ -1249,12 +1253,16 @@ function renderModal() {
      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div>
    </form>`);
  }
- if(state.modal==='compose')return modalWrap(state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
+ if(state.modal==='compose'){
+ const recap=state.events.find(event=>event.id===state.composingRecapId);
+ return modalWrap(recap?'Relato do encontro':state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
- <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}"></textarea></div>
+ ${recap?'<p class="tip">Conte como foi o encontro, compartilhe dicas ou sugira uma próxima edição.</p>':''}
+ <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
  <div class="field-grid"><div class="field"><label>Seu interesse</label>${topicSelect(state.composingGroup?state.groups.find(g=>g.id===state.composingGroup)?.hobby:(state.topic==='Todos'?'Arte':state.topic))}</div><div class="field"><label>Formato</label><select class="select" name="format"><option value="text">Post simples</option><option value="highlight">Post em destaque</option></select></div></div>
  <div class="tip">A publicação pode ser vista por outras pessoas cadastradas. Não compartilhe dados pessoais sensíveis.</div>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
+ }
  if(state.modal==='group-detail'){
  const group=state.groups.find(g=>g.id===state.selectedGroup);
  if(!group)return modalWrap('Comunidade indisponível','<p>Esta comunidade não está mais disponível.</p>');
@@ -1394,6 +1402,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.composingRecapId=null;
  clearContentLink();
  document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
@@ -1683,7 +1692,13 @@ async function onAction(btn) {
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
-  case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
+  case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openModal('compose');return;
+  case 'compose-event-recap':{
+    const event=state.events.find(item=>item.id===id);
+    if(state.modal!=='event-detail'||state.selectedEvent!==id||!canComposeEventRecap(event))return;
+    state.composingGroup=event.groupId;state.composingIntroduction=false;state.composingRecapId=id;
+    openModal('compose');return;
+  }
   case 'group':openModal(action);return;
   case 'event':state.eventGroupId=null;state.eventTemplate=null;openModal('event');return;
   case 'view-event':openEventDetail(id);return;
@@ -1897,7 +1912,7 @@ async function onAction(btn) {
   case 'introduce-group':{
     const group=state.groups.find(g=>g.id===(id||state.selectedGroup));
     if(!group||!(group.members||[]).includes(me()))return;
-    state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';openModal('compose');return;
+    state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';state.composingRecapId=null;openModal('compose');return;
   }
   case 'notifications':openModal('notifications');return;
   case 'read-notifications':markNotificationsRead(notificationItems());render();return;
@@ -2113,6 +2128,10 @@ document.addEventListener('submit',async(event)=>{
   case 'post-form':await attempt(async()=>{
     const content=val('content');if(!content||content.length>2000)return;
     const groupId=state.composingGroup;
+    if(state.composingRecapId){
+      const event=state.events.find(item=>item.id===state.composingRecapId);
+      if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
+    }
     await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{})});
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
