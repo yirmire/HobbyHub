@@ -718,6 +718,28 @@ function eventCard(event, inGroup=false, detail=false) {
  <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>
  ${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p><button class="text-action" data-action="release-event-seat" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>Liberar vaga</button>`:position>=0&&future&&event.cancelled!==true?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
 }
+function renderEventOrganizerPanel(event){
+ if(!me()||event.createdBy!==me())return '';
+ const attendees=[...new Set(event.attendees||[])];
+ const limited=Number.isInteger(event.capacity);
+ const active=event.cancelled!==true&&event.date>=today();
+ const reserved=active&&limited&&eventSeatOffer(event,event.waitlist?.[0])?1:0;
+ const free=limited?Math.max(0,event.capacity-attendees.length-reserved):0;
+ const waiting=(event.waitlist?.length||0)-reserved;
+ const names=attendees.map(uid=>({uid,name:member(uid)?.name||'Perfil indisponível'}))
+   .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+ return `<section class="card form-stack" style="padding:14px;margin:16px 0" aria-label="Painel do organizador">
+ <h3>Painel do organizador</h3>
+ <dl class="grid-two" style="margin:0">
+ <div><dt>${limited?'Vagas ocupadas':'Presenças confirmadas'}</dt><dd><strong>${attendees.length}${limited?' de '+event.capacity:''}</strong></dd></div>
+ ${active&&limited?`<div><dt>Vagas livres</dt><dd><strong>${free}</strong></dd></div>
+ <div><dt>Reservas pendentes</dt><dd><strong>${reserved}</strong></dd></div>
+ <div><dt>Pessoas aguardando na fila</dt><dd><strong>${waiting}</strong></dd></div>`:''}
+ </dl>
+ <h4>Participantes confirmados</h4>
+ ${names.length?`<ul style="padding-left:20px;margin:0">${names.map(({uid,name})=>`<li>${esc(name)}${uid===me()?' (organizador)':''}</li>`).join('')}</ul>`:'<p class="tip">Nenhuma presença confirmada.</p>'}
+ </section>`;
+}
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
@@ -1105,7 +1127,7 @@ function renderModal() {
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
-   ${renderEventQuestions(event)}${renderEventFeedback(event)}`);
+   ${renderEventOrganizerPanel(event)}${renderEventQuestions(event)}${renderEventFeedback(event)}`);
  }
  if(state.modal==='event-edit'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
