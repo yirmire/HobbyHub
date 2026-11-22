@@ -279,7 +279,19 @@ service cloud.firestore {
         && (!request.resource.data.keys().hasAny(['groupId'])
           || (exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId))
             && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(request.resource.data.groupId)).data.members))
+        && (!request.resource.data.keys().hasAny(['eventRecapId']) || validEventRecap(request.resource.data))
         && !exists(removedPostPath(appId, postId));
+      }
+      function validEventRecap(data) {
+        return validText(data.eventRecapId, 1, 120) && data.eventRecapId.matches('[^/]+')
+          && validRecapEvent(data, get(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(data.eventRecapId)).data);
+      }
+      function validRecapEvent(post, event) {
+        let date = event.date.split('-');
+        return event.createdBy == request.auth.uid && event.groupId == post.groupId
+          && event.get('cancelled', false) != true
+          && event.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && (request.time - duration.value(3, 'h')).date() > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
       }
       allow update: if onlyMyArrayMembership('likes');
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
