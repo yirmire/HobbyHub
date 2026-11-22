@@ -511,6 +511,53 @@ test('profile media renders HTTPS files and rejects unsafe protocols', () => {
   assert.equal(vm.runInContext(`renderProfileMedia({photoUrl:'javascript:alert(1)',videoUrl:'http://example.test/video.mp4'})`, context), '');
 });
 
+test('publication search combines keywords, hobby and community and opens the matching post', async () => {
+  const handlers = {};
+  const context = appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.tab='explore';state.exploreView='posts';
+    state.groups=[{id:'film',name:'Clube da Fotografia'},{id:'other',name:'Outro grupo'}];
+    state.posts=[
+      {id:'wanted',content:'Uma câmera analógica',groupId:'film',hobby:'Fotografia'},
+      {id:'other-group',content:'Outra câmera analógica',groupId:'other',hobby:'Fotografia'},
+      {id:'other-hobby',content:'Um livro sobre câmera analógica',groupId:'film',hobby:'Leitura'},
+      {id:'other-text',content:'Técnicas digitais',groupId:'film',hobby:'Fotografia'}
+    ];
+    state.search='  ANALOGICA   camera ';
+  `, context);
+  handlers.change({target:{id:'post-search-hobby',value:'fotografia'}});
+  handlers.change({target:{id:'post-search-group',value:'film'}});
+  const markup = vm.runInContext('renderExplore()', context);
+  assert.match(markup, /1 resultado/);
+  assert.match(markup, /data-action="comments" data-id="wanted">.*Abrir publicação/);
+  assert.doesNotMatch(markup, /data-id="other-(?:group|hobby|text)"/);
+  vm.runInContext("openComments=id=>{state.selectedPost=id;}", context);
+  await vm.runInContext("onAction({dataset:{action:'comments',id:'wanted'}})", context);
+  assert.equal(vm.runInContext('state.selectedPost', context), 'wanted');
+  handlers.input({target:{id:'explore-search',value:'inexistente',matches:()=>true}});
+  assert.match(vm.runInContext('renderExplore()', context), /Nenhuma publicação encontrada/);
+});
+
+test('publication search includes older results and resets pagination when a filter changes', async () => {
+  const handlers = {};
+  const context = appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.tab='explore';state.exploreView='posts';
+    state.posts=Array.from({length:125},(_,i)=>({id:'post-'+i,content:i===124?'Filme raro':'Filme',hobby:'Fotografia'}));
+  `, context);
+  const initial = vm.runInContext('renderExplore()', context);
+  assert.match(initial, /125 resultados/);
+  assert.doesNotMatch(initial, /data-id="post-20"/);
+  await vm.runInContext("onAction({dataset:{action:'more-post-results'}})", context);
+  assert.match(vm.runInContext('renderExplore()', context), /data-id="post-20"/);
+  handlers.change({target:{id:'post-search-hobby',value:'fotografia'}});
+  assert.doesNotMatch(vm.runInContext('renderExplore()', context), /data-id="post-20"/);
+  handlers.input({target:{id:'explore-search',value:'filme raro',matches:()=>true}});
+  assert.match(vm.runInContext('renderExplore()', context), /data-id="post-124"/);
+});
+
 test('global chat and city chat show distinct messages, including older local messages', () => {
   const context = appContext();
   const local = vm.runInContext(`
