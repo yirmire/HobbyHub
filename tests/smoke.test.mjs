@@ -373,6 +373,26 @@ test('organizer panel separates confirmed, reserved, free and waiting seats', ()
   assert.doesNotMatch(vm.runInContext("state.user={uid:'host'};event.cancelled=true;renderModal()", context), /Vagas livres|Reservas pendentes/);
 });
 
+test('organizer bulletins appear in the event and bell only for the intended roles', async () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'confirmed'};
+    const event={id:'event',title:'Oficina de fotografia',createdBy:'host',attendees:['confirmed']};
+    state.events=[event];
+    state.eventBulletins.set('event',{entries:[{id:'update',text:'Portão <lateral>',createdAt:{toMillis:()=>10}}]});
+    openEventDetail=id=>{state.selectedEvent=id;};
+  `, context);
+  assert.match(vm.runInContext('renderEventBulletins(event)', context), /Portão &lt;lateral&gt;/);
+  assert.doesNotMatch(vm.runInContext('renderEventBulletins(event)', context), /event-bulletin-form/);
+  assert.match(vm.runInContext('renderNotifications()', context), /Recado do organizador · Oficina de fotografia/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'event-bulletin:event:update:10'}})", context);
+  assert.equal(vm.runInContext('state.selectedEvent', context), 'event');
+  assert.equal(vm.runInContext("state.user={uid:'outsider'};renderEventBulletins(event)", context), '');
+  assert.doesNotMatch(vm.runInContext('renderNotifications()', context), /Recado do organizador/);
+  assert.match(vm.runInContext("state.user={uid:'host'};renderEventBulletins(event)", context), /event-bulletin-form/);
+  assert.doesNotMatch(vm.runInContext('renderNotifications()', context), /Recado do organizador/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
