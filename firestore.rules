@@ -543,6 +543,41 @@ service cloud.firestore {
           || (validText(groupId, 1, 120) && groupId.matches('[^/]+')
             && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members);
       }
+      function capacityFields(data) {
+        return !data.keys().hasAny(['capacity','waitlist','offerAt'])
+          || (data.capacity is int && data.capacity >= 2 && data.capacity <= 200
+            && data.waitlist == [] && data.offerAt == null);
+      }
+      function firstIn(line) {
+        return line.size() > 0 ? line[0] : '';
+      }
+      function offerValid(before, after) {
+        let reserved = after.attendees.size() < after.capacity && after.waitlist.size() > 0;
+        let sameHead = firstIn(before.waitlist) == firstIn(after.waitlist) && before.offerAt is timestamp;
+        return after.offerAt == (reserved ? (sameHead ? before.offerAt : request.time) : null);
+      }
+      function limitedRsvp() {
+        let before = resource.data;
+        let after = request.resource.data;
+        let uid = request.auth.uid;
+        let onList = uid in before.waitlist;
+        let expired = before.offerAt is timestamp && request.time >= before.offerAt + duration.value(1,'h');
+        let joined = after.attendees == before.attendees.concat([uid])
+          && !(uid in before.attendees) && after.attendees.size() <= before.capacity && canAttend(before)
+          && (before.waitlist.size() == 0 || (firstIn(before.waitlist) == uid && !expired && before.offerAt is timestamp))
+          && after.waitlist == before.waitlist.removeAll([uid]);
+        let left = uid in before.attendees && after.attendees == before.attendees.removeAll([uid])
+          && after.waitlist == before.waitlist;
+        let queueUpdated = before.attendees == after.attendees
+          && ((onList && after.waitlist == before.waitlist.removeAll([uid]))
+            || (!onList && !(uid in before.attendees) && canAttend(before)
+              && (before.attendees.size() >= before.capacity || before.waitlist.size() > 0)
+              && before.waitlist.size() < 100 && after.waitlist == before.waitlist.concat([uid]))
+            || (expired && after.waitlist == before.waitlist.removeAll([firstIn(before.waitlist)])));
+        return before.get('cancelled', false) != true
+          && changedOnly(['attendees', 'waitlist', 'offerAt'])
+          && (joined || left || queueUpdated) && offerValid(before, after);
+      }
       function organizerChange() {
         return isMe(resource.data.createdBy) && resource.data.get('cancelled', false) != true
           && request.resource.data.revision is int
@@ -561,6 +596,7 @@ service cloud.firestore {
       allow read: if loggedIn();
       allow create: if loggedIn()
         && canAttend(request.resource.data)
+        && capacityFields(request.resource.data)
         && !request.resource.data.keys().hasAny(['cancelled', 'revision', 'previousSchedule'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.attendees == [request.auth.uid]
@@ -570,9 +606,10 @@ service cloud.firestore {
         && validText(request.resource.data.description, 1, 800)
         && validText(request.resource.data.date, 10, 10)
         && validText(request.resource.data.time, 5, 5);
-      allow update: if (onlyMyArrayMembership('attendees')
+      allow update: if (!resource.data.keys().hasAny(['capacity']) && onlyMyArrayMembership('attendees')
           && (!(request.auth.uid in request.resource.data.attendees)
             || (resource.data.get('cancelled', false) != true && canAttend(resource.data))))
+        || (loggedIn() && resource.data.keys().hasAny(['capacity']) && limitedRsvp())
         || organizerChange();
       allow delete: if loggedIn() && resource.data.createdBy == request.auth.uid;
 

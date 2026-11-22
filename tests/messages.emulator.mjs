@@ -370,6 +370,35 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const limitedPath=`${events}/limited-event`;
+const cleared={nullValue:null};
+const people=(...actors)=>({arrayValue:{values:actors.map(actor=>str(actor.localId))}});
+const seat=(attendees,waitlist,offer=false)=>({
+  update:{name:documents+limitedPath,fields:{attendees:people(...attendees),waitlist:people(...waitlist),...(!offer?{offerAt:cleared}:{})}},
+  updateMask:{fieldPaths:['attendees','waitlist',...(!offer?['offerAt']:[])]},
+  ...(offer?{updateTransforms:stamp('offerAt')}:{} )
+});
+await request(sender,'POST',`${events}?documentId=limited-event`,200,{
+  ...standalone,capacity:{integerValue:'2'},waitlist:people(),offerAt:cleared
+});
+await moderate(recipient,[seat([sender,recipient],[])],200);
+await moderate(other,[seat([sender,recipient,other],[])],403);
+await moderate(other,[seat([sender,recipient],[other])],200);
+await moderate(recipient,[seat([sender],[other])],403);
+await moderate(recipient,[seat([sender],[other],true)],200);
+await moderate(recipient,[seat([sender,recipient],[other])],403);
+await moderate(other,[seat([sender,other],[])],200);
+const limited=await request(sender,'GET',limitedPath,200);
+assert.deepEqual(limited.fields.attendees.arrayValue.values,people(sender,other).arrayValue.values);
+assert.equal(limited.fields.offerAt.nullValue,null);
+const nextGuest=await signUp();
+await moderate(recipient,[seat([sender,other],[recipient])],200);
+await moderate(nextGuest,[seat([sender,other],[recipient,nextGuest])],200);
+await moderate(other,[seat([sender],[recipient,nextGuest],true)],200);
+await request({idToken:'owner'},'PATCH',`${limitedPath}?updateMask.fieldPaths=offerAt`,200,{offerAt:{timestampValue:new Date(Date.now()-3700000).toISOString()}});
+await moderate(recipient,[seat([sender,recipient],[nextGuest])],403);
+await moderate(nextGuest,[seat([sender],[nextGuest],true)],200);
+await moderate(nextGuest,[seat([sender,nextGuest],[])],200);
 const questionPath=`${eventPath}/questions/meeting-point`;
 const eventPin=`${eventPath}/discussion/pinned`;
 const ask=(actor,path=questionPath)=>({

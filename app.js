@@ -68,6 +68,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
+  eventOfferTimer:null,
   eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
@@ -125,7 +126,7 @@ function unsubscribeAll() {
  for(const unsubscribe of state.reportNoticeUnsubs.values())unsubscribe();
  state.reportNoticeUnsubs.clear();state.reportNotices.clear();
  for(const watch of state.pollWatches.values())watch.unsubscribe();
- state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);
+ state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);clearTimeout(state.eventOfferTimer);
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -216,7 +217,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -396,6 +397,12 @@ function notificationItems(){
      type:'report',groupId:group.id,key:'report-'+group.id+':'+item.id,createdAt:item.createdAt
    });
  }
+ for(const event of state.events){
+   const deadline=eventSeatOffer(event);
+   if(deadline&&(!event.groupId||pollMember(event.groupId)))items.push({
+     type:'event-seat',eventId:event.id,key:'event-seat:'+event.id,createdAt:deadline-EVENT_OFFER_MS
+   });
+ }
  for(const [groupId,watch] of state.pollWatches){
    if(!pollMember(groupId))continue;
    for(const poll of watch.polls){
@@ -437,9 +444,10 @@ function renderNotifications(){
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
+     'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga'}[item.type];
    return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
  return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
@@ -640,9 +648,64 @@ function renderGroups(){
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
  ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id))).join('')}</div>`:discovering?empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
+const EVENT_OFFER_MS=3600000;
+function eventSeatOffer(event,uid=me()){
+ const start=event.offerAt?.toMillis?.();
+ return event.cancelled!==true&&event.date>=today()&&event.waitlist?.[0]===uid
+   && Number.isFinite(start)&&now()<start+EVENT_OFFER_MS?start+EVENT_OFFER_MS:null;
+}
+function scheduleEventOffers(){
+ clearTimeout(state.eventOfferTimer);
+ const uid=me();
+ const offers=state.events.filter(event=>event.cancelled!==true&&event.date>=today()&&event.waitlist?.includes(uid)&&event.offerAt);
+ if(!offers.length)return;
+ const deadline=Math.min(...offers.map(event=>event.offerAt.toMillis()+EVENT_OFFER_MS));
+ state.eventOfferTimer=setTimeout(async()=>{
+   if(me()!==uid)return;
+   const expired=offers.filter(event=>event.offerAt.toMillis()+EVENT_OFFER_MS<=now());
+   await Promise.allSettled(expired.map(event=>changeEventSeat(event.id,'expire',uid)));
+   if(me()===uid)render();
+ },Math.max(2000,deadline-now()+1200));
+}
+async function changeEventSeat(id,intent,uid){
+ const target=ref('events',id);
+ return firebase.runTransaction(db,async transaction=>{
+   const current=(await transaction.get(target)).data();
+   if(!current||current.cancelled===true||current.date<today()||me()!==uid)return '';
+   let {attendees,waitlist,capacity,offerAt}=current;
+   const head=waitlist[0];
+   const expired=offerAt&&offerAt.toMillis()+EVENT_OFFER_MS<=now();
+   const changes={};
+   let status='';
+   if(expired&&intent!=='leave'&&intent!=='leave-queue'){
+     waitlist=waitlist.slice(1);status='expired';
+   }else if(intent==='expire')return '';
+   else if(intent==='leave'&&attendees.includes(uid)){
+     attendees=attendees.filter(person=>person!==uid);status='left';
+   }else if(intent==='leave-queue'&&waitlist.includes(uid)){
+     waitlist=waitlist.filter(person=>person!==uid);status='left-queue';
+   }else if(intent==='join'&&!attendees.includes(uid)){
+     if(attendees.length<capacity&&(!head||head===uid)){
+       attendees=[...attendees,uid];waitlist=waitlist.filter(person=>person!==uid);status='confirmed';
+     }else if(!waitlist.includes(uid)){
+       if(waitlist.length>=100)throw new Error('A lista de espera está cheia.');
+       waitlist=[...waitlist,uid];status='queued';
+     }
+   }
+   if(!status)return '';
+   changes.attendees=attendees;changes.waitlist=waitlist;
+   changes.offerAt=attendees.length<capacity&&waitlist.length
+     ?(offerAt&&waitlist[0]===head?offerAt:firebase.serverTimestamp()):null;
+   transaction.update(target,changes);
+   return status;
+ });
+}
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
  const future=event.date>=today();
+ const limited=Number.isInteger(event.capacity),position=limited?event.waitlist.indexOf(me()):-1;
+ const offer=limited?eventSeatOffer(event):null;
+ const waiting=limited&&((event.attendees||[]).length>=event.capacity||event.waitlist.length>0);
  const group=state.groups.find(item=>item.id===event.groupId);
  const canJoin=!event.groupId||group?.members?.includes(me());
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
@@ -651,8 +714,8 @@ function eventCard(event, inGroup=false, detail=false) {
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  ${!detail&&feedbackAvailable(event)&&(attending||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
- <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
- <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||!canJoin))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
+ <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length}${limited?' de '+event.capacity+' vagas ocupadas':' interessados'}</span>
+ <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p>`:position>=0?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
 }
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
@@ -1094,6 +1157,7 @@ function renderModal() {
  return modalWrap(template&&!fromPoll?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${guidance?`<p class="tip">${guidance}</p>`:''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><div class="field"><label>Horário</label><input class="input" name="time" type="time" required></div></div>
  <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo" value="${esc(template?.location)}"></div>
+ <label class="field">Número de vagas (opcional)<input class="input" type="number" name="capacity" min="2" max="200" step="1" value="${esc(template?.capacity)}" placeholder="Em branco para vagas ilimitadas"></label>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Criar evento</button></div></form>`);
@@ -1686,6 +1750,7 @@ async function onAction(btn) {
     if(!notice)return;
     if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
+    if(notice.type==='event-seat'){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
     }
@@ -1799,7 +1864,17 @@ async function onAction(btn) {
     const event=state.events.find(e=>e.id===id);if(!event)return;
     if(event.cancelled===true)return;
     const attending=(event.attendees||[]).includes(me());
-    if(!attending&&(event.date<today()||(event.groupId&&!state.groups.find(group=>group.id===event.groupId)?.members?.includes(me()))))return;
+    if(!attending&&(event.date<today()||(event.groupId&&!pollMember(event.groupId)&&!event.waitlist?.includes(me()))))return;
+    if(Number.isInteger(event.capacity)){
+      const uid=me(),queued=event.waitlist.includes(uid),offered=eventSeatOffer(event);
+      const eligible=!event.groupId||pollMember(event.groupId);
+      const intent=attending?'leave':queued&&(!offered||!eligible)?'leave-queue':'join';
+      const status=await changeEventSeat(id,intent,uid);
+      const messages={left:'Participação removida.',confirmed:'Presença confirmada!',queued:'Você entrou na lista de espera.',
+        'left-queue':'Você saiu da lista de espera.',expired:'A lista de espera foi atualizada. Confira a disponibilidade.'};
+      if(me()===uid&&messages[status])showToast(messages[status]);
+      return;
+    }
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
     showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
@@ -1819,7 +1894,7 @@ document.addEventListener('click',async(event)=>{
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
 document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible'&&state.user){watchPollNotices();render();}
+ if(document.visibilityState==='visible'&&state.user){watchPollNotices();scheduleEventOffers();render();}
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
@@ -1886,7 +1961,9 @@ document.addEventListener('submit',async(event)=>{
     const fromPoll=state.eventTemplate?.source==='poll';
     if(fromPoll&&(!canDraftPollEvent(state.pollDetail)||state.pollDetail.groupId!==groupId))throw new Error('A criação por enquete exige permissão de moderação na comunidade.');
     const uid=me(),isRepeat=Boolean(state.eventTemplate&&!fromPoll);
-    const created=await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
+    const limit=val('capacity'),capacity=Number(limit);
+    if(limit&&(!Number.isInteger(capacity)||capacity<2||capacity>200))throw new Error('Escolha entre 2 e 200 vagas.');
+    const created=await firebase.addDoc(col('events'),{...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
     if(me()!==uid)return;
     state.eventTemplate=null;
     closeModal();setTab(groupId?'groups':'events');
