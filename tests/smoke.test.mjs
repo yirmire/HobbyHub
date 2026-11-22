@@ -448,6 +448,19 @@ test('an organizer can draft a public recap using only the completed group event
   assert.equal(vm.runInContext("state.user={uid:'host'};canComposeEventRecap({...event,date:'2099-01-01'})",context),false);
 });
 
+test('recap links connect the matching event and publication in both directions', () => {
+  const context=appContext();
+  vm.runInContext(`
+    const event={id:'event',groupId:'group'};
+    const post={id:'recap',groupId:'group',eventRecapId:'event'};
+    state.events=[event];state.posts=[post];
+  `,context);
+  assert.match(vm.runInContext('postCard(post)',context),/data-action="view-event" data-id="event">Ver encontro/);
+  assert.match(vm.runInContext('eventRecapButton(event)',context),/data-action="comments" data-id="recap">Ler relato/);
+  assert.equal(vm.runInContext("recapEventButton({...post,groupId:'other'})",context),'');
+  assert.equal(vm.runInContext('state.posts=[];eventRecapButton(event)',context),'');
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
