@@ -475,7 +475,7 @@ test('only the organizer sees the feedback summary and confirmed guests can answ
     renderEventFeedback(ended)
   `, context);
   assert.match(organizer, /Resumo privado/);
-  assert.match(organizer, /1 compareceu/);
+  assert.match(organizer, /1 declarou que compareceu/);
   assert.match(organizer, /&lt;b&gt;Repetir&lt;\/b&gt;/);
   const guest = vm.runInContext(`state.user={uid:'guest'};renderEventFeedback(ended)`, context);
   assert.match(guest, /Você compareceu/);
@@ -483,6 +483,24 @@ test('only the organizer sees the feedback summary and confirmed guests can answ
   assert.equal(vm.runInContext(`state.user={uid:'stranger'};renderEventFeedback(ended)`, context), '');
   assert.equal(vm.runInContext(`state.user={uid:'guest'};renderEventFeedback({...ended,date:'2099-01-01'})`, context), '');
   assert.equal(vm.runInContext(`renderEventFeedback({...ended,cancelled:true})`, context), '');
+});
+
+test('the completed event puts recorded arrivals and private feedback in the same organizer panel', () => {
+  const context = appContext();
+  const organizer = vm.runInContext(`
+    state.user={uid:'owner'};
+    state.selectedEvent='ended';state.modal='event-detail';
+    state.events=[{id:'ended',title:'Oficina',createdBy:'owner',date:'2000-01-01',attendees:['owner','guest']}];
+    state.eventCheckins={eventId:'ended',present:new Set(['guest'])};
+    state.eventFeedback={id:'ended',entries:[{id:'guest',attended:false,comment:'Levar mais material'}]};
+    renderModal()
+  `, context);
+  assert.match(organizer, /Resumo pós-evento[\s\S]*Confirmações registradas<\/dt><dd><strong>2[\s\S]*Check-ins registrados<\/dt><dd><strong>1/);
+  assert.match(organizer, /Resumo privado[\s\S]*1 declarou que não compareceu[\s\S]*Levar mais material/);
+  assert.equal((organizer.match(/Resumo privado/g)||[]).length, 1);
+  const guest = vm.runInContext("state.user={uid:'guest'};renderModal()", context);
+  assert.match(guest, /Você compareceu/);
+  assert.doesNotMatch(guest, /Resumo pós-evento|Check-ins registrados|Resumo privado/);
 });
 
 test('event invitations wait for login and display participation before the calendar action', () => {
