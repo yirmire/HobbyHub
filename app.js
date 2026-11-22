@@ -436,9 +436,10 @@ function renderNotifications(){
      testimonial:actor+' enviou um depoimento para você.',
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
-     'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question
+     'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
+     'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta'}[item.type];
    return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
  return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
@@ -797,7 +798,7 @@ function renderEventQuestions(event){
  const organizer=event.createdBy===me()&&event.cancelled!==true;
  const items=questions.map(question=>{
    const pinned=question.id===data.pinned;
-   return `<article class="card" style="padding:12px">${pinned?'<p class="eyebrow">Resposta fixada</p>':''}
+   return `<article class="card" id="event-question-${esc(question.id)}" tabindex="-1" style="padding:12px">${pinned?'<p class="eyebrow">Resposta fixada</p>':''}
    <strong>${esc(member(question.authorId)?.name||'Membro do HobbyHub')}</strong>
    <p class="post-copy" style="margin:6px 0">${esc(question.question)}</p>
    ${question.answer?`<p class="mini muted">Resposta do organizador</p><p class="post-copy" style="margin:6px 0">${esc(question.answer)}</p>`:''}
@@ -814,7 +815,7 @@ function renderEventQuestions(event){
  <label class="field">Sua pergunta<textarea class="textarea" name="question" required minlength="3" maxlength="400"></textarea></label>
  <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Enviar pergunta</button></form>`}</section>`;
 }
-async function loadEventQuestions(eventId){
+async function loadEventQuestions(eventId,questionId=''){
  const uid=me();
  const data={eventId,loading:true,questions:[],pinned:'',error:''};
  state.eventDiscussion=data;
@@ -833,11 +834,21 @@ async function loadEventQuestions(eventId){
        if(featured.exists())questions.unshift({...featured.data(),id:featured.id});
      }
    }
+   if(questionId&&!questions.some(item=>item.id===questionId)){
+     const linked=await firebase.getDoc(ref('events',eventId,'questions',questionId));
+     if(linked.exists())questions.push({...linked.data(),id:linked.id});
+   }
    data.questions=questions;
  }catch(error){data.error=friendlyError(error);}
  finally{
    data.loading=false;
-   if(me()===uid&&state.eventDiscussion===data&&state.modal==='event-detail'&&state.selectedEvent===eventId)render();
+   if(me()===uid&&state.eventDiscussion===data&&state.modal==='event-detail'&&state.selectedEvent===eventId){
+     render();
+     if(questionId){
+       const target=document.getElementById('event-question-'+questionId);
+       if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}
+     }
+   }
  }
 }
 function renderEventFeedback(event) {
@@ -1239,9 +1250,9 @@ async function loadEventFeedback(event) {
    if(me()===uid&&state.eventFeedback===feedback&&state.modal==='event-detail')render();
  }
 }
-function openEventDetail(id) {
+function openEventDetail(id,questionId='') {
  state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;openModal('event-detail');
- if(state.events.some(event=>event.id===id))void loadEventQuestions(id);
+ if(state.events.some(event=>event.id===id))void loadEventQuestions(id,questionId);
  void loadEventFeedback(state.events.find(event=>event.id===id));
 }
 async function loadModerationSelection(groupId,targetId) {
@@ -1673,7 +1684,11 @@ async function onAction(btn) {
   case 'open-notification':{
     const notice=notificationItems().find(item=>item.readKey===id);
     if(!notice)return;
+    if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
+    if(notice.type==='event-answer'){
+      openEventDetail(notice.eventId,notice.questionId);return;
+    }
     if(notice.type==='poll-open'||notice.type==='poll-result'){
       state.selectedGroup=notice.groupId;
       await openPoll(notice.groupId,notice.poll);return;
@@ -1907,7 +1922,16 @@ document.addEventListener('submit',async(event)=>{
     if(answering){
       const questionId=state.eventAnswerId;
       if(event.createdBy!==uid||!content||!state.eventDiscussion?.questions.some(item=>item.id===questionId))return;
-      await firebase.updateDoc(ref('events',event.id,'questions',questionId),{answer:content,answeredAt:firebase.serverTimestamp()});
+      const questionRef=ref('events',event.id,'questions',questionId);
+      await firebase.runTransaction(db,async transaction=>{
+        const question=(await transaction.get(questionRef)).data();
+        if(!question)throw new Error('Esta pergunta está indisponível.');
+        transaction.update(questionRef,{answer:content,answeredAt:firebase.serverTimestamp()});
+        if(!question.answer&&question.authorId!==uid){
+          const notice=ref('members',question.authorId,'notifications',`event-answer-${event.id}:${questionId}`);
+          transaction.set(notice,{type:'event-answer',actorId:uid,eventId:event.id,questionId,createdAt:firebase.serverTimestamp()});
+        }
+      });
       if(state.eventAnswerId===questionId)state.eventAnswerId=null;
     }else{
       if(content.length<3)return;
