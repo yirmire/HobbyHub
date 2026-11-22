@@ -276,6 +276,29 @@ test('a closed poll drafts a group event with the sole winning option for active
   assert.doesNotMatch(vm.runInContext('state.pollDetail.poll.endsAt.toMillis=()=>Date.now()+10000;renderPoll()', context), /event-from-poll/);
 });
 
+test('event questions display the pinned answer and organize response controls by role', () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    const event={id:'event',createdBy:'organizer'};
+    state.eventDiscussion={eventId:'event',pinned:'pinned',questions:[
+      {id:'pinned',authorId:'guest',question:'Onde encontrar o grupo?',answer:'Portão <principal>'},
+      {id:'open',authorId:'guest',question:'Preciso levar algo?'}
+    ]};
+  `, context);
+  const guest = vm.runInContext('renderEventQuestions(event)', context);
+  assert.match(guest, /Resposta fixada[\s\S]*Portão &lt;principal&gt;/);
+  assert.match(guest, /event-question-form/);
+  assert.doesNotMatch(guest, /answer-event-question|unpin-event-question/);
+  const organizer = vm.runInContext("state.user={uid:'organizer'};renderEventQuestions(event)", context);
+  assert.match(organizer, /data-action="unpin-event-question"/);
+  assert.match(organizer, /data-action="answer-event-question" data-id="open"/);
+  assert.doesNotMatch(organizer, /data-action="pin-event-question" data-id="open"/);
+  const cancelled = vm.runInContext('event.cancelled=true;renderEventQuestions(event)', context);
+  assert.match(cancelled, /Resposta fixada/);
+  assert.doesNotMatch(cancelled, /event-question-form|answer-event-question/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
