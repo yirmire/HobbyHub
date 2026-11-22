@@ -370,6 +370,25 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const checkinDay=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
+const checkinEvent=`${events}/checkin-today`;
+const arrival=(event,actor)=>({
+  update:{name:documents+event+'/checkins/'+actor.localId,fields:{}},
+  updateTransforms:stamp('checkedAt')
+});
+await request(sender,'POST',`${events}?documentId=checkin-today`,200,{...standalone,date:str(checkinDay)});
+await request(recipient,'PATCH',`${checkinEvent}?updateMask.fieldPaths=attendees`,200,{attendees:both});
+await moderate(recipient,[arrival(checkinEvent,recipient)],403);
+await moderate(sender,[arrival(checkinEvent,other)],403);
+await moderate(sender,[arrival(eventPath,sender)],403);
+await moderate(sender,[arrival(checkinEvent,recipient)],200);
+await request(sender,'GET',`${checkinEvent}/checkins`,200);
+await request(recipient,'GET',`${checkinEvent}/checkins/${recipient.localId}`,403);
+await moderate(sender,[arrival(checkinEvent,recipient)],403);
+await request(recipient,'DELETE',`${checkinEvent}/checkins/${recipient.localId}`,403);
+await request(sender,'DELETE',`${checkinEvent}/checkins/${recipient.localId}`,200);
+await request(sender,'PATCH',`${checkinEvent}?updateMask.fieldPaths=cancelled&updateMask.fieldPaths=revision`,200,{cancelled:{booleanValue:true},revision:{integerValue:'1'}});
+await moderate(sender,[arrival(checkinEvent,recipient)],403);
 const bulletinPath=`${eventPath}/bulletins/meeting-update`;
 const bulletin={update:{name:documents+bulletinPath,fields:{text:str('Vamos nos encontrar no portão lateral.')}},updateTransforms:stamp('createdAt')};
 await moderate(other,[bulletin],403);
