@@ -428,6 +428,26 @@ test('personal history includes ended confirmations and private check-ins withou
   assert.doesNotMatch(feedback,/Resumo privado/);
 });
 
+test('an organizer can draft a public recap using only the completed group event title', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'host'};state.profile={name:'Host'};
+    state.groups=[{id:'club',name:'Clube',members:['host','guest']}];
+    const event={id:'ended',groupId:'club',date:'2000-01-01',createdBy:'host',title:'Oficina <especial>'};
+    state.events=[event];state.selectedEvent='ended';state.modal='event-detail';
+    state.eventFeedback={id:'ended',entries:[{id:'guest',comment:'Comentário privado'}]};
+  `,context);
+  assert.match(vm.runInContext('renderEventOrganizerPanel(event)',context),/Publicar relato do encontro/);
+  await vm.runInContext("onAction({dataset:{action:'compose-event-recap',id:'ended'}})",context);
+  const draft=vm.runInContext('renderModal()',context);
+  assert.match(draft,/Relato do encontro/);
+  assert.match(draft,/Oficina &lt;especial&gt;/);
+  assert.doesNotMatch(draft,/Comentário privado/);
+  assert.equal(vm.runInContext('state.composingGroup',context),'club');
+  assert.equal(vm.runInContext("state.user={uid:'guest'};canComposeEventRecap(event)",context),false);
+  assert.equal(vm.runInContext("state.user={uid:'host'};canComposeEventRecap({...event,date:'2099-01-01'})",context),false);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
