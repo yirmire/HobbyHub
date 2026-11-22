@@ -20,6 +20,7 @@ const TOPICS = [
   {name:'Bem-estar',emoji:'🧘',color:'pink'}, {name:'Outros',emoji:'✨',color:'pink'}
 ];
 const ICONS = {
+  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
   home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 21v-8h6v8"/>',
   compass:'<circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2.4 6-6 2.4 2.4-6z"/>',
   users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -70,6 +71,7 @@ const state = {
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
   moderationQueue:null,
+  notifications:[], reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   invitedGroupId:null, composingIntroduction:false, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -118,6 +120,8 @@ function unsubscribeAll() {
  for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
  for(const unsubscribe of state.inboundUnsubs.values())unsubscribe();
  state.inboundUnsubs.clear();
+ for(const unsubscribe of state.reportNoticeUnsubs.values())unsubscribe();
+ state.reportNoticeUnsubs.clear();state.reportNotices.clear();
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -203,6 +207,7 @@ function startSession() {
   subscribe(col('groups'), (s)=>{
     state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
     state.groupsLoaded=true;
+    watchReportNotices();
     queueMicrotask(openLinkedContent);
   },'comunidades');
   subscribe(col('events'), (s)=>{
@@ -220,7 +225,10 @@ function startSession() {
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'moderation'),snapshot=>{
     state.groupRoles=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().status]));
+    watchReportNotices();
   },'convites de moderação');
+  subscribe(firebase.query(col('members',me(),'notifications'),firebase.orderBy('createdAt','desc'),firebase.limit(50)),
+    snapshot=>{state.notifications=docs(snapshot);},'notificações');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -253,7 +261,9 @@ async function init() {
       state.eventFeedback=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
-      state.moderationQueue=null;
+      state.moderationQueue=null;state.notifications=[];
+      state.notificationReads=new Set();
+      if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
       state.invitedGroupId=null;state.composingIntroduction=false;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -299,12 +309,82 @@ function renderAuth() {
     <div class="auth-switch"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button></div>
   </div></section></div>`;
 }
+function watchReportNotices() {
+ const groups=state.groups.filter(canManageGroup);
+ const activeIds=new Set(groups.map(group=>group.id));
+ for(const [id,unsubscribe] of state.reportNoticeUnsubs){
+   if(activeIds.has(id))continue;
+   unsubscribe();state.reportNoticeUnsubs.delete(id);state.reportNotices.delete(id);
+ }
+ for(const {id} of groups){
+   if(state.reportNoticeUnsubs.has(id))continue;
+   const pending=firebase.query(col('groups',id,'reports'),firebase.where('status','==','pending'));
+   const unsubscribe=firebase.onSnapshot(pending,snapshot=>{
+     if(!state.reportNoticeUnsubs.has(id))return;
+     state.reportNotices.set(id,snapshot.docs.map(doc=>({id:doc.id,createdAt:doc.data().createdAt})));
+     render();
+   },error=>{
+     console.error('HobbyHub report notifications:',error);
+     state.reportNoticeUnsubs.delete(id);state.reportNotices.delete(id);render();
+   });
+   state.reportNoticeUnsubs.set(id,unsubscribe);
+ }
+}
+function notificationFields(type,postId='',commentId=''){
+ return {type,actorId:me(),postId,commentId,createdAt:firebase.serverTimestamp()};
+}
+function notificationReadKey(){return 'hobbyhub-notification-reads:'+me();}
+function notificationItems(){
+ const items=state.notifications.map(item=>({...item,key:item.id}));
+ for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
+ for(const group of state.groups.filter(canManageGroup)){
+   for(const item of state.reportNotices.get(group.id)||[])items.push({
+     type:'report',groupId:group.id,key:'report-'+group.id+':'+item.id,createdAt:item.createdAt
+   });
+ }
+ return items.filter(item=>!state.blockedIds.includes(item.actorId))
+   .map(item=>{
+     const time=typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.();
+     return {...item,time,readKey:item.key+':'+time};
+   }).filter(item=>Number.isFinite(item.time))
+   .sort((a,b)=>b.time-a.time).slice(0,50);
+}
+function markNotificationsRead(items){
+ for(const item of items){
+   state.notificationReads.delete(item.readKey);
+   state.notificationReads.add(item.readKey);
+ }
+ state.notificationReads=new Set([...state.notificationReads].slice(-500));
+ try{localStorage.setItem(notificationReadKey(),JSON.stringify([...state.notificationReads]));}catch{}
+}
+function notificationButton(mobile=false){
+ const count=notificationItems().filter(item=>!state.notificationReads.has(item.readKey)).length;
+ const badge=count?`<span class="unread-count" aria-hidden="true">${count}</span>`:'';
+ return `<button class="${mobile?'circle-btn':'nav-btn'}" data-action="notifications" title="Notificações" aria-label="Notificações${count?', '+count+' não lidas':''}">${icon('bell')}${mobile?'':'<span>Notificações</span>'}${badge}</button>`;
+}
+function renderNotifications(){
+ const items=notificationItems();
+ const unread=items.some(item=>!state.notificationReads.has(item.readKey));
+ const list=items.map(item=>{
+   const actor=member(item.actorId)?.name||'Alguém';
+   const group=state.groups.find(group=>group.id===item.groupId);
+   const message={
+     follow:actor+' começou a seguir você.',
+     comment:actor+' comentou na sua publicação.',
+     testimonial:actor+' enviou um depoimento para você.',
+     report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.'
+   }[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias'}[item.type];
+   return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
+ }).join('');
+ return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
+}
 function unreadBadge(tab) {
  const count=tab==='messages'?state.threads.filter(thread=>unreadThread(thread.id)).length:0;
  return count?`<span class="unread-count"><span aria-hidden="true">${count>99?'99+':count}</span><span class="sr-only">${count} ${count===1?'conversa não lida':'conversas não lidas'}</span></span>`:'';
 }
 function renderSidebar() {
-  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span>${unreadBadge(tab)}</button>`).join('')}</nav>
+  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span>${unreadBadge(tab)}</button>`).join('')}${notificationButton()}</nav>
   <div class="sidebar-cta"><button class="btn btn-primary" data-action="compose">${icon('plus')} Nova publicação</button></div>
   <div class="sidebar-footer"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button><p>Feito para viver mais daquilo que você ama. ✨</p><small>HobbyHub © ${new Date().getFullYear()}</small></div></aside>`;
 }
@@ -348,7 +428,7 @@ function renderEventNotices() {
 function renderLayout() {
  if(!state.profile)return `<div class="splash"><span class="splash-mark">✳</span><h1>HobbyHub</h1><p>Preparando seu perfil...</p>${state.alerts.length?`<div class="error-banner">${esc(state.alerts[0])}</div><button data-action="logout" class="btn btn-outline">Sair da conta</button>`:''}</div>`;
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
- return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row"><button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
+ return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
  ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
@@ -555,7 +635,7 @@ function renderProfile() {
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
- <div class="section-head"><h2>Depoimentos recebidos</h2></div>
+ <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
  <div class="card" style="padding:16px">${renderTestimonials(state.receivedTestimonials,true)}</div>
  <div class="section-head"><h2>Suas publicações</h2><button class="text-action" data-action="compose">Publicar algo ${icon('plus')}</button></div>
  ${posts.length?posts.map(postCard).join(''):empty('🎨','Conte sua primeira história','O que você está aprendendo, criando ou descobrindo?','Criar publicação','compose')}`;
@@ -678,6 +758,7 @@ function renderModerationHistory(group) {
 }
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='notifications')return renderNotifications();
  if(state.modal==='first-visit')return renderFirstVisit();
  if(state.modal==='group-report-queue')return renderGroupReportQueue(state.groups.find(group=>group.id===state.selectedGroup));
  if(state.modal==='moderation-history')return renderModerationHistory(state.groups.find(group=>group.id===state.selectedGroup));
@@ -1271,6 +1352,26 @@ async function onAction(btn) {
     if(!group||!(group.members||[]).includes(me()))return;
     state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';openModal('compose');return;
   }
+  case 'notifications':openModal('notifications');return;
+  case 'read-notifications':markNotificationsRead(notificationItems());render();return;
+  case 'open-notification':{
+    const notice=notificationItems().find(item=>item.readKey===id);
+    if(!notice)return;
+    markNotificationsRead([notice]);
+    if(notice.type==='report'){
+      state.selectedGroup=notice.groupId;state.moderationQueue=null;openModal('group-report-queue');
+      await loadGroupReportQueue(notice.groupId);return;
+    }
+    if(notice.type==='testimonial'){
+      setTab('profile');document.getElementById('received-testimonials')?.scrollIntoView();return;
+    }
+    if(notice.type==='comment'&&state.posts.some(post=>post.id===notice.postId)){openComments(notice.postId);return;}
+    if(notice.type==='follow'&&member(notice.actorId)){
+      state.viewUser=notice.actorId;state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='Carregando depoimentos…';
+      openModal('person');await loadPersonTestimonials(notice.actorId);return;
+    }
+    render();showToast('Este conteúdo está indisponível.');return;
+  }
   case 'close':closeModal();return;
   case 'edit-profile':openModal('edit-profile');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
@@ -1328,7 +1429,12 @@ async function onAction(btn) {
     if(!id||id===me())return;
     const target=ref('members',me(),'following',id);
     if(state.followingIds.includes(id)){await firebase.deleteDoc(target);showToast('Você deixou de seguir esta pessoa.');}
-    else{await firebase.setDoc(target,{createdAt:now()});showToast('Agora você está seguindo esta pessoa!');}
+    else{
+      const batch=firebase.writeBatch(db);
+      batch.set(target,{createdAt:now()});
+      batch.set(ref('members',id,'notifications',`follow-${me()}`),notificationFields('follow'));
+      await batch.commit();showToast('Agora você está seguindo esta pessoa!');
+    }
   },'updatingFollow');return;
   case 'save':await attempt(async()=>{
     const target=ref('members',me(),'saved',id);
@@ -1519,7 +1625,12 @@ document.addEventListener('submit',async(event)=>{
   case 'comment-form':await attempt(async()=>{
     const text=val('text'),postId=state.selectedPost;
     if(!text||!postId)return;
-    await firebase.addDoc(col('posts',postId,'comments'),{userId:me(),userName:myName(),text,createdAt:now()});
+    const comment=firebase.doc(col('posts',postId,'comments'));
+    const owner=state.posts.find(post=>post.id===postId)?.userId;
+    const batch=firebase.writeBatch(db);
+    batch.set(comment,{userId:me(),userName:myName(),text,createdAt:now()});
+    if(owner&&owner!==me())batch.set(ref('members',owner,'notifications',`comment-${postId}:${comment.id}`),notificationFields('comment',postId,comment.id));
+    await batch.commit();
     const group=state.groups.find(item=>item.id===state.invitedGroupId);
     if(group?.pinnedPostId===postId)state.invitedGroupId=null;
     clearSubmittedDraft(form.id,form.dataset.draftKey,'text',data.text);
