@@ -314,6 +314,23 @@ test('an event answer notice identifies the event and opens the exact question',
   assert.doesNotMatch(vm.runInContext('notificationButton()', context), /não lidas/);
 });
 
+test('limited events offer the reserved seat only to the head of the waitlist', () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'first'};
+    const event={id:'event',title:'Oficina',date:'2099-01-01',capacity:2,attendees:['organizer'],
+      waitlist:['first','second'],offerAt:{toMillis:()=>now()-1000}};
+    state.events=[event];
+  `, context);
+  assert.match(vm.runInContext('eventCard(event)', context), /Confirmar vaga/);
+  assert.match(vm.runInContext('renderNotifications()', context), /Uma vaga está reservada para você · Oficina/);
+  const second = vm.runInContext("state.user={uid:'second'};eventCard(event)", context);
+  assert.match(second, /Sair da lista de espera/);
+  assert.match(second, /posição 2/);
+  assert.doesNotMatch(vm.runInContext('renderNotifications()', context), /Uma vaga/);
+  assert.match(vm.runInContext("state.user={uid:'other'};eventCard(event)", context), /Entrar na lista de espera/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
