@@ -387,7 +387,17 @@ await request(null,'GET',questionPath,403);
 await request(sender,'PATCH',eventPin,403,{questionId:str('meeting-point')});
 await moderate(other,[answer],403);
 await moderate(sender,[{...answer,updateMask:{fieldPaths:['answer','question']}}],403);
-await moderate(sender,[answer],200);
+const replyNoticePath=`public/data/members/${other.localId}/notifications/event-answer-group-event:meeting-point`;
+const replyNotice={update:{name:documents+replyNoticePath,fields:{
+  type:str('event-answer'),actorId:str(sender.localId),eventId:str('group-event'),questionId:str('meeting-point')
+}},updateTransforms:stamp('createdAt')};
+await moderate(sender,[replyNotice],403);
+await moderate(sender,[answer,{...replyNotice,update:{...replyNotice.update,name:documents+replyNoticePath.replace(other.localId,recipient.localId)}}],403);
+await moderate(sender,[answer,replyNotice],200);
+await request(other,'GET',replyNoticePath,200);
+await request(sender,'GET',replyNoticePath,403);
+await request(recipient,'GET',replyNoticePath,403);
+await moderate(sender,[answer,replyNotice],403);
 await request(other,'PATCH',eventPin,403,{questionId:str('meeting-point')});
 await request(sender,'PATCH',eventPin,200,{questionId:str('meeting-point')});
 assert.equal((await request(other,'GET',eventPin,200)).fields.questionId.stringValue,'meeting-point');
