@@ -410,6 +410,24 @@ test('organizer check-in distinguishes arrivals and limits edits to the active e
   assert.equal(vm.runInContext("state.user={uid:'guest'};renderEventOrganizerPanel(event)", context), '');
 });
 
+test('personal history includes ended confirmations and private check-ins without a current RSVP', () => {
+  const context = appContext();
+  const markup=vm.runInContext(`
+    state.user={uid:'reader'};state.eventFilter='history';
+    const checked={id:'y',title:'Chegada registrada',date:'2000-01-02',attendees:['host']};
+    state.events=[checked,{id:'x',title:'Confirmação anterior',date:'2000-01-01',attendees:['reader']},
+      {id:'z',title:'Visita sem confirmação',date:'2000-01-03',attendees:['host']},
+      {id:'later',title:'Encontro futuro',date:'2099-01-01',attendees:['reader']}];
+    state.personalHistory.records.set(historyKey(checked),true);
+    renderEvents()
+  `,context);
+  assert.match(markup,/Chegada registrada[\s\S]*Presença registrada[\s\S]*Avaliar encontro[\s\S]*Confirmação anterior/);
+  assert.doesNotMatch(markup,/Visita sem confirmação|Encontro futuro/);
+  const feedback=vm.runInContext("state.eventFeedback={id:'y',entries:[]};renderEventFeedback(checked)",context);
+  assert.match(feedback,/event-feedback-form/);
+  assert.doesNotMatch(feedback,/Resumo privado/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
