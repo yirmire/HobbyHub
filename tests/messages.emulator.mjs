@@ -370,6 +370,12 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+await request(sender,'POST',`${events}?documentId=recap-event`,200,{...eventFields,date:str('2020-01-01')});
+const recapPost={...welcome,groupId:str('welcome-group'),eventRecapId:str('recap-event')};
+await request(sender,'POST','public/data/posts?documentId=recap-bad-event',403,{...recapPost,eventRecapId:str('group-event')});
+await request(recipient,'POST','public/data/posts?documentId=recap-bad-author',403,{...recapPost,userId:str(recipient.localId)});
+await request(sender,'POST','public/data/posts?documentId=recap-good',200,recapPost);
+assert.equal((await request(other,'GET','public/data/posts/recap-good',200)).fields.eventRecapId.stringValue,'recap-event');
 const checkinDay=new Date(Date.now()-3*60*60*1000).toISOString().slice(0,10);
 const checkinEvent=`${events}/checkin-today`;
 const arrival=(event,actor)=>({
