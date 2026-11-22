@@ -789,25 +789,29 @@ function renderEventOrganizerPanel(event){
  const waiting=(event.waitlist?.length||0)-reserved;
  const checkins=state.eventCheckins?.eventId===event.id?state.eventCheckins:null;
  const present=checkins?.present;
+ const finished=feedbackAvailable(event);
  const editable=Boolean(present)&&canCheckInEvent(event);
  const names=[...new Set([...attendees,...(present||[])])].map(uid=>({uid,name:member(uid)?.name||'Perfil indisponível'}))
    .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
  return `<section class="card form-stack" style="padding:14px;margin:16px 0" aria-label="Painel do organizador">
  <h3>Painel do organizador</h3>
+ ${finished?'<h4>Resumo pós-evento</h4>':''}
  <dl class="grid-two" style="margin:0">
- <div><dt>${limited?'Vagas ocupadas':'Presenças confirmadas'}</dt><dd><strong>${attendees.length}${limited?' de '+event.capacity:''}</strong></dd></div>
+ <div><dt>${finished?'Confirmações registradas':limited?'Vagas ocupadas':'Presenças confirmadas'}</dt><dd><strong>${attendees.length}${limited&&!finished?' de '+event.capacity:''}</strong></dd></div>
+ ${finished?`<div><dt>Check-ins registrados</dt><dd><strong>${present?present.size:'—'}</strong></dd></div>`:''}
  ${active&&limited?`<div><dt>Vagas livres</dt><dd><strong>${free}</strong></dd></div>
  <div><dt>Reservas pendentes</dt><dd><strong>${reserved}</strong></dd></div>
  <div><dt>Pessoas aguardando na fila</dt><dd><strong>${waiting}</strong></dd></div>`:''}
  </dl>
  <h4>Participantes confirmados e check-in</h4>
- <p class="tip">${checkins?.error?esc(checkins.error):present?`${present.size} ${present.size===1?'pessoa presente':'pessoas presentes'}`:'Carregando check-ins…'}</p>
+ ${!finished||!present?`<p class="tip">${checkins?.error?esc(checkins.error):present?`${present.size} ${present.size===1?'pessoa presente':'pessoas presentes'}`:'Carregando check-ins…'}</p>`:''}
  ${!editable&&event.cancelled!==true&&event.date>eventCheckinDay()?'<p class="tip">O check-in fica disponível no dia do encontro.</p>':''}
  ${names.length?`<ul class="form-stack" style="padding-left:20px;margin:0">${names.map(({uid,name})=>{
    const checked=present?.has(uid),confirmed=attendees.includes(uid);
    return `<li><div class="toggle-row" style="flex-wrap:wrap"><span>${esc(name)}${uid===me()?' (organizador)':''}${checked?' <strong>· Presente</strong>':''}${confirmed?'':' · Confirmação retirada'}</span>
    ${editable&&(checked||confirmed)?`<button class="text-action" data-action="${checked?'undo-event-checkin':'record-event-checkin'}" data-id="${esc(uid)}" ${state.busy?'disabled':''}>${checked?'Desfazer check-in':'Marcar chegada'}</button>`:''}</div></li>`;
  }).join('')}</ul>`:'<p class="tip">Nenhuma presença confirmada.</p>'}
+ ${finished?renderEventFeedback(event):''}
  </section>`;
 }
 function renderEvents(now=new Date()) {
@@ -1021,7 +1025,7 @@ function renderEventFeedback(event) {
  const comments=feedback.entries.filter(entry=>entry.comment);
  return `<section class="card" style="padding:16px;margin-top:16px" aria-label="Avaliação do encontro">
  <h3>Avaliação do encontro</h3>
- ${organizer?`<div><h4>Resumo privado</h4><p>${feedback.entries.length} ${feedback.entries.length===1?'resposta':'respostas'} · ${present} ${present===1?'compareceu':'compareceram'} · ${absent} ${absent===1?'não compareceu':'não compareceram'}</p>
+ ${organizer?`<div><h4>Resumo privado</h4><p>${feedback.entries.length} ${feedback.entries.length===1?'resposta':'respostas'} · ${present} ${present===1?'declarou que compareceu':'declararam que compareceram'} · ${absent} ${absent===1?'declarou que não compareceu':'declararam que não compareceram'}</p>
  ${comments.length?`<ul style="padding-left:20px">${comments.map(entry=>`<li>${esc(entry.comment)}</li>`).join('')}</ul>`:''}</div>`:''}
  ${eligible?`<form id="event-feedback-form" data-draft="true" data-draft-key="${esc(`feedback:${me()}:${event.id}`)}" class="form-stack"><p class="tip">Suas respostas ficam disponíveis para você e para o organizador.</p>
  <label class="field">Você compareceu?<select name="attended" class="select" required><option value="">Selecione</option><option value="yes" ${mine?.attended===true?'selected':''}>Sim</option><option value="no" ${mine?.attended===false?'selected':''}>Não</option></select></label>
@@ -1197,7 +1201,7 @@ function renderModal() {
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
-   ${renderEventOrganizerPanel(event)}${renderEventBulletins(event)}${renderEventQuestions(event)}${renderEventFeedback(event)}`);
+   ${renderEventOrganizerPanel(event)}${renderEventBulletins(event)}${renderEventQuestions(event)}${event.createdBy!==me()?renderEventFeedback(event):''}`);
  }
  if(state.modal==='event-edit'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
