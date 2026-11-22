@@ -68,7 +68,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
-  eventFeedback:null,
+  eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
   moderationQueue:null, groupPolls:null, pollDetail:null,
@@ -264,7 +264,7 @@ async function init() {
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
-      state.eventFeedback=null;
+      state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.groupPolls=null;state.pollDetail=null;
@@ -791,6 +791,55 @@ function canRepeatEvent(event) {
  return feedbackAvailable(event)&&event.createdBy===me()
   && (!event.groupId||state.groups.find(group=>group.id===event.groupId)?.members?.includes(me()));
 }
+function renderEventQuestions(event){
+ const data=state.eventDiscussion?.eventId===event.id?state.eventDiscussion:null;
+ const questions=data?.questions||[];
+ const organizer=event.createdBy===me()&&event.cancelled!==true;
+ const items=questions.map(question=>{
+   const pinned=question.id===data.pinned;
+   return `<article class="card" style="padding:12px">${pinned?'<p class="eyebrow">Resposta fixada</p>':''}
+   <strong>${esc(member(question.authorId)?.name||'Membro do HobbyHub')}</strong>
+   <p class="post-copy" style="margin:6px 0">${esc(question.question)}</p>
+   ${question.answer?`<p class="mini muted">Resposta do organizador</p><p class="post-copy" style="margin:6px 0">${esc(question.answer)}</p>`:''}
+   ${organizer&&state.eventAnswerId===question.id?`<form id="event-answer-form" data-draft="true" data-draft-key="${esc('event-answer:'+event.id+':'+question.id)}" class="form-stack">
+   <label class="field">Resposta<textarea class="textarea" name="answer" required maxlength="600">${esc(question.answer)}</textarea></label>
+   <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Salvar resposta</button></form>`:organizer?`<div class="toggle-row" style="flex-wrap:wrap">
+   <button class="text-action" data-action="answer-event-question" data-id="${esc(question.id)}">${question.answer?'Editar resposta':'Responder'}</button>
+   ${question.answer?`<button class="text-action" data-action="${pinned?'unpin-event-question':'pin-event-question'}" data-id="${esc(question.id)}">${pinned?'Desafixar resposta':'Fixar resposta'}</button>`:''}</div>`:''}</article>`;
+ }).join('');
+ return `<section class="form-stack" style="margin:18px 0" aria-label="Perguntas do evento">
+ <div class="section-head"><h3>Perguntas e respostas</h3><button class="text-action" data-action="refresh-event-questions">Atualizar</button></div>
+ ${data?.error?`<p class="tip">${esc(data.error)}</p>`:data?.loading||!data?'<p class="tip">Carregando perguntas…</p>':items||'<p class="tip">Ainda não há perguntas sobre este evento.</p>'}
+ ${event.cancelled===true?'':`<form id="event-question-form" data-draft="true" data-draft-key="${esc('event-question:'+event.id)}" class="form-stack">
+ <label class="field">Sua pergunta<textarea class="textarea" name="question" required minlength="3" maxlength="400"></textarea></label>
+ <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Enviar pergunta</button></form>`}</section>`;
+}
+async function loadEventQuestions(eventId){
+ const uid=me();
+ const data={eventId,loading:true,questions:[],pinned:'',error:''};
+ state.eventDiscussion=data;
+ try{
+   const [list,pin]=await Promise.all([
+     firebase.getDocs(firebase.query(col('events',eventId,'questions'),firebase.orderBy('createdAt','desc'),firebase.limit(30))),
+     firebase.getDoc(ref('events',eventId,'discussion','pinned'))
+   ]);
+   const questions=list.docs.map(doc=>({...doc.data(),id:doc.id}));
+   data.pinned=pin.data()?.questionId||'';
+   if(data.pinned){
+     const index=questions.findIndex(item=>item.id===data.pinned);
+     if(index>=0)questions.unshift(questions.splice(index,1)[0]);
+     else{
+       const featured=await firebase.getDoc(ref('events',eventId,'questions',data.pinned));
+       if(featured.exists())questions.unshift({...featured.data(),id:featured.id});
+     }
+   }
+   data.questions=questions;
+ }catch(error){data.error=friendlyError(error);}
+ finally{
+   data.loading=false;
+   if(me()===uid&&state.eventDiscussion===data&&state.modal==='event-detail'&&state.selectedEvent===eventId)render();
+ }
+}
 function renderEventFeedback(event) {
  const organizer=event.createdBy===me(),eligible=event.attendees?.includes(me());
  if(!feedbackAvailable(event)||(!organizer&&!eligible))return '';
@@ -979,7 +1028,7 @@ function renderModal() {
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
-   ${renderEventFeedback(event)}`);
+   ${renderEventQuestions(event)}${renderEventFeedback(event)}`);
  }
  if(state.modal==='event-edit'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
@@ -1191,7 +1240,8 @@ async function loadEventFeedback(event) {
  }
 }
 function openEventDetail(id) {
- state.selectedEvent=id;state.eventFeedback=null;openModal('event-detail');
+ state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;openModal('event-detail');
+ if(state.events.some(event=>event.id===id))void loadEventQuestions(id);
  void loadEventFeedback(state.events.find(event=>event.id===id));
 }
 async function loadModerationSelection(groupId,targetId) {
@@ -1376,6 +1426,29 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=btn.dataset.value==='discover'?'discover':'mine';render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
+  case 'refresh-event-questions':
+    if(state.modal==='event-detail')await loadEventQuestions(state.selectedEvent);
+    return;
+  case 'answer-event-question':{
+    const event=state.events.find(item=>item.id===state.selectedEvent);
+    if(state.modal==='event-detail'&&event?.createdBy===me()&&!event.cancelled&&state.eventDiscussion?.questions.some(item=>item.id===id)){
+      state.eventAnswerId=id;render();
+    }
+    return;
+  }
+  case 'pin-event-question':
+  case 'unpin-event-question':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent);
+    if(state.modal!=='event-detail'||event?.createdBy!==me()||event.cancelled)return;
+    if(!state.eventDiscussion?.questions.some(item=>item.id===id&&item.answer))return;
+    const pin=ref('events',event.id,'discussion','pinned');
+    const uid=me();
+    if(action==='pin-event-question')await firebase.setDoc(pin,{questionId:id});
+    else await firebase.runTransaction(db,async transaction=>{
+      if((await transaction.get(pin)).data()?.questionId===id)transaction.delete(pin);
+    });
+    if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail')await loadEventQuestions(event.id);
+  });return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
@@ -1823,6 +1896,28 @@ document.addEventListener('submit',async(event)=>{
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);
     showToast(changed?'Evento atualizado.':'Nenhuma alteração no evento.');
+  });return;
+  case 'event-question-form':
+  case 'event-answer-form':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent),uid=me();
+    if(!event||event.cancelled||!uid||state.modal!=='event-detail')return;
+    const answering=form.id==='event-answer-form';
+    const field=answering?'answer':'question';
+    const content=val(field);
+    if(answering){
+      const questionId=state.eventAnswerId;
+      if(event.createdBy!==uid||!content||!state.eventDiscussion?.questions.some(item=>item.id===questionId))return;
+      await firebase.updateDoc(ref('events',event.id,'questions',questionId),{answer:content,answeredAt:firebase.serverTimestamp()});
+      if(state.eventAnswerId===questionId)state.eventAnswerId=null;
+    }else{
+      if(content.length<3)return;
+      await firebase.addDoc(col('events',event.id,'questions'),{authorId:uid,question:content,createdAt:firebase.serverTimestamp()});
+    }
+    if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail'){
+      clearSubmittedDraft(form.id,form.dataset.draftKey,field,data[field]);
+      await loadEventQuestions(event.id);
+      showToast(answering?'Resposta publicada.':'Pergunta enviada.');
+    }
   });return;
   case 'event-feedback-form':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
