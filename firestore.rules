@@ -154,6 +154,32 @@ service cloud.firestore {
         allow read, create, delete: if isMe(uid);
         allow update: if false;
       }
+      // Private activity notices are coupled to a new follow or comment in the same commit.
+      match /notifications/{noticeId} {
+        function newFollow(data) {
+          let follow = /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(data.actorId)/following/$(uid);
+          return noticeId == 'follow-' + data.actorId && data.postId == '' && data.commentId == ''
+            && !exists(follow) && existsAfter(follow);
+        }
+        function newComment(data) {
+          let comment = publicCommentPath(appId, data.postId, data.commentId);
+          return noticeId == 'comment-' + data.postId + ':' + data.commentId
+            && !exists(comment) && getAfter(comment).data.userId == data.actorId
+            && get(publicPostPath(appId, data.postId)).data.userId == uid;
+        }
+        function validNotice(data) {
+          return loggedIn() && request.auth.uid != uid
+            && data.keys().hasOnly(['type', 'actorId', 'postId', 'commentId', 'createdAt'])
+            && data.actorId == request.auth.uid && data.createdAt == request.time
+            && ((data.type == 'follow' && newFollow(data))
+              || (data.type == 'comment' && validText(data.postId, 1, 120) && data.postId.matches('[^/]+')
+                && validText(data.commentId, 1, 120) && data.commentId.matches('[^/]+') && newComment(data)));
+        }
+        allow read: if isMe(uid);
+        allow create: if validNotice(request.resource.data);
+        allow update: if request.resource.data.type == 'follow' && validNotice(request.resource.data);
+        allow delete: if false;
+      }
       match /following/{targetId} {
         // A consulta do dono lista a coleção inteira, sem filtrar por targetId.
         allow list: if isMe(uid);

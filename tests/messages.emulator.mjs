@@ -464,6 +464,30 @@ const fileReport=(actor,path,targetType,text,commentId='')=>[{
   updateTransforms:stamp('createdAt'),currentDocument:{exists:false}
 }];
 const welcomePost=await request(sender,'GET','public/data/posts/welcome-post',200);
+const senderNotices=`public/data/members/${sender.localId}/notifications`;
+const followNotice=`${senderNotices}/follow-${recipient.localId}`;
+const followSource=`public/data/members/${recipient.localId}/following/${sender.localId}`;
+const notice=(path,type,actor,postId='',commentId='')=>({
+  update:{name:documents+path,fields:{type:str(type),actorId:str(actor.localId),postId:str(postId),commentId:str(commentId)}},
+  updateTransforms:stamp('createdAt')
+});
+const followWrite={update:{name:documents+followSource,fields:{createdAt:{integerValue:'1'}}}};
+await moderate(recipient,[notice(followNotice,'follow',recipient)],403);
+await moderate(recipient,[followWrite,notice(followNotice,'follow',recipient)],200);
+await request(sender,'GET',senderNotices,200);
+await request(recipient,'GET',senderNotices,403);
+await request(other,'GET',followNotice,403);
+await moderate(recipient,[notice(followNotice,'follow',recipient)],403);
+await request(recipient,'DELETE',followSource,200);
+await moderate(recipient,[followWrite,notice(followNotice,'follow',recipient)],200);
+const commentNotice=`${senderNotices}/comment-welcome-post:notified-comment`;
+const commentWrite={update:{name:documents+commentPath+'/notified-comment',
+  fields:{userId:str(recipient.localId),text:str('Comentário com aviso'),createdAt:{integerValue:'2'}}}};
+await moderate(recipient,[notice(commentNotice,'comment',recipient,'welcome-post','notified-comment')],403);
+await moderate(recipient,[commentWrite,notice(commentNotice.replace(sender.localId,other.localId),'comment',recipient,'welcome-post','notified-comment')],403);
+await moderate(recipient,[commentWrite,notice(commentNotice,'comment',recipient,'welcome-post','notified-comment')],200);
+await request(sender,'GET',commentNotice,200);
+await request(other,'GET',commentNotice,403);
 await moderate(other,fileReport(other,postReport,'post',welcomePost.fields.content),403);
 await moderate(sender,fileReport(sender,postReport,'post',welcomePost.fields.content),403);
 await moderate(recipient,fileReport(recipient,postReport,'post',str('Texto inventado')),403);
