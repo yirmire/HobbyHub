@@ -560,6 +560,39 @@ service cloud.firestore {
         || organizerChange();
       allow delete: if loggedIn() && resource.data.createdBy == request.auth.uid;
 
+      function discussionEvent() {
+        return /databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId);
+      }
+      function discussionOpen() {
+        return exists(discussionEvent()) && get(discussionEvent()).data.get('cancelled', false) != true;
+      }
+      function discussionOrganizer() {
+        return isMe(get(discussionEvent()).data.createdBy);
+      }
+      match /questions/{questionId} {
+        allow read: if loggedIn() && exists(discussionEvent());
+        allow create: if loggedIn() && discussionOpen()
+          && request.resource.data.keys().hasOnly(['authorId', 'question', 'createdAt'])
+          && request.resource.data.authorId == request.auth.uid
+          && validText(request.resource.data.question, 3, 400)
+          && request.resource.data.createdAt == request.time;
+        allow update: if discussionOpen() && discussionOrganizer()
+          && changedOnly(['answer', 'answeredAt'])
+          && validText(request.resource.data.answer, 1, 600)
+          && request.resource.data.answeredAt == request.time;
+        allow delete: if false;
+      }
+      match /discussion/pinned {
+        function validPin(data) {
+          let questionId = data.questionId;
+          return data.keys().hasOnly(['questionId'])
+            && validText(questionId, 1, 120) && questionId.matches('[^/]+')
+            && validText(get(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId)/questions/$(questionId)).data.answer, 1, 600);
+        }
+        allow get: if loggedIn() && exists(discussionEvent());
+        allow create, update: if discussionOpen() && discussionOrganizer() && validPin(request.resource.data);
+        allow delete: if discussionOpen() && discussionOrganizer();
+      }
       match /feedback/{uid} {
         function eventData() {
           return get(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId)).data;

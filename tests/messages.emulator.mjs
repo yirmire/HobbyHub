@@ -370,6 +370,31 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const questionPath=`${eventPath}/questions/meeting-point`;
+const eventPin=`${eventPath}/discussion/pinned`;
+const ask=(actor,path=questionPath)=>({
+  update:{name:documents+path,fields:{authorId:str(actor.localId),question:str('Onde o grupo vai se encontrar?')}},
+  updateTransforms:stamp('createdAt')
+});
+const answer={
+  update:{name:documents+questionPath,fields:{answer:str('No portão principal.')}},
+  updateMask:{fieldPaths:['answer']},updateTransforms:stamp('answeredAt')
+};
+await moderate(other,[ask(recipient)],403);
+await moderate(other,[ask(other)],200);
+await request(other,'GET',`${eventPath}/questions`,200);
+await request(null,'GET',questionPath,403);
+await request(sender,'PATCH',eventPin,403,{questionId:str('meeting-point')});
+await moderate(other,[answer],403);
+await moderate(sender,[{...answer,updateMask:{fieldPaths:['answer','question']}}],403);
+await moderate(sender,[answer],200);
+await request(other,'PATCH',eventPin,403,{questionId:str('meeting-point')});
+await request(sender,'PATCH',eventPin,200,{questionId:str('meeting-point')});
+assert.equal((await request(other,'GET',eventPin,200)).fields.questionId.stringValue,'meeting-point');
+assert.equal((await request(other,'GET',questionPath,200)).fields.answer.stringValue,'No portão principal.');
+await moderate(other,[ask(other,`${events}/standalone/questions/cancelled`)],403);
+await request(other,'DELETE',eventPin,403);
+await request(sender,'DELETE',eventPin,200);
 async function moderate(user,writes,expected) {
   const response=await fetch(`http://${storeHost}/v1/${databasePath}/documents:commit`, {
     method:'POST',
