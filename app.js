@@ -715,7 +715,8 @@ function eventCard(event, inGroup=false, detail=false) {
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  ${!detail&&feedbackAvailable(event)&&(attending||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length}${limited?' de '+event.capacity+' vagas ocupadas':' interessados'}</span>
- <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p>`:position>=0?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
+ <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>
+ ${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p><button class="text-action" data-action="release-event-seat" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>Liberar vaga</button>`:position>=0&&future&&event.cancelled!==true?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
 }
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
@@ -735,6 +736,7 @@ function renderEvents(now=new Date()) {
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me());
+   if(eventFilter==='waitlist')return event.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
    if(eventFilter==='past')return event.date&&event.date<day;
    if(eventFilter==='recommended')return event.cancelled!==true
      && (event.date>day||(event.date===day&&(!event.time||event.time>=time)))
@@ -747,9 +749,10 @@ function renderEvents(now=new Date()) {
  const emptyAgenda=filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.')
    :eventFilter==='recommended'?empty('🗓️','Nenhum encontro recomendado por enquanto','As sugestões aparecem quando há eventos dos seus hobbies ou das comunidades de que você participa.','Ver próximos eventos','upcoming-events')
    :eventFilter==='mine'?empty('🗓️','Você ainda não confirmou nenhum evento','Confira os próximos encontros para encontrar um evento de que queira participar.','Ver próximos eventos','upcoming-events')
+   :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
@@ -1860,6 +1863,12 @@ async function onAction(btn) {
     if(me()===uid)watchPollNotices();
     showToast(joined?'Você saiu da comunidade.':'Bem-vindo à comunidade!');
   },'updatingGroup');return;
+  case 'release-event-seat':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===id),uid=me();
+    if(!event||!eventSeatOffer(event,uid))return;
+    const status=await changeEventSeat(id,'leave-queue',uid);
+    if(me()===uid&&status==='left-queue')showToast('Vaga liberada. Você saiu da lista de espera.');
+  });return;
   case 'rsvp':await attempt(async()=>{
     const event=state.events.find(e=>e.id===id);if(!event)return;
     if(event.cancelled===true)return;
