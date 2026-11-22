@@ -224,6 +224,32 @@ test('community polls present private ballots, totals after voting, and no contr
   assert.match(vm.runInContext("state.groups[0].members=['owner'];renderPoll()", context), /Enquete indisponível/);
 });
 
+test('a closed poll drafts a group event with the sole winning option for active moderators', async () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'moderator'};
+    state.groups=[{id:'club',createdBy:'owner',name:'Clube',hobby:'Fotografia',members:['owner','moderator']}];
+    state.modal='poll-detail';
+    state.pollDetail={groupId:'club',poll:{id:'poll',question:'Qual passeio?',options:{a:'Passeio no parque',b:'Visita ao museu',c:'',d:''},
+      endsAt:{toMillis:()=>0,toDate:()=>new Date(0)}},totals:{a:3,b:1,c:0,d:0}};
+  `, context);
+  assert.doesNotMatch(vm.runInContext('renderPoll()', context), /event-from-poll/);
+  await vm.runInContext("onAction({dataset:{action:'event-from-poll'}})", context);
+  assert.equal(vm.runInContext('state.modal', context), 'poll-detail');
+  vm.runInContext("state.groupRoles.set('club','active')", context);
+  assert.match(vm.runInContext('renderPoll()', context), /event-from-poll/);
+  await vm.runInContext("onAction({dataset:{action:'event-from-poll'}})", context);
+  assert.equal(vm.runInContext('state.eventGroupId', context), 'club');
+  const draft = vm.runInContext('renderModal()', context);
+  assert.match(draft, /Evento em Clube/);
+  assert.match(draft, /name="title"[^>]+value="Passeio no parque"/);
+  assert.match(draft, /name="time" type="time" required/);
+  assert.doesNotMatch(draft, /Nova edição/);
+  assert.equal(vm.runInContext('state.pollDetail.totals.b=3;pollEventTitle(state.pollDetail)', context), '');
+  assert.equal(vm.runInContext('state.pollDetail.totals.a=0;state.pollDetail.totals.b=0;pollEventTitle(state.pollDetail)', context), '');
+  assert.doesNotMatch(vm.runInContext('state.pollDetail.poll.endsAt.toMillis=()=>Date.now()+10000;renderPoll()', context), /event-from-poll/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
