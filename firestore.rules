@@ -622,6 +622,18 @@ service cloud.firestore {
       function discussionOrganizer() {
         return isMe(get(discussionEvent()).data.createdBy);
       }
+      match /bulletins/{bulletinId} {
+        function canReadBulletins() {
+          let event = get(discussionEvent()).data;
+          return loggedIn() && (event.createdBy == request.auth.uid || request.auth.uid in event.attendees);
+        }
+        allow read: if canReadBulletins();
+        allow create: if discussionOpen() && discussionOrganizer()
+          && request.resource.data.keys().hasOnly(['text','createdAt'])
+          && validText(request.resource.data.text, 3, 500)
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
       match /questions/{questionId} {
         allow read: if loggedIn() && exists(discussionEvent());
         allow create: if loggedIn() && discussionOpen()

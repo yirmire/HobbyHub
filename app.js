@@ -68,7 +68,7 @@ const state = {
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
-  eventOfferTimer:null,
+  eventOfferTimer:null, eventBulletins:new Map(),
   eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
@@ -127,6 +127,8 @@ function unsubscribeAll() {
  state.reportNoticeUnsubs.clear();state.reportNotices.clear();
  for(const watch of state.pollWatches.values())watch.unsubscribe();
  state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);clearTimeout(state.eventOfferTimer);
+ for(const watch of state.eventBulletins.values())watch.unsubscribe();
+ state.eventBulletins.clear();
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -217,7 +219,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;scheduleEventOffers();queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();watchEventBulletins();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -398,6 +400,12 @@ function notificationItems(){
    });
  }
  for(const event of state.events){
+   if(canReadEventBulletins(event)&&event.createdBy!==me()){
+     for(const item of state.eventBulletins.get(event.id)?.entries||[])items.push({
+       type:'event-bulletin',eventId:event.id,bulletinId:item.id,key:'event-bulletin:'+event.id+':'+item.id,
+       actorId:event.createdBy,createdAt:item.createdAt
+     });
+   }
    const deadline=eventSeatOffer(event);
    if(deadline&&(!event.groupId||pollMember(event.groupId)))items.push({
      type:'event-seat',eventId:event.id,key:'event-seat:'+event.id,createdAt:deadline-EVENT_OFFER_MS
@@ -444,10 +452,11 @@ function renderNotifications(){
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
+     'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado'}[item.type];
    return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
  return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
@@ -717,6 +726,45 @@ function eventCard(event, inGroup=false, detail=false) {
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length}${limited?' de '+event.capacity+' vagas ocupadas':' interessados'}</span>
  <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||(!canJoin&&position<0)))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':offer&&canJoin?'Confirmar vaga':position>=0?'Sair da lista de espera':!canJoin?'Só para membros':limited?(waiting?'Entrar na lista de espera':'Confirmar presença'):event.groupId?'Confirmar presença':'Tenho interesse'}</button></div>
  ${offer&&canJoin?`<p class="tip">Sua vaga está reservada até ${esc(new Date(offer).toLocaleString('pt-BR'))}.</p><button class="text-action" data-action="release-event-seat" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>Liberar vaga</button>`:position>=0&&future&&event.cancelled!==true?`<p class="tip">Você está na posição ${position+1} da lista de espera.</p>`:''}</article>`;
+}
+function canReadEventBulletins(event){
+ return Boolean(me()&&(event.createdBy===me()||event.attendees?.includes(me())));
+}
+function watchEventBulletins(){
+ const uid=me();
+ const available=new Set(state.events.filter(canReadEventBulletins).map(event=>event.id));
+ for(const [id,watch] of state.eventBulletins){
+   if(available.has(id))continue;
+   watch.unsubscribe();state.eventBulletins.delete(id);
+ }
+ for(const id of available){
+   if(state.eventBulletins.has(id)&&!state.eventBulletins.get(id).error)continue;
+   const watch={entries:null,error:''};
+   state.eventBulletins.set(id,watch);
+   const latest=firebase.query(col('events',id,'bulletins'),firebase.orderBy('createdAt','desc'),firebase.limit(10));
+   watch.unsubscribe=firebase.onSnapshot(latest,snapshot=>{
+     if(me()!==uid||state.eventBulletins.get(id)!==watch)return;
+     watch.entries=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}));render();
+   },error=>{
+     if(me()!==uid||state.eventBulletins.get(id)!==watch)return;
+     watch.error='Não foi possível carregar os recados.';render();
+     console.error('HobbyHub event bulletins:',error);
+   });
+ }
+}
+function renderEventBulletins(event){
+ if(!canReadEventBulletins(event))return '';
+ const watch=state.eventBulletins.get(event.id);
+ const entries=watch?.entries;
+ const items=entries?.map(item=>`<article class="card" id="event-bulletin-${esc(item.id)}" tabindex="-1" style="padding:12px">
+ <small class="muted">${when(item.createdAt?.toMillis?.())}</small><p class="post-copy" style="margin:6px 0">${esc(item.text)}</p></article>`).join('');
+ return `<section class="form-stack" style="margin:16px 0" aria-label="Recados do organizador">
+ <h3>Recados do organizador</h3>
+ ${watch?.error?`<p class="tip">${watch.error}</p>`:entries?items||'<p class="tip">Ainda não há recados para este evento.</p>':'<p class="tip">Carregando recados…</p>'}
+ ${event.createdBy===me()&&event.cancelled!==true?`<form id="event-bulletin-form" data-draft="true" data-draft-key="${esc('event-bulletin:'+event.id)}" class="form-stack">
+ <label class="field">Recado para os confirmados<textarea class="textarea" name="text" required minlength="3" maxlength="500"></textarea></label>
+ <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Publicar recado</button></form>`:''}
+ </section>`;
 }
 function renderEventOrganizerPanel(event){
  if(!me()||event.createdBy!==me())return '';
@@ -1127,7 +1175,7 @@ function renderModal() {
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
-   ${renderEventOrganizerPanel(event)}${renderEventQuestions(event)}${renderEventFeedback(event)}`);
+   ${renderEventOrganizerPanel(event)}${renderEventBulletins(event)}${renderEventQuestions(event)}${renderEventFeedback(event)}`);
  }
  if(state.modal==='event-edit'){
    const event=state.events.find(item=>item.id===state.selectedEvent);
@@ -1775,6 +1823,12 @@ async function onAction(btn) {
     if(!notice)return;
     if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
+    if(notice.type==='event-bulletin'){
+      openEventDetail(notice.eventId);
+      const item=document.getElementById('event-bulletin-'+notice.bulletinId);
+      if(item){item.focus({preventScroll:true});item.scrollIntoView({block:'center'});}
+      return;
+    }
     if(notice.type==='event-seat'){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
@@ -1903,10 +1957,11 @@ async function onAction(btn) {
       const status=await changeEventSeat(id,intent,uid);
       const messages={left:'Participação removida.',confirmed:'Presença confirmada!',queued:'Você entrou na lista de espera.',
         'left-queue':'Você saiu da lista de espera.',expired:'A lista de espera foi atualizada. Confira a disponibilidade.'};
-      if(me()===uid&&messages[status])showToast(messages[status]);
+      if(me()===uid&&messages[status]){watchEventBulletins();showToast(messages[status]);}
       return;
     }
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
+    watchEventBulletins();
     showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
   case 'delete-post':if(!confirm('Excluir esta publicação definitivamente?'))return;
@@ -1925,7 +1980,7 @@ document.addEventListener('click',async(event)=>{
 });
 document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
 document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible'&&state.user){watchPollNotices();scheduleEventOffers();render();}
+ if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();render();}
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
@@ -2019,6 +2074,16 @@ document.addEventListener('submit',async(event)=>{
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);
     showToast(changed?'Evento atualizado.':'Nenhuma alteração no evento.');
+  });return;
+  case 'event-bulletin-form':await attempt(async()=>{
+    const event=state.events.find(item=>item.id===state.selectedEvent),uid=me();
+    const text=val('text');
+    if(!uid||event?.createdBy!==uid||event.cancelled||state.modal!=='event-detail'||text.length<3||text.length>500)return;
+    await firebase.addDoc(col('events',event.id,'bulletins'),{text,createdAt:firebase.serverTimestamp()});
+    if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail'){
+      clearSubmittedDraft(form.id,form.dataset.draftKey,'text',data.text);
+      watchEventBulletins();showToast('Recado publicado para quem confirmou presença.');
+    }
   });return;
   case 'event-question-form':
   case 'event-answer-form':await attempt(async()=>{
