@@ -517,6 +517,14 @@ function renderLayout() {
  ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
+function recapEventButton(post){
+ const event=state.events.find(item=>item.id===post.eventRecapId&&item.groupId===post.groupId);
+ return event?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Ver encontro</button>`:'';
+}
+function eventRecapButton(event){
+ const post=state.posts.find(item=>item.eventRecapId===event.id&&item.groupId===event.groupId);
+ return post?`<button class="btn btn-outline btn-small" data-action="comments" data-id="${esc(post.id)}">Ler relato</button>`:'';
+}
 function postCard(post) {
  const liked=Array.isArray(post.likes)&&post.likes.includes(me()),saved=state.savedIds.includes(post.id);
  const owner=post.userId===me(),author=authorName(post);
@@ -525,6 +533,7 @@ function postCard(post) {
  <span class="post-category">${emoji(post.hobby)} ${esc(post.hobby||'Interesses')}</span></div>
  ${post.groupId?`<button class="pill" style="margin-top:14px" data-action="view-group" data-id="${esc(post.groupId)}">${icon('users')} ${esc(short(state.groups.find(g=>g.id===post.groupId)?.name||'Comunidade',34))}</button>`:''}
  <div class="post-copy">${esc(post.content)}</div>
+ ${recapEventButton(post)}
  ${post.format==='highlight'?`<div class="post-visual"><span class="emoji">${emoji(post.hobby)}</span><div><small>Uma paixão, mil possibilidades</small><br><strong>Compartilhe o que faz você feliz.</strong></div></div>`:''}
  <div class="post-stats"><span>${Array.isArray(post.likes)?post.likes.length:0} curtidas</span><span>${esc(post.location||'HobbyHub')}</span></div>
  <div class="post-actions"><button class="post-action ${liked?'liked':''}" data-action="like" data-id="${esc(post.id)}" aria-label="${liked?'Descurtir':'Curtir'}">${icon('heart')} ${liked?'Curtido':'Curtir'}</button>
@@ -1237,7 +1246,7 @@ function renderModal() {
    return modalWrap(event.title,`${eventCard(event,false,true)}
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
-   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
@@ -1274,6 +1283,7 @@ function renderModal() {
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
  <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
+ ${recapEventButton(post)}
  <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
@@ -1319,7 +1329,7 @@ function renderModal() {
  if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está disponível no momento.</p>');
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
- return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p></div>`:''}
+ return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${recapEventButton(post)}</div>`:''}
  <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small>${belongsToGroup&&c.userId!==me()?` <button class="text-action" data-action="report-group-comment" data-id="${esc(c.id)}">Denunciar comentário</button>`:''}</div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
@@ -2127,12 +2137,12 @@ document.addEventListener('submit',async(event)=>{
   });return;
   case 'post-form':await attempt(async()=>{
     const content=val('content');if(!content||content.length>2000)return;
-    const groupId=state.composingGroup;
-    if(state.composingRecapId){
-      const event=state.events.find(item=>item.id===state.composingRecapId);
+    const groupId=state.composingGroup,eventRecapId=state.composingRecapId;
+    if(eventRecapId){
+      const event=state.events.find(item=>item.id===eventRecapId);
       if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
     }
-    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{})});
+    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
