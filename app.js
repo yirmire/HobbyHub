@@ -817,6 +817,16 @@ function renderGroupPolls(){
  ${data?.error?`<p class="tip">${esc(data.error)}</p>`:entries?list||'<p class="tip">Ainda não há enquetes nesta comunidade.</p>':'<p class="tip">Carregando enquetes…</p>'}
  <button class="text-action" data-action="view-group" data-id="${esc(groupId)}">Voltar à comunidade</button></div>`);
 }
+function canDraftPollEvent(detail){
+ if(!detail||detail.loading||!detail.totals||!pollClosed(detail.poll)||!pollMember(detail.groupId))return false;
+ return canManageGroup(state.groups.find(group=>group.id===detail.groupId));
+}
+function pollEventTitle({poll,totals}){
+ const options=pollOptions.filter(key=>poll.options[key]);
+ const highest=Math.max(0,...options.map(key=>totals[key]));
+ const winners=options.filter(key=>totals[key]===highest);
+ return highest>0&&winners.length===1?poll.options[winners[0]]:'';
+}
 function renderPoll(){
  const detail=state.pollDetail;
  if(!detail||!pollMember(detail.groupId))return modalWrap('Enquete indisponível','<p>Entre na comunidade para acessar esta enquete.</p>');
@@ -831,6 +841,7 @@ function renderPoll(){
  return modalWrap(poll.question,`<div class="form-stack">
  <p class="mini muted">${closed?'Encerrada em':'Aberta até'} ${esc(pollDeadline(poll))}</p>
  ${items}
+ ${canDraftPollEvent(detail)?'<button class="btn btn-primary btn-small" data-action="event-from-poll">Criar evento a partir da enquete</button>':''}
  ${error?`<p class="tip">${esc(error)}</p>`:loading?'<p class="tip">Carregando votação…</p>':totals?`<p class="mini muted">${total} ${total===1?'voto':'votos'}</p>`:'<p class="tip">Os resultados aparecem depois que você votar ou quando a enquete encerrar.</p>'}
  <div class="toggle-row"><button class="text-action" data-action="group-polls" data-id="${esc(detail.groupId)}">Voltar às enquetes</button>
  <button class="text-action" data-action="view-poll" data-id="${esc(poll.id)}">Atualizar</button></div></div>`);
@@ -956,7 +967,10 @@ function renderModal() {
  if(state.modal==='event'){
  const eventGroup=state.groups.find(group=>group.id===state.eventGroupId);
  const template=state.eventTemplate;
- return modalWrap(template?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${template?'<p class="tip">Escolha uma nova data e um horário. Os participantes confirmam presença novamente.</p>':''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
+ const fromPoll=template?.source==='poll';
+ const guidance=fromPoll?(template.title?'Revise o título sugerido pela enquete e preencha os detalhes do encontro.':'A enquete terminou sem uma opção vencedora. Escolha um título e preencha os detalhes do encontro.')
+   :template?'Escolha uma nova data e um horário. Os participantes confirmam presença novamente.':'';
+ return modalWrap(template&&!fromPoll?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${guidance?`<p class="tip">${guidance}</p>`:''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><div class="field"><label>Horário</label><input class="input" name="time" type="time" required></div></div>
  <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo" value="${esc(template?.location)}"></div>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
@@ -1371,6 +1385,13 @@ async function onAction(btn) {
     if(poll&&pollMember(groupId))await openPoll(groupId,poll);
     return;
   }
+  case 'event-from-poll':{
+    const detail=state.pollDetail;
+    if(state.modal!=='poll-detail'||!canDraftPollEvent(detail))return;
+    state.eventGroupId=detail.groupId;
+    state.eventTemplate={source:'poll',title:pollEventTitle(detail)};
+    openModal('event');return;
+  }
   case 'vote-poll':await attempt(async()=>{
     const detail=state.pollDetail;
     if(!detail||detail.loading||!pollOptions.includes(id))return;
@@ -1706,7 +1727,9 @@ document.addEventListener('submit',async(event)=>{
   case 'event-form':await attempt(async()=>{
     if(val('date')<today())throw new Error('A data deve ser hoje ou no futuro.');
     const groupId=state.eventGroupId;
-    const uid=me(),isRepeat=Boolean(state.eventTemplate);
+    const fromPoll=state.eventTemplate?.source==='poll';
+    if(fromPoll&&(!canDraftPollEvent(state.pollDetail)||state.pollDetail.groupId!==groupId))throw new Error('A criação por enquete exige permissão de moderação na comunidade.');
+    const uid=me(),isRepeat=Boolean(state.eventTemplate&&!fromPoll);
     const created=await firebase.addDoc(col('events'),{title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
     if(me()!==uid)return;
     state.eventTemplate=null;
