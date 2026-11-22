@@ -60,6 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
+  exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'',
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -256,6 +257,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
+      state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
       state.eventFeedback=null;
@@ -444,7 +446,7 @@ function postCard(post) {
  ${post.format==='highlight'?`<div class="post-visual"><span class="emoji">${emoji(post.hobby)}</span><div><small>Uma paixão, mil possibilidades</small><br><strong>Compartilhe o que faz você feliz.</strong></div></div>`:''}
  <div class="post-stats"><span>${Array.isArray(post.likes)?post.likes.length:0} curtidas</span><span>${esc(post.location||'HobbyHub')}</span></div>
  <div class="post-actions"><button class="post-action ${liked?'liked':''}" data-action="like" data-id="${esc(post.id)}" aria-label="${liked?'Descurtir':'Curtir'}">${icon('heart')} ${liked?'Curtido':'Curtir'}</button>
- <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Comentar</button>
+ <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} ${state.tab==='explore'?'Abrir publicação':'Comentar'}</button>
  <button class="post-action ${saved?'bookmarked':''}" data-action="save" data-id="${esc(post.id)}">${icon('bookmark')} ${saved?'Salvo':'Salvar'}</button>
  <button class="post-action" data-action="share-post" data-id="${esc(post.id)}" aria-label="Compartilhar publicação">${icon('send')} Compartilhar</button>
  ${owner?`<button class="post-action" data-action="delete-post" data-id="${esc(post.id)}" aria-label="Excluir publicação">${icon('trash')}</button>`:`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
@@ -485,24 +487,54 @@ function personCard(p) {
  const shared=(p.hobbies||[]).find(h=>(state.profile?.hobbies||[]).some(mine=>norm(mine)===norm(h)));
  return `<article class="card person-card">${avatar(p)}<div class="person-data"><h3><button class="text-action" data-action="person" data-id="${esc(p.uid)}">${esc(p.name)}</button></h3><p>${icon('map')} ${esc(p.location || 'Brasil')}</p><p>${esc(short(p.bio||'Uma pessoa apaixonada por hobbies.',60))}</p>${shared?`<p>Também gosta de ${esc(shared)}</p>`:''}${locate(p.location)?'<p>Da sua cidade</p>':''}</div><div style="display:grid;gap:6px"><button class="btn btn-small ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(p.uid)}">${followed?'Seguindo':'+ Seguir'}</button><button class="btn btn-small btn-ghost" data-action="open-dm" data-id="${esc(p.uid)}">${icon('chat')} Conversar</button></div></article>`;
 }
+function searchOptions(values,selected){
+ return [...values].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'))
+   .map(([key,label])=>`<option value="${esc(key)}" ${selected===key?'selected':''}>${esc(label)}</option>`).join('');
+}
+function searchPublications(query,hobby='',groupId=''){
+ const words=norm(query).trim().split(/\s+/).filter(Boolean);
+ const groupNames=new Map(state.groups.map(group=>[group.id,group.name]));
+ return state.posts.filter(post=>{
+   if((hobby&&norm(post.hobby)!==hobby)||(groupId&&post.groupId!==groupId))return false;
+   if(!words.length)return true;
+   const searchable=norm([post.content,post.hobby,authorName(post),groupNames.get(post.groupId)].join(' '));
+   return words.every(word=>searchable.includes(word));
+ });
+}
+function renderPublicationSearch(){
+ const hobbies=new Map(state.posts.filter(post=>typeof post.hobby==='string'&&norm(post.hobby)).map(post=>[norm(post.hobby),post.hobby]));
+ const groups=new Map(state.groups.map(group=>[group.id,String(group.name||'Comunidade')]));
+ const posts=searchPublications(state.search,state.postSearchHobby,state.postSearchGroup);
+ const shown=posts.slice(0,state.postSearchLimit);
+ return `<div class="field-grid" style="margin-bottom:14px">
+ <label class="field">Hobby<select class="select" id="post-search-hobby"><option value="">Todos os hobbies</option>${searchOptions(hobbies,state.postSearchHobby)}</select></label>
+ <label class="field">Comunidade<select class="select" id="post-search-group"><option value="">Todas as comunidades e o feed geral</option>${searchOptions(groups,state.postSearchGroup)}</select></label>
+ </div>
+ <div class="section-head"><h2>Publicações</h2><span role="status" class="pill">${posts.length} ${posts.length===1?'resultado':'resultados'}</span></div>
+ ${shown.length?shown.map(postCard).join(''):empty('🔎','Nenhuma publicação encontrada','Tente outras palavras ou ajuste os filtros.')}
+ ${posts.length>shown.length?'<button id="post-search-more" class="btn btn-outline" data-action="more-post-results">Mostrar mais publicações</button>':''}`;
+}
 function renderExplore() {
- const q=norm(state.search);
+ const q=norm(state.search).trim();
+ const header=`<div class="feed-tabs" role="group" aria-label="O que explorar">
+ ${[['people','Pessoas e comunidades'],['posts','Publicações']].map(([view,label])=>`<button id="explore-view-${view}" class="feed-tab ${state.exploreView===view?'active':''}" aria-pressed="${state.exploreView===view}" data-action="explore-view" data-value="${view}">${label}</button>`).join('')}
+ </div><div class="card" style="padding:18px;margin-bottom:17px"><label class="field" for="explore-search"><span class="mini muted">${state.exploreView==='posts'?'Buscar publicações':'Pesquise pessoas, grupos, hobbies e publicações'}</span><input id="explore-search" type="search" class="input" placeholder="${state.exploreView==='posts'?'Ex.: fotografia analógica':'Ex.: fotografia, Nova Friburgo, livros...'}" data-live-search="true" value="${esc(state.search)}"></label></div>`;
+ if(state.exploreView==='posts')return header+renderPublicationSearch();
  const candidates=state.members.filter(p=>p.uid&&p.uid!==me());
  const hobbies=new Map(candidates.flatMap(p=>(Array.isArray(p.hobbies)?p.hobbies:[]).filter(h=>typeof h==='string'&&norm(h)).map(h=>[norm(h),h])));
  const cities=new Map(candidates.filter(p=>typeof p.location==='string'&&cityKey(p.location)).map(p=>[cityKey(p.location),p.location]));
- const options=(values,selected)=>[...values].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${selected===key?'selected':''}>${esc(label)}</option>`).join('');
  const people=candidates.filter(p=>(!state.exploreCity||cityKey(p.location)===state.exploreCity)
   && (!state.exploreHobby||(p.hobbies||[]).some(h=>norm(h)===state.exploreHobby))
   && (!q||norm([p.name,p.location,p.bio,(p.hobbies||[]).join(' ')].join(' ')).includes(q)));
  const groups=state.groups.filter(g=>!q||norm([g.name,g.hobby,g.location,g.description].join(' ')).includes(q));
- const posts=state.posts.filter(p=>q&&norm([p.content,p.hobby,authorName(p)].join(' ')).includes(q)).slice(0,10);
- return `<div class="card" style="padding:18px;margin-bottom:17px"><label class="field" for="explore-search"><span class="mini muted">Pesquise pessoas, grupos, hobbies e publicações</span><input id="explore-search" class="input" placeholder="Ex.: fotografia, Nova Friburgo, livros..." data-live-search="true" value="${esc(state.search)}"></label></div>
+ const posts=q?searchPublications(q).slice(0,10):[];
+ return `${header}
  <div class="section-head"><h2>Pessoas com interesses parecidos</h2><span class="pill">${people.length} perfis</span></div>
- <div class="field-grid" style="margin-bottom:14px"><label class="field">Hobby<select class="select" id="explore-hobby"><option value="">Todos os hobbies</option>${options(hobbies,state.exploreHobby)}</select></label><label class="field">Cidade<select class="select" id="explore-city"><option value="">Todas as cidades</option>${options(cities,state.exploreCity)}</select></label></div>
+ <div class="field-grid" style="margin-bottom:14px"><label class="field">Hobby<select class="select" id="explore-hobby"><option value="">Todos os hobbies</option>${searchOptions(hobbies,state.exploreHobby)}</select></label><label class="field">Cidade<select class="select" id="explore-city"><option value="">Todas as cidades</option>${searchOptions(cities,state.exploreCity)}</select></label></div>
  ${people.length?`<div style="display:grid;gap:10px">${people.slice(0,20).map(personCard).join('')}</div>`:empty('👋','Sua turma está chegando','Ainda não encontramos perfis com essa busca. Compartilhe o HobbyHub com seus amigos.')}
  <div class="section-head"><h2>Comunidades para explorar</h2><button class="text-action" data-action="discover-groups">Ver todas</button></div>
  ${groups.length?`<div class="grid-two">${groups.slice(0,4).map(group=>groupCard(group)).join('')}</div>`:empty('🪴','Nenhum grupo encontrado','Crie uma comunidade para reunir pessoas com esse interesse.','Criar grupo','group')}
- ${q?`<div class="section-head"><h2>Publicações encontradas</h2></div>${posts.length?posts.map(postCard).join(''):empty('🔎','Nenhuma publicação','Tente outra palavra-chave para encontrar mais conteúdo.')}`:''}`;
+ ${q?`<div class="section-head"><h2>Publicações encontradas</h2><button class="text-action" data-action="explore-view" data-value="posts">Ver busca de publicações</button></div>${posts.length?posts.map(postCard).join(''):empty('🔎','Nenhuma publicação','Tente outra palavra-chave para encontrar mais conteúdo.')}`:''}`;
 }
 function groupCard(g, activity) {
  const joined=(g.members||[]).includes(me());
@@ -856,7 +888,7 @@ function renderModal() {
  if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está disponível no momento.</p>');
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
- return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0 0">${esc(short(post.content,220))}</p></div>`:''}
+ return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p></div>`:''}
  <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small>${belongsToGroup&&c.userId!==me()?` <button class="text-action" data-action="report-group-comment" data-id="${esc(c.id)}">Denunciar comentário</button>`:''}</div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
@@ -1376,7 +1408,9 @@ async function onAction(btn) {
   case 'edit-profile':openModal('edit-profile');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
   case 'quiz-mood':state.quizMood=btn.dataset.value;render();return;
-  case 'quiz-topic':{const value=btn.dataset.topic;closeModal();state.search=value;setTab('explore');return;}
+  case 'explore-view':state.exploreView=btn.dataset.value==='posts'?'posts':'people';render();return;
+  case 'more-post-results':state.postSearchLimit+=20;render();return;
+  case 'quiz-topic':{const value=btn.dataset.topic;closeModal();state.exploreView='people';state.search=value;setTab('explore');return;}
   case 'person':{
     if(id===me()){setTab('profile');return;}
     if(!id||!me())return;
@@ -1490,6 +1524,8 @@ document.addEventListener('change',(event)=>{
  }
  if(event.target.id==='explore-hobby')state.exploreHobby=event.target.value;
  else if(event.target.id==='explore-city')state.exploreCity=event.target.value;
+ else if(event.target.id==='post-search-hobby'){state.postSearchHobby=event.target.value;state.postSearchLimit=20;}
+ else if(event.target.id==='post-search-group'){state.postSearchGroup=event.target.value;state.postSearchLimit=20;}
  else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
@@ -1501,7 +1537,7 @@ document.addEventListener('change',(event)=>{
 window.addEventListener('hashchange',openLinkedContent);
 document.addEventListener('input',(event)=>{
  if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
- if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;render();}
+ if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;state.postSearchLimit=20;render();}
 });
 document.addEventListener('submit',async(event)=>{
  const form=event.target;
