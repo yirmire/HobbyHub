@@ -17,6 +17,29 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('notifications count unread items and only show reports to current moderators', () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.members=[{uid:'visitor',name:'Lia'}];
+    state.notifications=[{id:'follow-visitor',type:'follow',actorId:'visitor',createdAt:10}];
+    state.receivedTestimonials=[{id:'visitor',createdAt:20}];
+    state.groups=[{id:'owned',name:'Fotografia',createdBy:'owner'},{id:'other',name:'Pintura',createdBy:'visitor'}];
+    state.reportNotices.set('owned',[{id:'one',createdAt:30}]);
+    state.reportNotices.set('other',[{id:'two',createdAt:40}]);
+  `, context);
+  const html = vm.runInContext('renderNotifications()', context);
+  assert.match(html, /Nova denúncia em Fotografia/);
+  assert.match(html, /Lia começou a seguir você/);
+  assert.match(html, /Ver depoimentos/);
+  assert.doesNotMatch(html, /Pintura/);
+  assert.match(vm.runInContext('notificationButton(true)', context), /3 não lidas/);
+  vm.runInContext('markNotificationsRead(notificationItems())', context);
+  assert.doesNotMatch(vm.runInContext('notificationButton()', context), /não lidas/);
+  vm.runInContext("state.notifications[0].createdAt=50", context);
+  assert.match(vm.runInContext('notificationButton()', context), /1 não lidas/);
+});
+
 test('group moderation history offers restoration to the creator only and escapes reasons', () => {
   const context = appContext();
   const owner = vm.runInContext(`
