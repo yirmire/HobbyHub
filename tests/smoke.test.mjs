@@ -353,6 +353,26 @@ test('the waiting-list agenda shows current entries and releasing a seat leaves 
   assert.match(vm.runInContext('renderEvents()', context), /Você não está em nenhuma lista de espera/);
 });
 
+test('organizer panel separates confirmed, reserved, free and waiting seats', () => {
+  const context = appContext();
+  const markup = vm.runInContext(`
+    state.user={uid:'host'};
+    state.members=[{uid:'host',name:'Zélia'},{uid:'confirmed',name:'Ana <Teste>'},{uid:'queued',name:'Pessoa na fila'}];
+    const event={id:'office',title:'Oficina',date:'2099-01-01',capacity:4,createdBy:'host',attendees:['host','confirmed'],
+      waitlist:['reserved','queued'],offerAt:{toMillis:()=>now()-1000}};
+    state.events=[event];state.selectedEvent=event.id;state.modal='event-detail';
+    renderModal()
+  `, context);
+  assert.match(markup, /Vagas ocupadas<\/dt><dd><strong>2 de 4/);
+  assert.match(markup, /Vagas livres<\/dt><dd><strong>1/);
+  assert.match(markup, /Reservas pendentes<\/dt><dd><strong>1/);
+  assert.match(markup, /Pessoas aguardando na fila<\/dt><dd><strong>1/);
+  assert.match(markup, /Ana &lt;Teste&gt;[\s\S]*Zélia \(organizador\)/);
+  assert.doesNotMatch(markup, /Pessoa na fila/);
+  assert.doesNotMatch(vm.runInContext("state.user={uid:'confirmed'};renderModal()", context), /Painel do organizador/);
+  assert.doesNotMatch(vm.runInContext("state.user={uid:'host'};event.cancelled=true;renderModal()", context), /Vagas livres|Reservas pendentes/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
