@@ -393,6 +393,23 @@ test('organizer bulletins appear in the event and bell only for the intended rol
   assert.doesNotMatch(vm.runInContext('renderNotifications()', context), /Recado do organizador/);
 });
 
+test('organizer check-in distinguishes arrivals and limits edits to the active event day', () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'host'};
+    state.members=[{uid:'host',name:'Organizadora'},{uid:'guest',name:'Lia'}];
+    const event={id:'office',date:eventCheckinDay(),createdBy:'host',attendees:['host','guest']};
+    state.eventCheckins={eventId:'office',present:new Set(['guest'])};
+  `, context);
+  const panel = vm.runInContext('renderEventOrganizerPanel(event)', context);
+  assert.match(panel, /1 pessoa presente/);
+  assert.match(panel, /Lia <strong>· Presente/);
+  assert.match(panel, /undo-event-checkin" data-id="guest"/);
+  assert.match(panel, /record-event-checkin" data-id="host"/);
+  assert.doesNotMatch(vm.runInContext("event.date='2001-01-01';renderEventOrganizerPanel(event)", context), /record-event-checkin|undo-event-checkin/);
+  assert.equal(vm.runInContext("state.user={uid:'guest'};renderEventOrganizerPanel(event)", context), '');
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
