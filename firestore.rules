@@ -630,7 +630,8 @@ service cloud.firestore {
             && event.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
             && (request.time - duration.value(3, 'h')).date() == timestamp.date(int(day[0]), int(day[1]), int(day[2]));
         }
-        allow read: if discussionOrganizer();
+        allow get: if discussionOrganizer() || (isMe(uid) && exists(discussionEvent()));
+        allow list: if discussionOrganizer();
         allow create: if canRecordArrival() && uid in get(discussionEvent()).data.attendees
           && request.resource.data.keys().hasOnly(['checkedAt'])
           && request.resource.data.checkedAt == request.time;
@@ -681,7 +682,7 @@ service cloud.firestore {
           let event = eventData();
           let date = event.date.split('-');
           return event.get('cancelled', false) != true
-            && uid in event.attendees
+            && (uid in event.attendees || exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId)/checkins/$(uid)))
             && event.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
             && (request.time - duration.value(3, 'h')).date()
               > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
