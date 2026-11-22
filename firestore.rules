@@ -353,6 +353,83 @@ service cloud.firestore {
         return managesGroup(appId, groupId,
           get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
       }
+      match /polls/{pollId} {
+        function pollPath() {
+          return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)/polls/$(pollId);
+        }
+        function totalsPath() {
+          return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)/polls/$(pollId)/totals/main;
+        }
+        function votePath(uid) {
+          return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)/polls/$(pollId)/votes/$(uid);
+        }
+        function pollMember() {
+          return loggedIn() && request.auth.uid in get(
+            /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members;
+        }
+        function validPoll(data) {
+          let options = data.options;
+          return data.keys().hasOnly(['question', 'options', 'createdBy', 'createdAt', 'endsAt'])
+            && data.createdBy == request.auth.uid && data.createdAt == request.time
+            && data.endsAt is timestamp && data.endsAt > request.time
+            && data.endsAt <= request.time + duration.value(8, 'd')
+            && validText(data.question, 3, 160)
+            && options.keys().hasOnly(['a', 'b', 'c', 'd'])
+            && validText(options.a, 1, 80) && validText(options.b, 1, 80)
+            && validText(options.c, 0, 80) && validText(options.d, 0, 80)
+            && (options.c != '' || options.d == '')
+            && options.a != options.b
+            && (options.c == '' || (options.c != options.a && options.c != options.b))
+            && (options.d == '' || (options.d != options.a && options.d != options.b && options.d != options.c));
+        }
+        function validVote(data, poll) {
+          return data.keys().hasOnly(['option'])
+            && data.option in ['a', 'b', 'c', 'd'] && poll.options[data.option] != ''
+            && request.time < poll.endsAt;
+        }
+        function countMatches(before, after, key, oldChoice, newChoice) {
+          return after[key] is int && after[key] >= 0
+            && after[key] == before[key] + (newChoice == key ? 1 : 0) - (oldChoice == key ? 1 : 0);
+        }
+        function validTotals(before, after, oldChoice, newChoice) {
+          return oldChoice != newChoice && after.keys().hasOnly(['a', 'b', 'c', 'd'])
+            && countMatches(before, after, 'a', oldChoice, newChoice)
+            && countMatches(before, after, 'b', oldChoice, newChoice)
+            && countMatches(before, after, 'c', oldChoice, newChoice)
+            && countMatches(before, after, 'd', oldChoice, newChoice);
+        }
+        function writesVote(data, oldChoice) {
+          return pollMember() && validVote(data, get(pollPath()).data)
+            && validTotals(get(totalsPath()).data, getAfter(totalsPath()).data, oldChoice, data.option);
+        }
+        function writesTotals() {
+          let ballot = votePath(request.auth.uid);
+          let oldChoice = exists(ballot) ? get(ballot).data.option : '';
+          let newVote = getAfter(ballot).data;
+          return validVote(newVote, get(pollPath()).data)
+            && validTotals(resource.data, request.resource.data, oldChoice, newVote.option);
+        }
+        allow read: if pollMember();
+        allow create: if pollMember() && canReviewModeration() && validPoll(request.resource.data)
+          && getAfter(totalsPath()).data == {'a': 0, 'b': 0, 'c': 0, 'd': 0};
+        allow update, delete: if false;
+
+        match /votes/{uid} {
+          allow get: if pollMember() && isMe(uid);
+          allow create: if isMe(uid) && writesVote(request.resource.data, '');
+          allow update: if isMe(uid) && writesVote(request.resource.data, resource.data.option);
+          allow list, delete: if false;
+        }
+        match /totals/main {
+          allow get: if pollMember() && (exists(votePath(request.auth.uid))
+            || request.time >= get(pollPath()).data.endsAt);
+          allow create: if pollMember() && canReviewModeration() && !exists(pollPath())
+            && validPoll(getAfter(pollPath()).data)
+            && request.resource.data == {'a': 0, 'b': 0, 'c': 0, 'd': 0};
+          allow update: if pollMember() && writesTotals();
+          allow list, delete: if false;
+        }
+      }
       match /reports/{reportId} {
         function currentTarget(data) {
           return data.targetType == 'post'

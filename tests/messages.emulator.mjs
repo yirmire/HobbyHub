@@ -520,4 +520,51 @@ await request(other,'GET',selectedCommentPath,404);
 await request(other,'GET',siblings,200);
 assert.equal((await request(sender,'GET',commentReport,200)).fields.status.stringValue,'removed');
 
+const pollPath=`${group}/polls/test-poll`;
+const totalsPath=`${pollPath}/totals/main`;
+const ballotPath=actor=>`${pollPath}/votes/${actor.localId}`;
+const integer=value=>({integerValue:String(value)});
+const end=timestampValue=>({timestampValue});
+const pollWrites=(actor,endsAt=Date.now()+86400000)=>[
+  {update:{name:documents+pollPath,fields:{question:str('Qual será o próximo encontro?'),
+    options:{mapValue:{fields:{a:str('Passeio'),b:str('Oficina'),c:str(''),d:str('')}}},
+    createdBy:str(actor.localId),endsAt:end(new Date(endsAt).toISOString())}},updateTransforms:stamp('createdAt')},
+  {update:{name:documents+totalsPath,fields:{a:integer(0),b:integer(0),c:integer(0),d:integer(0)}}}
+];
+const ballot=(actor,choice)=>({update:{name:documents+ballotPath(actor),fields:{option:str(choice)}}});
+const countChanges=changes=>({transform:{document:documents+totalsPath,fieldTransforms:
+  Object.entries(changes).map(([fieldPath,value])=>({fieldPath,increment:integer(value)}))}});
+await request(sender,'DELETE',rolePath,200);
+await moderate(recipient,pollWrites(recipient),403);
+await request(sender,'PATCH',rolePath,200,pendingRole);
+await moderate(recipient,pollWrites(recipient),403);
+await moderate(sender,pollWrites(sender,Date.now()-1000),403);
+await moderate(sender,[pollWrites(sender)[0]],403);
+await moderate(sender,pollWrites(sender),200);
+await request(recipient,'GET',`${group}/polls`,200);
+await request(other,'GET',`${group}/polls`,403);
+await request(recipient,'GET',ballotPath(recipient),404);
+await request(recipient,'GET',totalsPath,403);
+await moderate(other,[ballot(other,'a'),countChanges({a:1})],403);
+await moderate(recipient,[ballot(recipient,'a')],403);
+await moderate(recipient,[countChanges({a:1})],403);
+await moderate(recipient,[ballot(recipient,'a'),countChanges({a:2})],403);
+await moderate(recipient,[ballot(recipient,'c'),countChanges({c:1})],403);
+await moderate(recipient,[ballot(recipient,'a'),countChanges({a:1})],200);
+await request(sender,'GET',ballotPath(recipient),403);
+await request(recipient,'GET',`${pollPath}/votes`,403);
+await request(recipient,'GET',totalsPath,200);
+await moderate(recipient,[ballot(recipient,'a'),countChanges({a:1})],403);
+await moderate(recipient,[ballot(recipient,'b'),countChanges({a:-1,b:1})],200);
+const tallies=await request(recipient,'GET',totalsPath,200);
+assert.equal(tallies.fields.a.integerValue,'0');
+assert.equal(tallies.fields.b.integerValue,'1');
+await request(recipient,'PATCH',rolePath,200,activeRole);
+await moderate(recipient,pollWrites(recipient).map(write=>({
+  ...write,update:{...write.update,name:write.update.name.replace('test-poll','moderator-poll')}
+})),200);
+await request({idToken:'owner'},'PATCH',`${pollPath}?updateMask.fieldPaths=endsAt`,200,{endsAt:end(new Date(0).toISOString())});
+await request(sender,'GET',totalsPath,200);
+await moderate(recipient,[ballot(recipient,'a'),countChanges({a:1,b:-1})],403);
+
 console.log('Permissões de mensagens, perfis, denúncias e publicações fixadas testadas no emulador.');
