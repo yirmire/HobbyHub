@@ -299,6 +299,21 @@ test('event questions display the pinned answer and organize response controls b
   assert.doesNotMatch(cancelled, /event-question-form|answer-event-question/);
 });
 
+test('an event answer notice identifies the event and opens the exact question', async () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    state.events=[{id:'event',title:'Passeio no parque'}];state.eventsLoaded=true;
+    state.notifications=[{id:'reply',type:'event-answer',actorId:'organizer',eventId:'event',questionId:'older-question',createdAt:10}];
+    openEventDetail=(id,questionId)=>{state.selectedEvent=id;state.eventAnswerId=questionId;};
+  `, context);
+  assert.match(vm.runInContext('renderNotifications()', context), /Sua pergunta foi respondida · Passeio no parque/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'reply:10'}})", context);
+  assert.equal(vm.runInContext('state.selectedEvent', context), 'event');
+  assert.equal(vm.runInContext('state.eventAnswerId', context), 'older-question');
+  assert.doesNotMatch(vm.runInContext('notificationButton()', context), /não lidas/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`

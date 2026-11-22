@@ -154,7 +154,7 @@ service cloud.firestore {
         allow read, create, delete: if isMe(uid);
         allow update: if false;
       }
-      // Private activity notices are coupled to a new follow or comment in the same commit.
+      // Private activity notices are coupled to their source write in the same commit.
       match /notifications/{noticeId} {
         function newFollow(data) {
           let follow = /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(data.actorId)/following/$(uid);
@@ -176,7 +176,23 @@ service cloud.firestore {
                 && validText(data.commentId, 1, 120) && data.commentId.matches('[^/]+') && newComment(data)));
         }
         allow read: if isMe(uid);
-        allow create: if validNotice(request.resource.data);
+        function newEventAnswer(data) {
+          let event = /databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(data.eventId);
+          let question = /databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(data.eventId)/questions/$(data.questionId);
+          return get(event).data.createdBy == request.auth.uid && get(question).data.authorId == uid
+            && get(question).data.get('answer', '') == ''
+            && validText(getAfter(question).data.answer, 1, 600)
+            && getAfter(question).data.answeredAt == request.time;
+        }
+        function validEventAnswerNotice(data) {
+          return loggedIn() && request.auth.uid != uid && data.actorId == request.auth.uid
+            && data.type == 'event-answer' && data.createdAt == request.time
+            && data.keys().hasOnly(['type', 'actorId', 'eventId', 'questionId', 'createdAt'])
+            && validText(data.eventId, 1, 120) && data.eventId.matches('[^/]+')
+            && validText(data.questionId, 1, 120) && data.questionId.matches('[^/]+')
+            && noticeId == 'event-answer-' + data.eventId + ':' + data.questionId && newEventAnswer(data);
+        }
+        allow create: if validNotice(request.resource.data) || validEventAnswerNotice(request.resource.data);
         allow update: if request.resource.data.type == 'follow' && validNotice(request.resource.data);
         allow delete: if false;
       }
