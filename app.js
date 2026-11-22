@@ -259,6 +259,7 @@ async function init() {
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
+      state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventReads.clear();state.eventReadsLoaded=false;
       state.eventFeedback=null;
       state.groupRoles.clear();state.moderationSelection=null;
@@ -591,10 +592,13 @@ function eventCard(event, inGroup=false, detail=false) {
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(event.attendees||[]).length} interessados</span>
  <button data-action="rsvp" data-id="${esc(event.id)}" class="btn btn-small ${attending?'btn-outline':'btn-primary'}" ${event.cancelled===true||(!attending&&(!future||!canJoin))?'disabled':''}>${event.cancelled===true?'Cancelado':attending?'Confirmado ✓':!future?'Encerrado':!canJoin?'Só para membros':event.groupId?'Confirmar presença':'Tenho interesse'}</button></div></article>`;
 }
-function renderEvents() {
- const day=today();
+function renderEvents(now=new Date()) {
+ const day=localDateKey(now);
+ const time=now.toTimeString().slice(0,5);
+ const eventFilter=state.eventFilter;
  const query=norm(state.eventSearch);
  const communities=new Map(state.groups.map(group=>[group.id,group]));
+ const interests=new Set((state.profile?.hobbies||[]).map(hobby=>norm(hobby).trim()).filter(Boolean));
  const hobbies=[...new Set(state.events.map(event=>event.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
  const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
@@ -604,23 +608,30 @@ function renderEvents() {
    if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
    if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
-   if(state.eventFilter==='all')return true;
-   if(state.eventFilter==='mine')return event.attendees?.includes(me());
-   if(state.eventFilter==='past')return event.date&&event.date<day;
+   if(eventFilter==='all')return true;
+   if(eventFilter==='mine')return event.attendees?.includes(me());
+   if(eventFilter==='past')return event.date&&event.date<day;
+   if(eventFilter==='recommended')return event.cancelled!==true
+     && (event.date>day||(event.date===day&&(!event.time||event.time>=time)))
+     && (interests.has(norm(event.hobby).trim())||group?.members?.includes(me()));
    return event.date>=day;
  }).sort((a,b)=>{
    const order=`${a.date||''} ${a.time||''}`.localeCompare(`${b.date||''} ${b.time||''}`);
-   return state.eventFilter==='past'?-order:order;
+   return eventFilter==='past'?-order:order;
  });
+ const emptyAgenda=filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.')
+   :eventFilter==='recommended'?empty('🗓️','Nenhum encontro recomendado por enquanto','As sugestões aparecem quando há eventos dos seus hobbies ou das comunidades de que você participa.','Ver próximos eventos','upcoming-events')
+   :eventFilter==='mine'?empty('🗓️','Você ainda não confirmou nenhum evento','Confira os próximos encontros para encontrar um evento de que queira participar.','Ver próximos eventos','upcoming-events')
+   :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters">${[['upcoming','Próximos'],['mine','Tenho interesse'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button class="filter ${state.eventFilter===id?'active':''}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
- ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.'):empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event')}
+ ${events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:emptyAgenda}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
 function renderSaved() {
@@ -1213,6 +1224,7 @@ async function onAction(btn) {
   case 'group-view':state.groupView=btn.dataset.value==='discover'?'discover':'mine';render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
   case 'event-filter':state.eventFilter=btn.dataset.value;render();return;
+  case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;openModal('compose');return;
   case 'group':openModal(action);return;
