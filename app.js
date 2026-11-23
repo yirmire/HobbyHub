@@ -58,7 +58,7 @@ const dateLabel = (day) => {if(!day)return 'A combinar';const d=new Date(`${day}
 const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
-  threads:[], directMessages:[], comments:[], savedIds:[], followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
+  threads:[], directMessages:[], comments:[], savedIds:[], savedEventIds:new Set(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'',
@@ -229,6 +229,7 @@ function startSession() {
     for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
   },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
+  subscribe(col('members',me(),'savedEvents'),snapshot=>{state.savedEventIds=new Set(snapshot.docs.map(doc=>doc.id));},'eventos salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'moderation'),snapshot=>{
@@ -261,7 +262,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.savedEventIds.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
@@ -722,6 +723,7 @@ async function changeEventSeat(id,intent,uid){
 }
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
+ const saved=state.savedEventIds.has(event.id);
  const future=event.date>=today();
  const limited=Number.isInteger(event.capacity),position=limited?event.waitlist.indexOf(me()):-1;
  const offer=limited?eventSeatOffer(event):null;
@@ -732,6 +734,7 @@ function eventCard(event, inGroup=false, detail=false) {
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
+ <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  ${hasPersonalCheckin(event)?'<p class="pill">Presença registrada</p>':''}
  ${!detail&&feedbackAvailable(event)&&(canReviewEvent(event)||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
@@ -877,6 +880,7 @@ function renderEvents(now=new Date()) {
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me());
+   if(eventFilter==='saved')return state.savedEventIds.has(event.id);
    if(eventFilter==='history')return feedbackAvailable(event)&&canReviewEvent(event);
    if(eventFilter==='waitlist')return event.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
    if(eventFilter==='past')return event.date&&event.date<day;
@@ -892,10 +896,11 @@ function renderEvents(now=new Date()) {
    :eventFilter==='recommended'?empty('🗓️','Nenhum encontro recomendado por enquanto','As sugestões aparecem quando há eventos dos seus hobbies ou das comunidades de que você participa.','Ver próximos eventos','upcoming-events')
    :eventFilter==='mine'?empty('🗓️','Você ainda não confirmou nenhum evento','Confira os próximos encontros para encontrar um evento de que queira participar.','Ver próximos eventos','upcoming-events')
    :eventFilter==='history'?empty('🗓️','Nenhum evento no seu histórico','Os encontros encerrados que você confirmou ou em que fez check-in aparecem por aqui.')
+   :eventFilter==='saved'?empty('🔖','Você ainda não salvou nenhum evento','Salve um encontro para voltar aos detalhes mais tarde.','Ver próximos eventos','upcoming-events')
    :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
@@ -2025,6 +2030,17 @@ async function onAction(btn) {
       await batch.commit();showToast('Agora você está seguindo esta pessoa!');
     }
   },'updatingFollow');return;
+  case 'save-event':await attempt(async()=>{
+    const uid=me(),intent=btn.dataset.value;
+    if(!uid||!state.events.some(event=>event.id===id)||!['save','remove'].includes(intent))return;
+    const target=ref('members',uid,'savedEvents',id);
+    await firebase.runTransaction(db,async transaction=>{
+      const saved=(await transaction.get(target)).exists();
+      if(intent==='save'&&!saved)transaction.set(target,{savedAt:firebase.serverTimestamp()});
+      if(intent==='remove'&&saved)transaction.delete(target);
+    });
+    if(me()===uid)showToast(intent==='save'?'Evento salvo.':'Evento removido dos salvos.');
+  });return;
   case 'save':await attempt(async()=>{
     const target=ref('members',me(),'saved',id);
     if(state.savedIds.includes(id)){await firebase.deleteDoc(target);showToast('Removido dos seus salvos.');}
