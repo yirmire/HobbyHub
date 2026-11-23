@@ -658,6 +658,31 @@ test('product feedback sends the selected category to a separate administrative 
   assert.match(vm.runInContext('state.sentToast',context),/Feedback enviado/);
 });
 
+test('the feedback panel is restricted, filters categories and changes triage status', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reviewer'};state.profile={name:'Revisora'};state.modal='product-feedback-admin';
+    state.productFeedbackQueue={entries:[
+      {id:'broken',category:'problem',message:'Tela <travada>',status:'new'},
+      {id:'idea',category:'suggestion',message:'Proposta de melhoria',status:'new'}
+    ],category:'',more:false};
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,
+      updateDoc:async(path,data)=>{state.triage={path,data};}};
+  `,context);
+  assert.doesNotMatch(vm.runInContext('renderProfile()',context),/data-action="product-feedback-admin"/);
+  assert.doesNotMatch(vm.runInContext('renderProductFeedbackAdmin()',context),/Proposta de melhoria/);
+  vm.runInContext('state.feedbackAdmin=true',context);
+  await vm.runInContext("onAction({dataset:{action:'product-feedback-category',value:'problem'}})",context);
+  const panel=vm.runInContext('renderProductFeedbackAdmin()',context);
+  assert.match(panel,/Tela &lt;travada&gt;/);
+  assert.doesNotMatch(panel,/Proposta de melhoria/);
+  await vm.runInContext("updateProductFeedbackStatus('broken','in-review')",context);
+  assert.match(vm.runInContext('state.triage.path',context),/\/productFeedback\/broken$/);
+  assert.equal(vm.runInContext('state.triage.data.reviewedBy',context),'reviewer');
+  assert.match(vm.runInContext('renderProductFeedbackAdmin()',context),/value="in-review" selected/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
