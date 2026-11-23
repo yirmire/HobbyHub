@@ -639,6 +639,25 @@ test('notification read sync merges older browser reads with the account and ret
   assert.deepEqual([...vm.runInContext('state.notificationReads',context)],['remote:30','local:20']);
 });
 
+test('product feedback sends the selected category to a separate administrative collection', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};state.profile={name:'Leitora'};
+    FormData=class { [Symbol.iterator](){return Object.entries({category:'suggestion',message:' Uma dica para o site. '})[Symbol.iterator]();} };
+    firebase={collection:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,
+      addDoc:async(path,data)=>{state.sentFeedback={path,data};}};
+    closeModal=()=>{state.modal=null;};showToast=message=>{state.sentToast=message;};
+  `,context);
+  assert.match(vm.runInContext('renderProfile()',context),/data-action="send-feedback"/);
+  await vm.runInContext("onAction({dataset:{action:'send-feedback'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Relatar um problema[\s\S]*Sugerir uma melhoria/);
+  await handlers.submit({target:{id:'product-feedback-form'},preventDefault(){}});
+  assert.match(vm.runInContext('state.sentFeedback.path',context),/^artifacts\/[^/]+\/productFeedback$/);
+  assert.equal(vm.runInContext('state.sentFeedback.data.message',context),'Uma dica para o site.');
+  assert.equal(vm.runInContext('state.sentFeedback.data.category',context),'suggestion');
+  assert.match(vm.runInContext('state.sentToast',context),/Feedback enviado/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
