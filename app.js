@@ -78,7 +78,7 @@ const state = {
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
-  notificationFilter:'all', notificationReadSync:null,
+  notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -241,6 +241,10 @@ function startSession() {
   },'convites de moderação');
   subscribe(firebase.query(col('members',me(),'notifications'),firebase.orderBy('createdAt','desc'),firebase.limit(50)),
     snapshot=>{state.notifications=docs(snapshot);},'notificações');
+  subscribe(firebase.doc(db,'artifacts',PROJECT,'feedbackAdmins',me()),snapshot=>{
+    state.feedbackAdminRole=snapshot.data()||null;
+    updateFeedbackAdminAccess();
+  },'acesso ao painel de feedback');
   const readSync=state.notificationReadSync;
   subscribe(ref('members',me(),'notificationReadState','main'),snapshot=>{
     if(state.notificationReadSync!==readSync)return;
@@ -291,7 +295,7 @@ async function init() {
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
-      state.notificationFilter='all';
+      state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -1099,7 +1103,7 @@ function renderProfile() {
  ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
- <div class="section-head"><h2>Ajuda e feedback</h2><button class="text-action" data-action="send-feedback">Enviar feedback</button></div>
+ <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
@@ -1367,8 +1371,69 @@ function renderCommunityMute(groupId){
  return `<button class="btn btn-outline btn-small" data-action="toggle-community-notices" data-id="${esc(groupId)}"
  aria-label="${muted?'Reativar avisos':'Silenciar avisos'} desta comunidade">${icon('bell')} ${muted?'Reativar avisos':'Silenciar avisos'}</button>`;
 }
+const productFeedbackKinds={problem:'Problema',suggestion:'Sugestão'};
+const productFeedbackStatuses={new:'Novo','in-review':'Em análise',resolved:'Resolvido'};
+function hasFeedbackAdminRole(){
+ return Boolean(state.feedbackAdminRole?.active===true&&state.user?.email&&state.user.email===state.feedbackAdminRole.email);
+}
+function updateFeedbackAdminAccess(){
+ state.feedbackAdmin=hasFeedbackAdminRole()&&state.user.emailVerified===true;
+ if(!state.feedbackAdmin)state.productFeedbackQueue=null;
+}
+async function loadProductFeedback(){
+ const queue=state.productFeedbackQueue,uid=me();
+ if(!queue||queue.loading||!state.feedbackAdmin||!queue.more)return;
+ queue.loading=true;queue.error='';render();
+ try{
+   const filters=[firebase.orderBy('createdAt','desc'),firebase.limit(40)];
+   if(queue.last)filters.push(firebase.startAfter(queue.last));
+   const entries=await firebase.getDocs(firebase.query(firebase.collection(db,'artifacts',PROJECT,'productFeedback'),...filters));
+   if(me()!==uid||state.productFeedbackQueue!==queue)return;
+   queue.entries.push(...entries.docs.map(doc=>({...doc.data(),id:doc.id})));
+   queue.last=entries.docs.at(-1)||queue.last;
+   queue.more=entries.docs.length===40;
+ }catch(error){queue.error=friendlyError(error);}
+ finally{
+   queue.loading=false;
+   if(state.productFeedbackQueue===queue&&state.modal==='product-feedback-admin')render();
+ }
+}
+function renderProductFeedbackAdmin(){
+ if(!state.feedbackAdmin)return modalWrap('Painel de feedback','<p>Este painel é restrito à administração.</p>');
+ const queue=state.productFeedbackQueue;
+ const entries=queue?.entries.filter(item=>!queue.category||item.category===queue.category)||[];
+ return modalWrap('Painel de feedback',`<div class="form-stack">
+ <div class="filters" role="group" aria-label="Filtrar feedback">${[['','Todos'],['problem','Problemas'],['suggestion','Sugestões']].map(([id,label])=>`<button class="filter ${queue?.category===id?'active':''}" data-action="product-feedback-category" data-value="${id}" aria-pressed="${queue?.category===id}">${label}</button>`).join('')}</div>
+ ${entries.map(item=>`<article class="card form-stack" style="padding:14px">
+ <div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong><small>${when(item.createdAt?.toMillis?.())}</small></div>
+ <p class="post-copy" style="margin:0">${esc(item.message)}</p>
+ <label class="field">Estado<select class="select" id="feedback-status-${esc(item.id)}" data-feedback-status="${esc(item.id)}" ${state.busy?'disabled':''}>
+ ${Object.entries(productFeedbackStatuses).map(([id,label])=>`<option value="${id}" ${item.status===id?'selected':''}>${label}</option>`).join('')}
+ </select></label></article>`).join('')}
+ ${queue?.error?`<p class="tip">${esc(queue.error)}</p>`:queue?.loading?'<p class="tip">Carregando feedback…</p>':entries.length?'':'<p class="tip">Nenhum item para exibir.</p>'}
+ ${queue?.more?`<button class="btn btn-outline btn-small" data-action="load-product-feedback" ${queue.loading?'disabled':''}>${queue.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
+}
+async function updateProductFeedbackStatus(id,status){
+ await attempt(async()=>{
+   const queue=state.productFeedbackQueue,uid=me();
+   if(!state.feedbackAdmin||state.modal!=='product-feedback-admin'||!Object.hasOwn(productFeedbackStatuses,status))return;
+   const entry=queue?.entries.find(item=>item.id===id);
+   if(!entry||entry.status===status)return;
+   await firebase.updateDoc(firebase.doc(db,'artifacts',PROJECT,'productFeedback',id),{
+     status,reviewedAt:firebase.serverTimestamp(),reviewedBy:uid
+   });
+   if(me()!==uid||state.productFeedbackQueue!==queue)return;
+   entry.status=status;
+   showToast('Estado do feedback atualizado.');
+ });
+}
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='product-feedback-admin')return renderProductFeedbackAdmin();
+ if(state.modal==='feedback-admin-verification')return modalWrap('Ativar painel de feedback',`<div class="form-stack">
+ <p>Confirme o e-mail da sua conta para abrir o painel administrativo. Depois de clicar no link do e-mail, volte aqui e toque em <strong>Já confirmei</strong>.</p>
+ <button class="btn btn-primary" data-action="send-feedback-verification">Enviar e-mail de confirmação</button>
+ <button class="btn btn-outline" data-action="refresh-feedback-verification">Já confirmei</button></div>`);
  if(state.modal==='product-feedback')return modalWrap('Enviar feedback',`<form id="product-feedback-form" data-draft="true" class="form-stack">
  <label class="field">Tipo de feedback<select class="select" name="category" required>
  <option value="">Selecione uma opção</option><option value="problem">Relatar um problema</option><option value="suggestion">Sugerir uma melhoria</option>
@@ -2257,6 +2322,35 @@ async function onAction(btn) {
   }
   case 'close':closeModal();return;
   case 'edit-profile':openModal('edit-profile');return;
+  case 'product-feedback-admin':{
+    if(!state.feedbackAdmin)return;
+    state.productFeedbackQueue={entries:[],category:'',last:null,more:true,loading:false,error:''};
+    openModal('product-feedback-admin');await loadProductFeedback();return;
+  }
+  case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
+  case 'send-feedback-verification':await attempt(async()=>{
+    if(!hasFeedbackAdminRole()||state.feedbackAdmin)return;
+    await firebase.sendEmailVerification(auth.currentUser);
+    showToast('E-mail de confirmação enviado.');
+  });return;
+  case 'refresh-feedback-verification':await attempt(async()=>{
+    if(!hasFeedbackAdminRole())return;
+    const user=auth.currentUser;
+    await user.reload();
+    await user.getIdToken(true);
+    if(me()!==user.uid)return;
+    updateFeedbackAdminAccess();
+    if(state.feedbackAdmin){
+      state.productFeedbackQueue={entries:[],category:'',last:null,more:true,loading:false,error:''};
+      openModal('product-feedback-admin');await loadProductFeedback();
+    }else showToast('Confirme o e-mail pelo link recebido e tente novamente.');
+  });return;
+  case 'product-feedback-category':{
+    const queue=state.productFeedbackQueue,category=btn.dataset.value;
+    if(!state.feedbackAdmin||!queue||!['','problem','suggestion'].includes(category))return;
+    queue.category=category;render();return;
+  }
+  case 'load-product-feedback':await loadProductFeedback();return;
   case 'send-feedback':if(me())openModal('product-feedback');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
   case 'quiz-mood':state.quizMood=btn.dataset.value;render();return;
@@ -2401,6 +2495,7 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
+ if(event.target.dataset?.feedbackStatus){void updateProductFeedbackStatus(event.target.dataset.feedbackStatus,event.target.value);return;}
  if(event.target.id==='moderation-member'){
    void loadModerationSelection(event.target.dataset.group,event.target.value);return;
  }
