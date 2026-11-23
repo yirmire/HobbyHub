@@ -77,6 +77,7 @@ const state = {
   moderationQueue:null, groupPolls:null, pollDetail:null,
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
+  mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -242,6 +243,9 @@ function startSession() {
   subscribe(ref('members',me(),'notificationSettings','main'),snapshot=>{
     state.notificationSettings=snapshot.data()||{};state.notificationSettingsLoaded=true;
   },'preferências de notificações');
+  subscribe(col('members',me(),'mutedCommunities'),snapshot=>{
+    state.mutedCommunityIds=new Set(snapshot.docs.map(doc=>doc.id));state.mutedCommunitiesLoaded=true;
+  },'comunidades silenciadas');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -279,6 +283,7 @@ async function init() {
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
+      state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
       state.notificationReads=new Set();
       if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -409,6 +414,7 @@ const notificationCategoryByType=new Map([
  ['poll-open','polls'],['poll-result','polls'],['event-bulletin','bulletins'],
  ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['testimonial','interactions']
 ]);
+const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
  for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
@@ -425,11 +431,11 @@ function notificationItems(){
      type:'confirmed-event-cancellation',eventId:event.id,event,key:'confirmed-event-cancellation:'+event.id+':'+event.revision,createdAt:changedAt
    });
    else if(changedAt>savedAt&&event.createdBy!==me())items.push({
-     type:'saved-event-change',eventId:event.id,event,key:'saved-event-change:'+event.id+':'+event.revision,createdAt:changedAt
+     type:'saved-event-change',eventId:event.id,groupId:event.groupId,event,key:'saved-event-change:'+event.id+':'+event.revision,createdAt:changedAt
    });
    if(canReadEventBulletins(event)&&event.createdBy!==me()){
      for(const item of state.eventBulletins.get(event.id)?.entries||[])items.push({
-       type:'event-bulletin',eventId:event.id,bulletinId:item.id,key:'event-bulletin:'+event.id+':'+item.id,
+       type:'event-bulletin',eventId:event.id,groupId:event.groupId,bulletinId:item.id,key:'event-bulletin:'+event.id+':'+item.id,
        actorId:event.createdBy,createdAt:item.createdAt
      });
    }
@@ -446,7 +452,9 @@ function notificationItems(){
      else if(watch.ballots.get(poll.id))items.push({...base,type:'poll-result',key:'poll-result:'+groupId+':'+poll.id,createdAt:poll.endsAt});
    }
  }
- return items.filter(item=>!state.blockedIds.includes(item.actorId)&&state.notificationSettings[notificationCategoryByType.get(item.type)]!==false)
+ return items.filter(item=>!state.blockedIds.includes(item.actorId)
+   && state.notificationSettings[notificationCategoryByType.get(item.type)]!==false
+   && !(communityNoticeTypes.has(item.type)&&state.mutedCommunityIds.has(item.groupId)))
    .map(item=>{
      const time=typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.();
      return {...item,time,readKey:item.key+':'+time};
@@ -1291,6 +1299,12 @@ async function openPoll(groupId,poll){
    if(state.pollDetail===detail&&state.modal==='poll-detail')render();
  }
 }
+function renderCommunityMute(groupId){
+ if(!state.mutedCommunitiesLoaded)return '';
+ const muted=state.mutedCommunityIds.has(groupId);
+ return `<button class="btn btn-outline btn-small" data-action="toggle-community-notices" data-id="${esc(groupId)}"
+ aria-label="${muted?'Reativar avisos':'Silenciar avisos'} desta comunidade">${icon('bell')} ${muted?'Reativar avisos':'Silenciar avisos'}</button>`;
+}
 function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='group-polls')return renderGroupPolls();
@@ -1377,6 +1391,7 @@ function renderModal() {
  <div class="toggle-row" style="flex-wrap:wrap">${joined?`${pinned?`<button class="btn btn-primary btn-small" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}<button class="btn ${pinned?'btn-outline':'btn-primary'} btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Se apresentar</button>`:`<button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button>`}</div></section>`:''}
  <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${pinned?renderGroupPost(pinned,true):''}
+ ${joined?renderCommunityMute(group.id):''}
  ${renderGroupModeration(group)}
  ${joined?`<div class="section-head"><h2>Enquetes</h2><button class="text-action" data-action="group-polls" data-id="${esc(group.id)}">Ver enquetes</button></div>`:''}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
@@ -2076,6 +2091,17 @@ async function onAction(btn) {
     if(!state.groups.some(group=>group.id===id))return;
     state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');return;
   case 'copy-group-invite':await copyGroupInvite(id);return;
+  case 'toggle-community-notices':await attempt(async()=>{
+    const uid=me();
+    if(!uid||!state.mutedCommunitiesLoaded||!pollMember(id))return;
+    const muted=state.mutedCommunityIds.has(id),target=ref('members',uid,'mutedCommunities',id);
+    await firebase.runTransaction(db,async transaction=>{
+      const exists=(await transaction.get(target)).exists();
+      if(muted&&exists)transaction.delete(target);
+      if(!muted&&!exists)transaction.set(target,{mutedAt:firebase.serverTimestamp()});
+    });
+    if(me()===uid)showToast(muted?'Avisos da comunidade reativados.':'Enquetes, recados e mudanças de eventos salvos desta comunidade foram silenciados.');
+  });return;
   case 'pin-group-post':
   case 'unpin-group-post':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===state.selectedGroup);
