@@ -502,6 +502,30 @@ test('bookmark notices report only schedule changes made after saving and open t
   assert.match(vm.runInContext("event.cancelled=true;event.revision=2;event.scheduleChangedAt=ts(30);renderNotifications()",context),/Evento salvo cancelado · Oficina/);
 });
 
+test('weekly agenda groups confirmations and flags equal start times across filters', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.eventFilter='mine';state.eventAgendaView='week';
+    const date=new Date(2099,0,7,12);
+    const week=eventWeek(date,0);
+    const first={id:'a',title:'Oficina confirmada',date:localDateKey(week[0]),time:'09:00',location:'Biblioteca',hobby:'Arte',attendees:['reader']};
+    state.events=[first,{...first,id:'b',title:'Passeio confirmado',hobby:'Fotografia'},
+      {...first,id:'c',title:'Encontro cancelado',cancelled:true,time:'10:00'},
+      {...first,id:'d',title:'Na outra semana',date:localDateKey(eventWeek(date,1)[0])},
+      {...first,id:'e',title:'Sem confirmação',attendees:['other']}];
+    state.eventHobby='Arte';
+  `,context);
+  const current=vm.runInContext('renderEvents(date)',context);
+  assert.match(current,/segunda-feira[\s\S]*Conflito:[\s\S]*Oficina confirmada/);
+  assert.match(current,/09:00[\s\S]*Biblioteca/);
+  assert.equal((current.match(/Conflito:/g)||[]).length,1);
+  assert.doesNotMatch(current,/Passeio confirmado|Na outra semana|Sem confirmação/);
+  await vm.runInContext("onAction({dataset:{action:'event-week',value:'next'}})",context);
+  assert.match(vm.runInContext('renderEvents(date)',context),/Na outra semana/);
+  await vm.runInContext("onAction({dataset:{action:'event-week',value:'current'}})",context);
+  assert.equal(vm.runInContext('state.eventWeekOffset',context),0);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
