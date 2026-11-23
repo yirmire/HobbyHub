@@ -461,6 +461,24 @@ test('recap links connect the matching event and publication in both directions'
   assert.equal(vm.runInContext('state.posts=[];eventRecapButton(event)',context),'');
 });
 
+test('saved events are filtered separately from attendance and queues', () => {
+  const context=appContext();
+  const saved=vm.runInContext(`
+    state.user={uid:'reader'};state.eventFilter='saved';
+    state.events=[{id:'saved',title:'Oficina guardada',date:'2099-01-01',location:'Biblioteca',time:'14:30',capacity:4,attendees:['host'],waitlist:[]},
+      {id:'confirmed',title:'Feira confirmada',date:'2099-01-01',attendees:['reader']}];
+    state.savedEventIds.add('saved');
+    renderEvents()
+  `,context);
+  assert.match(saved,/Oficina guardada/);
+  assert.match(saved,/Biblioteca/);
+  assert.match(saved,/14:30/);
+  assert.match(saved,/Remover dos salvos/);
+  assert.match(saved,/Confirmar presença/);
+  assert.doesNotMatch(saved,/Feira confirmada/);
+  assert.match(vm.runInContext("state.savedEventIds.clear();renderEvents()",context),/Você ainda não salvou nenhum evento/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`

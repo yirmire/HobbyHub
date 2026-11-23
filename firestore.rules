@@ -154,6 +154,14 @@ service cloud.firestore {
         allow read, create, delete: if isMe(uid);
         allow update: if false;
       }
+      match /savedEvents/{eventId} {
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid)
+          && exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/events/$(eventId))
+          && request.resource.data.keys().hasOnly(['savedAt'])
+          && request.resource.data.savedAt == request.time;
+        allow update: if false;
+      }
       // Private activity notices are coupled to their source write in the same commit.
       match /notifications/{noticeId} {
         function newFollow(data) {
