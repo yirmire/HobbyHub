@@ -524,7 +524,7 @@ function renderLayout() {
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
  return `<div class="layout">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
- ${titleBar()}<label class="mobile-search">${icon('search')}<input aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
+ ${titleBar()}<label class="mobile-search">${icon('search')}<input id="mobile-search" aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
 function recapEventButton(post){
@@ -1031,7 +1031,10 @@ function renderMessages() {
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
-function modalWrap(title,content){return `<div class="overlay" data-overlay="true"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;}
+function modalWrap(title,content){
+ const key=[state.modal,title,state.selectedPost,state.selectedGroup,state.selectedEvent,state.viewUser,state.pollDetail?.poll?.id].join('|');
+ return `<div class="overlay" data-overlay="true"><section class="modal" data-view="${esc(key)}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;
+}
 function suggestedWelcomeGroups() {
  const interests=new Set((state.profile?.hobbies||[]).map(norm));
  const chosen=norm(state.welcomeHobby);
@@ -1446,6 +1449,9 @@ function render() {
  const container=root();if(!container)return;
  const active=document.activeElement;
  const focusId=active?.id||null;
+ const formId=active?.form?.id,fieldName=active?.name,draftKey=active?.form?.dataset.draftKey;
+ const previousModal=container.querySelector('.modal');
+ const modalView=previousModal?.dataset.view,modalScroll=previousModal?.scrollTop;
  const cursor=active&&typeof active.selectionStart==='number'?{start:active.selectionStart,end:active.selectionEnd}:null;
  const chatLog=document.getElementById('chat-log');const wasNearBottom=chatLog?chatLog.scrollHeight-chatLog.scrollTop-chatLog.clientHeight<75:false;
  const chatScroll=chatLog?.scrollTop||0;const pageScroll=window.scrollY;
@@ -1454,9 +1460,29 @@ function render() {
  state.initError?`<div class="splash"><span class="splash-mark">✳</span><h2>Não conseguimos conectar</h2><p>${esc(state.initError)}</p><button class="btn btn-primary" data-action="reload">Tentar novamente</button></div>`:
  !state.user?renderAuth():renderLayout();
  restoreDrafts();
- if(focusId){const next=document.getElementById(focusId);if(next&&document.activeElement!==next){next.focus({preventScroll:true});if(cursor&&typeof next.setSelectionRange==='function')try{next.setSelectionRange(cursor.start,cursor.end);}catch{}}}
+ const nextForm=formId&&document.getElementById(formId);
+ const next=focusId?document.getElementById(focusId):fieldName&&nextForm?.dataset.draftKey===draftKey?nextForm?.elements.namedItem(fieldName):null;
+ if(next&&document.activeElement!==next){
+   next.focus({preventScroll:true});
+   if(cursor&&typeof next.setSelectionRange==='function')try{next.setSelectionRange(cursor.start,cursor.end);}catch{}
+ }
+ const nextModal=container.querySelector('.modal');
+ if(nextModal&&modalView===nextModal.dataset.view)nextModal.scrollTop=modalScroll;
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
+}
+function updateMobileViewport(){
+ const viewport=window.visualViewport;
+ if(!viewport)return;
+ const root=document.documentElement;
+ const inset=Math.max(0,window.innerHeight-viewport.height-viewport.offsetTop);
+ const keyboard=Math.abs(viewport.scale-1)<0.01&&window.innerHeight-viewport.height>100;
+ root.classList.toggle('keyboard-open',keyboard);
+ if(keyboard){
+   root.style.setProperty('--keyboard-inset',inset+'px');
+   root.style.setProperty('--visible-top',viewport.offsetTop+'px');
+   root.style.setProperty('--visible-height',viewport.height+'px');
+ }
 }
 function clearContentLink(){
  if(/^#(?:post|group|event)=/.test(window.location.hash)){
@@ -2196,6 +2222,8 @@ document.addEventListener('change',(event)=>{
  render();
 });
 window.addEventListener('hashchange',openLinkedContent);
+window.visualViewport?.addEventListener('resize',updateMobileViewport);
+window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
  if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;state.postSearchLimit=20;render();}
