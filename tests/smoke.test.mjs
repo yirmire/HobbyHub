@@ -616,6 +616,29 @@ test('unread notifications can be marked individually without opening the conten
   assert.match(vm.runInContext('renderNotifications()',context),/Nenhuma notificação não lida/);
 });
 
+test('notification read sync merges older browser reads with the account and retries failures', async () => {
+  const context=appContext();
+  let persisted=JSON.stringify(['local:20']);
+  context.localStorage.getItem=()=>persisted;
+  context.localStorage.setItem=(_key,value)=>{persisted=value;};
+  context.console={...console,error:()=>{}};
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.notificationReadSync={uid:'reader',pending:new Set(readPendingNotifications('reader')),flushing:false};
+    let online=false;
+    firebase={doc:()=>({}),runTransaction:async(_db,callback)=>{
+      if(!online)throw Error('offline');
+      return callback({get:async()=>({data:()=>({keys:['remote:30']})}),set:(_ref,value)=>{state.synced=value;}});
+    }};
+  `,context);
+  await vm.runInContext('syncNotificationReads()',context);
+  assert.deepEqual(JSON.parse(persisted),['local:20']);
+  await vm.runInContext('online=true;syncNotificationReads()',context);
+  assert.deepEqual(JSON.parse(persisted),[]);
+  assert.deepEqual([...vm.runInContext('state.synced.keys',context)],['remote:30','local:20']);
+  assert.deepEqual([...vm.runInContext('state.notificationReads',context)],['remote:30','local:20']);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`

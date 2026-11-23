@@ -78,7 +78,7 @@ const state = {
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
-  notificationFilter:'all',
+  notificationFilter:'all', notificationReadSync:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -241,6 +241,12 @@ function startSession() {
   },'convites de moderação');
   subscribe(firebase.query(col('members',me(),'notifications'),firebase.orderBy('createdAt','desc'),firebase.limit(50)),
     snapshot=>{state.notifications=docs(snapshot);},'notificações');
+  const readSync=state.notificationReadSync;
+  subscribe(ref('members',me(),'notificationReadState','main'),snapshot=>{
+    if(state.notificationReadSync!==readSync)return;
+    state.notificationReads=new Set(mergeNotificationReads(snapshot.data()?.keys,[...readSync.pending]));
+  },'leitura dos avisos');
+  void syncNotificationReads();
   subscribe(ref('members',me(),'notificationSettings','main'),snapshot=>{
     state.notificationSettings=snapshot.data()||{};state.notificationSettingsLoaded=true;
   },'preferências de notificações');
@@ -285,8 +291,9 @@ async function init() {
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
-      state.notificationReads=new Set();state.notificationFilter='all';
-      if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
+      state.notificationFilter='all';
+      state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
+      state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
@@ -404,7 +411,42 @@ function refreshPollNotices(){
 function notificationFields(type,postId='',commentId=''){
  return {type,actorId:me(),postId,commentId,createdAt:firebase.serverTimestamp()};
 }
-function notificationReadKey(){return 'hobbyhub-notification-reads:'+me();}
+function notificationReadKey(uid){return 'hobbyhub-notification-reads:'+uid;}
+function mergeNotificationReads(...lists){
+ const keys=new Set(lists.flatMap(list=>Array.isArray(list)?list.filter(key=>typeof key==='string'&&key.length<=600):[]));
+ const time=key=>Number(key.slice(key.lastIndexOf(':')+1))||0;
+ return [...keys].sort((a,b)=>time(b)-time(a)).slice(0,500);
+}
+function readPendingNotifications(uid){
+ try{return mergeNotificationReads(JSON.parse(localStorage.getItem(notificationReadKey(uid))||'[]'));}
+ catch{return [];}
+}
+function persistPendingNotifications(sync){
+ try{localStorage.setItem(notificationReadKey(sync.uid),JSON.stringify([...sync.pending]));}catch{}
+}
+async function syncNotificationReads(){
+ const sync=state.notificationReadSync;
+ if(!sync||sync.flushing||!sync.pending.size||me()!==sync.uid)return;
+ const target=ref('members',sync.uid,'notificationReadState','main');
+ sync.flushing=true;
+ try{
+   while(state.notificationReadSync===sync&&sync.pending.size){
+     const pending=[...sync.pending];
+     const merged=await firebase.runTransaction(db,async transaction=>{
+       const remote=(await transaction.get(target)).data()?.keys;
+       const keys=mergeNotificationReads(remote,pending);
+       transaction.set(target,{keys});return keys;
+     });
+     if(state.notificationReadSync!==sync)return;
+     const remaining=mergeNotificationReads(readPendingNotifications(sync.uid),[...sync.pending]).filter(key=>!pending.includes(key));
+     sync.pending=new Set(remaining);
+     persistPendingNotifications(sync);
+     state.notificationReads=new Set(mergeNotificationReads([...state.notificationReads],merged,remaining));
+     render();
+   }
+ }catch(error){console.error('HobbyHub notification read sync:',error);}
+ finally{sync.flushing=false;}
+}
 const notificationCategories={
  polls:'Enquetes',
  bulletins:'Recados de eventos',
@@ -463,12 +505,13 @@ function notificationItems(){
    .sort((a,b)=>b.time-a.time).slice(0,50);
 }
 function markNotificationsRead(items){
- for(const item of items){
-   state.notificationReads.delete(item.readKey);
-   state.notificationReads.add(item.readKey);
- }
- state.notificationReads=new Set([...state.notificationReads].slice(-500));
- try{localStorage.setItem(notificationReadKey(),JSON.stringify([...state.notificationReads]));}catch{}
+ const keys=items.map(item=>item.readKey);
+ state.notificationReads=new Set(mergeNotificationReads([...state.notificationReads],keys));
+ const sync=state.notificationReadSync;
+ if(!sync||!keys.length)return;
+ sync.pending=new Set(mergeNotificationReads(readPendingNotifications(sync.uid),[...sync.pending],keys));
+ persistPendingNotifications(sync);
+ void syncNotificationReads();
 }
 function notificationButton(mobile=false){
  const count=notificationItems().filter(item=>!state.notificationReads.has(item.readKey)).length;
@@ -2343,6 +2386,7 @@ document.addEventListener('click',async(event)=>{
 });
 document.addEventListener('keydown',handleDialogKey);
 document.addEventListener('visibilitychange',()=>{
+ if(document.visibilityState==='visible')void syncNotificationReads();
  if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();void loadPersonalHistory();render();}
  void markOpenConversationRead();
 });
@@ -2363,6 +2407,7 @@ document.addEventListener('change',(event)=>{
  render();
 });
 window.addEventListener('hashchange',openLinkedContent);
+window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{

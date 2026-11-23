@@ -163,6 +163,14 @@ service cloud.firestore {
         allow update: if false;
       }
       // Private activity notices are coupled to their source write in the same commit.
+      match /notificationReadState/main {
+        function validReadState(data) {
+          return data.keys().hasOnly(['keys']) && data['keys'] is list && data['keys'].size() <= 500;
+        }
+        allow get: if isMe(uid);
+        allow create, update: if isMe(uid) && validReadState(request.resource.data);
+        allow list, delete: if false;
+      }
       match /notificationSettings/main {
         function validSettings(data) {
           return data.keys().hasOnly(['polls','bulletins','savedEvents','interactions'])
