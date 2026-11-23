@@ -78,6 +78,7 @@ const state = {
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
+  notificationFilter:'all',
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -284,7 +285,7 @@ async function init() {
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
-      state.notificationReads=new Set();
+      state.notificationReads=new Set();state.notificationFilter='all';
       if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
@@ -476,8 +477,10 @@ function notificationButton(mobile=false){
 }
 function renderNotifications(){
  const items=notificationItems();
- const unread=items.some(item=>!state.notificationReads.has(item.readKey));
- const list=items.map(item=>{
+ const unread=items.filter(item=>!state.notificationReads.has(item.readKey));
+ const filter=state.notificationFilter;
+ const list=(filter==='unread'?unread:items).map(item=>{
+   const isUnread=!state.notificationReads.has(item.readKey);
    const actor=member(item.actorId)?.name||'Alguém';
    const group=state.groups.find(group=>group.id===item.groupId);
    const message={
@@ -495,9 +498,16 @@ function renderNotifications(){
    }[item.type];
    const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
-   return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
+   return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
+   ${isUnread?`<button class="text-action" data-action="read-notification" data-id="${esc(item.readKey)}" aria-label="Marcar como lida: ${esc(message)}">Marcar como lida</button>`:''}</div></div>`;
  }).join('');
- return modalWrap('Notificações',`<div class="form-stack"><button class="text-action" data-action="notification-settings">Configurar avisos</button>${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
+ const options=[['all','Todas'],['unread','Não lidas']].map(([id,label])=>
+   `<button id="notification-filter-${id}" class="filter ${filter===id?'active':''}" data-action="notification-filter" data-value="${id}" aria-pressed="${filter===id}">${label}</button>`).join('');
+ const emptyMessage=filter==='unread'?'Nenhuma notificação não lida.':'Nenhuma notificação por enquanto.';
+ return modalWrap('Notificações',`<div class="form-stack"><button class="text-action" data-action="notification-settings">Configurar avisos</button>
+ <div class="filters" role="group" aria-label="Filtrar notificações">${options}</div>
+ ${unread.length?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}
+ ${list||`<p class="tip">${emptyMessage}</p>`}</div>`);
 }
 function renderNotificationSettings(){
  const groupNames=new Map(state.groups.map(group=>[group.id,group.name]));
@@ -2146,7 +2156,20 @@ async function onAction(btn) {
     await firebase.setDoc(ref('members',uid,'notificationSettings','main'),updated,{merge:true});
     if(me()===uid)showToast('Preferência salva.');
   });return;
-  case 'read-notifications':markNotificationsRead(notificationItems());render();return;
+  case 'notification-filter':state.notificationFilter=btn.dataset.value==='unread'?'unread':'all';render();return;
+  case 'read-notification':{
+    const item=notificationItems().find(notice=>notice.readKey===id);
+    if(!item)return;
+    markNotificationsRead([item]);render();
+    const dialog=document.querySelector('.modal');
+    const target=state.notificationFilter==='unread'?dialog?.querySelector('[data-action="read-notification"]'):
+      [...(dialog?.querySelectorAll('[data-action="open-notification"]')||[])].find(button=>button.dataset.id===id);
+    (target||document.getElementById('notification-filter-'+state.notificationFilter))?.focus();
+    return;
+  }
+  case 'read-notifications':
+    markNotificationsRead(notificationItems());render();
+    document.getElementById('notification-filter-'+state.notificationFilter)?.focus();return;
   case 'open-notification':{
     const notice=notificationItems().find(item=>item.readKey===id);
     if(!notice)return;
