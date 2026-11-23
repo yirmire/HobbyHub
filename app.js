@@ -1099,6 +1099,7 @@ function renderProfile() {
  ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
+ <div class="section-head"><h2>Ajuda e feedback</h2><button class="text-action" data-action="send-feedback">Enviar feedback</button></div>
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
@@ -1368,6 +1369,14 @@ function renderCommunityMute(groupId){
 }
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='product-feedback')return modalWrap('Enviar feedback',`<form id="product-feedback-form" data-draft="true" class="form-stack">
+ <label class="field">Tipo de feedback<select class="select" name="category" required>
+ <option value="">Selecione uma opção</option><option value="problem">Relatar um problema</option><option value="suggestion">Sugerir uma melhoria</option>
+ </select></label>
+ <label class="field">Sua mensagem<textarea class="textarea" name="message" required minlength="3" maxlength="600" placeholder="Conte o que aconteceu ou o que podemos melhorar."></textarea></label>
+ <p class="tip">A mensagem vai para a administração do HobbyHub. Evite incluir senhas ou dados pessoais.</p>
+ <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button>
+ <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Enviar feedback</button></div></form>`);
  if(state.modal==='group-polls')return renderGroupPolls();
  if(state.modal==='poll-detail')return renderPoll();
  if(state.modal==='poll-create'){
@@ -2248,6 +2257,7 @@ async function onAction(btn) {
   }
   case 'close':closeModal();return;
   case 'edit-profile':openModal('edit-profile');return;
+  case 'send-feedback':if(me())openModal('product-feedback');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
   case 'quiz-mood':state.quizMood=btn.dataset.value;render();return;
   case 'explore-view':state.exploreView=btn.dataset.value==='posts'?'posts':'people';render();return;
@@ -2627,6 +2637,15 @@ document.addEventListener('submit',async(event)=>{
     clearSubmittedDraft(form.id,key,'message',data.message);
     if(me()===payload.senderId)showToast('Mensagem enviada.');
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
+  case 'product-feedback-form':await attempt(async()=>{
+    const uid=me(),category=val('category'),message=val('message');
+    if(!uid||state.modal!=='product-feedback'||!['problem','suggestion'].includes(category))return;
+    if(message.length<3||message.length>600)throw new Error('Escreva uma mensagem de 3 a 600 caracteres.');
+    await firebase.addDoc(firebase.collection(db,'artifacts',PROJECT,'productFeedback'),{
+      authorId:uid,category,message,createdAt:firebase.serverTimestamp(),status:'new'
+    });
+    if(me()===uid&&state.modal==='product-feedback'){closeModal();showToast('Feedback enviado à administração.');}
+  });return;
   case 'report-form':await attempt(async()=>{
     const target=state.reportTarget;
     if(!target||!me())return;
