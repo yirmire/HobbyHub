@@ -545,6 +545,31 @@ test('notification settings hide optional categories and retain seat offers and 
   assert.match(vm.runInContext('renderNotificationSettings()',context),/role="switch" aria-checked="false" aria-label="Enquetes"/);
 });
 
+test('muting one community only hides its optional group notices', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'member'};state.mutedCommunitiesLoaded=true;state.mutedCommunityIds.add('quiet');
+    const ts=value=>({toMillis:()=>value});
+    state.groups=[{id:'quiet',name:'Grupo silenciado',members:['member']},{id:'active',name:'Grupo ativo',members:['member']}];
+    const poll={id:'poll',question:'Escolher passeio',createdAt:ts(10),endsAt:ts(now()+10000)};
+    state.pollWatches.set('quiet',{polls:[poll],ballots:new Map()});
+    state.pollWatches.set('active',{polls:[poll],ballots:new Map()});
+    state.events=[
+      {id:'urgent',title:'Encontro cancelado',groupId:'quiet',createdBy:'host',attendees:['member'],cancelled:true,revision:1,scheduleChangedAt:ts(20)},
+      {id:'memo',title:'Oficina silenciada',groupId:'quiet',createdBy:'host',attendees:['member']},
+      {id:'seat',title:'Passeio reservado',groupId:'quiet',date:'2099-01-01',waitlist:['member'],offerAt:ts(now()-1000)}
+    ];
+    state.eventBulletins.set('memo',{entries:[{id:'memo',createdAt:ts(15)}]});
+    renderNotifications()
+  `,context);
+  assert.match(html,/Nova enquete em Grupo ativo/);
+  assert.match(html,/Evento confirmado cancelado · Encontro cancelado/);
+  assert.match(html,/Uma vaga está reservada para você/);
+  assert.doesNotMatch(html,/Nova enquete em Grupo silenciado|Oficina silenciada/);
+  assert.match(vm.runInContext("renderCommunityMute('quiet')",context),/Reativar avisos/);
+  assert.match(vm.runInContext("state.mutedCommunityIds.delete('quiet');renderNotifications()",context),/Nova enquete em Grupo silenciado/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
