@@ -500,6 +500,12 @@ function renderNotifications(){
  return modalWrap('Notificações',`<div class="form-stack"><button class="text-action" data-action="notification-settings">Configurar avisos</button>${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
 }
 function renderNotificationSettings(){
+ const groupNames=new Map(state.groups.map(group=>[group.id,group.name]));
+ const muted=[...state.mutedCommunityIds].map(id=>({id,name:String(groupNames.get(id)||'Comunidade indisponível')}));
+ muted.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+ const communities=muted.map(({id,name})=>`<div class="card toggle-row" style="padding:12px;justify-content:space-between;flex-wrap:wrap">
+ <span>${esc(name)}</span><button class="text-action" data-action="restore-community-notices" data-id="${esc(id)}"
+ aria-label="Reativar avisos de ${esc(name)}" ${state.busy?'disabled':''}>Reativar avisos</button></div>`).join('');
  return modalWrap('Configurar avisos',`<div class="form-stack">
  ${state.notificationSettingsLoaded?'':'<p class="tip" role="status">Carregando preferências…</p>'}
  ${Object.entries(notificationCategories).map(([id,label])=>{
@@ -508,6 +514,8 @@ function renderNotificationSettings(){
    data-action="toggle-notification-setting" data-id="${id}" ${state.notificationSettingsLoaded?'':'disabled'}>${esc(label)} · ${enabled?'Ligado':'Desligado'}</button>`;
  }).join('')}
  <p class="tip">Reservas de vaga e cancelamentos de eventos com presença confirmada sempre aparecem no sino.</p>
+ <section class="form-stack" aria-label="Comunidades silenciadas"><h3>Comunidades silenciadas</h3>
+ ${!state.mutedCommunitiesLoaded?'<p class="tip">Carregando comunidades…</p>':communities||'<p class="tip">Você ainda não silenciou nenhuma comunidade.</p>'}</section>
  <button class="text-action" data-action="notifications">Voltar aos avisos</button></div>`);
 }
 function unreadBadge(tab) {
@@ -2091,10 +2099,15 @@ async function onAction(btn) {
     if(!state.groups.some(group=>group.id===id))return;
     state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');return;
   case 'copy-group-invite':await copyGroupInvite(id);return;
+  case 'restore-community-notices':
   case 'toggle-community-notices':await attempt(async()=>{
     const uid=me();
-    if(!uid||!state.mutedCommunitiesLoaded||!pollMember(id))return;
-    const muted=state.mutedCommunityIds.has(id),target=ref('members',uid,'mutedCommunities',id);
+    if(!uid||!state.mutedCommunitiesLoaded)return;
+    const muted=state.mutedCommunityIds.has(id);
+    if(action==='restore-community-notices'){
+      if(state.modal!=='notification-settings'||!muted)return;
+    }else if(!pollMember(id))return;
+    const target=ref('members',uid,'mutedCommunities',id);
     await firebase.runTransaction(db,async transaction=>{
       const exists=(await transaction.get(target)).exists();
       if(muted&&exists)transaction.delete(target);
