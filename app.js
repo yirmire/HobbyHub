@@ -64,7 +64,7 @@ const state = {
   eventSearch:'', eventHobby:'', eventCommunity:'',
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
-  modal:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
+  modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
@@ -264,7 +264,7 @@ async function init() {
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
-      state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
+      state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
@@ -1033,7 +1033,7 @@ function renderMessages() {
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
 function modalWrap(title,content){
  const key=[state.modal,title,state.selectedPost,state.selectedGroup,state.selectedEvent,state.viewUser,state.pollDetail?.poll?.id].join('|');
- return `<div class="overlay" data-overlay="true"><section class="modal" data-view="${esc(key)}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;
+ return `<div class="overlay" data-overlay="true"><section class="modal" data-view="${esc(key)}" role="dialog" aria-modal="true" aria-label="${esc(title)}" tabindex="-1"><header class="modal-head"><h2>${esc(title)}</h2><button class="circle-btn" data-action="close" aria-label="Fechar">${icon('x')}</button></header>${content}</section></div>`;
 }
 function suggestedWelcomeGroups() {
  const interests=new Set((state.profile?.hobbies||[]).map(norm));
@@ -1445,10 +1445,35 @@ function clearSubmittedDraft(formId,key,field,value) {
  }
  if(state.drafts.get(key)?.[field]===value)state.drafts.delete(key);
 }
+function actionFocusKey(element){
+ if(!element?.dataset?.action)return '';
+ const {action,id,tab,value}=element.dataset;
+ return JSON.stringify([action,id,tab,value,element.closest('nav')?.getAttribute('aria-label'),
+   action==='view-event'?element.textContent.trim():'']);
+}
+function findActionFocus(container,key){
+ return key&&[...container.querySelectorAll('[data-action]')].find(element=>
+   actionFocusKey(element)===key&&!element.disabled&&element.getClientRects().length);
+}
+function handleDialogKey(event){
+ if(event.isComposing||event.defaultPrevented||!state.modal)return;
+ const dialog=document.querySelector('.modal');
+ if(!dialog)return;
+ if(event.key==='Escape'){event.preventDefault();closeModal();return;}
+ if(event.key!=='Tab')return;
+ const targets=[...dialog.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')]
+   .filter(element=>element.tabIndex>=0&&!element.matches(':disabled')&&element.getClientRects().length);
+ const current=targets.indexOf(document.activeElement);
+ if(!targets.length||current<0||(event.shiftKey?current===0:current===targets.length-1)){
+   event.preventDefault();
+   (targets[event.shiftKey?targets.length-1:0]||dialog).focus();
+ }
+}
 function render() {
  const container=root();if(!container)return;
  const active=document.activeElement;
  const focusId=active?.id||null;
+ const actionKey=actionFocusKey(active);
  const formId=active?.form?.id,fieldName=active?.name,draftKey=active?.form?.dataset.draftKey;
  const previousModal=container.querySelector('.modal');
  const modalView=previousModal?.dataset.view,modalScroll=previousModal?.scrollTop;
@@ -1460,14 +1485,30 @@ function render() {
  state.initError?`<div class="splash"><span class="splash-mark">✳</span><h2>Não conseguimos conectar</h2><p>${esc(state.initError)}</p><button class="btn btn-primary" data-action="reload">Tentar novamente</button></div>`:
  !state.user?renderAuth():renderLayout();
  restoreDrafts();
+ const nextModal=container.querySelector('.modal');
+ const sameDialog=nextModal&&modalView===nextModal.dataset.view;
+ if(nextModal){
+   if(!previousModal)state.modalReturnFocus=state.modalReturnFocus||{id:focusId,key:actionKey};
+   for(const child of container.children)if(child!==nextModal.parentElement)child.inert=true;
+ }
  const nextForm=formId&&document.getElementById(formId);
- const next=focusId?document.getElementById(focusId):fieldName&&nextForm?.dataset.draftKey===draftKey?nextForm?.elements.namedItem(fieldName):null;
+ const field=focusId?document.getElementById(focusId):fieldName&&nextForm?.dataset.draftKey===draftKey?nextForm?.elements.namedItem(fieldName):null;
+ let next=field;
+ if(nextModal)next=sameDialog?(nextModal.contains(field)?field:findActionFocus(nextModal,actionKey)||nextModal):nextModal;
+ else if(previousModal){
+   const opener=state.modalReturnFocus;
+   state.modalReturnFocus=null;
+   next=(opener?.id&&document.getElementById(opener.id))||findActionFocus(container,opener?.key);
+   if(!next){
+     next=container.querySelector('h1');
+     next?.setAttribute('tabindex','-1');
+   }
+ }else if(!next)next=findActionFocus(container,actionKey);
  if(next&&document.activeElement!==next){
    next.focus({preventScroll:true});
    if(cursor&&typeof next.setSelectionRange==='function')try{next.setSelectionRange(cursor.start,cursor.end);}catch{}
  }
- const nextModal=container.querySelector('.modal');
- if(nextModal&&modalView===nextModal.dataset.view)nextModal.scrollTop=modalScroll;
+ if(sameDialog)nextModal.scrollTop=modalScroll;
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
@@ -1492,7 +1533,7 @@ function clearContentLink(){
 function closeModal(){
  state.composingRecapId=null;
  clearContentLink();
- document.querySelector('.overlay')?.remove();state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
+ state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
@@ -2200,7 +2241,7 @@ document.addEventListener('click',async(event)=>{
  const button=event.target.closest('[data-action]');if(button){event.preventDefault();await onAction(button);return;}
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
-document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&state.modal)closeModal();});
+document.addEventListener('keydown',handleDialogKey);
 document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();void loadPersonalHistory();render();}
  void markOpenConversationRead();
@@ -2439,6 +2480,7 @@ document.addEventListener('submit',async(event)=>{
       await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
     }
     clearSubmittedDraft(form.id,key,'message',data.message);
+    if(me()===payload.senderId)showToast('Mensagem enviada.');
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
   case 'report-form':await attempt(async()=>{
     const target=state.reportTarget;
