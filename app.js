@@ -76,7 +76,7 @@ const state = {
   groupRemoval:null, moderationHistory:null,
   moderationQueue:null, groupPolls:null, pollDetail:null,
   pollWatches:new Map(), pollNoticeTimer:null,
-  notifications:[], reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
+  notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -239,6 +239,9 @@ function startSession() {
   },'convites de moderação');
   subscribe(firebase.query(col('members',me(),'notifications'),firebase.orderBy('createdAt','desc'),firebase.limit(50)),
     snapshot=>{state.notifications=docs(snapshot);},'notificações');
+  subscribe(ref('members',me(),'notificationSettings','main'),snapshot=>{
+    state.notificationSettings=snapshot.data()||{};state.notificationSettingsLoaded=true;
+  },'preferências de notificações');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -275,7 +278,7 @@ async function init() {
       state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
-      state.moderationQueue=null;state.notifications=[];state.groupPolls=null;state.pollDetail=null;
+      state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.notificationReads=new Set();
       if(user)try{state.notificationReads=new Set(JSON.parse(localStorage.getItem(notificationReadKey())||'[]'));}catch{}
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -396,6 +399,16 @@ function notificationFields(type,postId='',commentId=''){
  return {type,actorId:me(),postId,commentId,createdAt:firebase.serverTimestamp()};
 }
 function notificationReadKey(){return 'hobbyhub-notification-reads:'+me();}
+const notificationCategories={
+ polls:'Enquetes',
+ bulletins:'Recados de eventos',
+ savedEvents:'Mudanças em eventos salvos',
+ interactions:'Seguidores, comentários e depoimentos'
+};
+const notificationCategoryByType=new Map([
+ ['poll-open','polls'],['poll-result','polls'],['event-bulletin','bulletins'],
+ ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['testimonial','interactions']
+]);
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
  for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
@@ -407,7 +420,11 @@ function notificationItems(){
  for(const event of state.events){
    const savedAt=state.savedEventDates.get(event.id)?.toMillis?.();
    const changedAt=event.scheduleChangedAt?.toMillis?.();
-   if(changedAt>savedAt&&event.createdBy!==me())items.push({
+   const confirmedCancellation=event.cancelled===true&&event.attendees?.includes(me())&&event.createdBy!==me();
+   if(confirmedCancellation&&Number.isFinite(changedAt))items.push({
+     type:'confirmed-event-cancellation',eventId:event.id,event,key:'confirmed-event-cancellation:'+event.id+':'+event.revision,createdAt:changedAt
+   });
+   else if(changedAt>savedAt&&event.createdBy!==me())items.push({
      type:'saved-event-change',eventId:event.id,event,key:'saved-event-change:'+event.id+':'+event.revision,createdAt:changedAt
    });
    if(canReadEventBulletins(event)&&event.createdBy!==me()){
@@ -429,7 +446,7 @@ function notificationItems(){
      else if(watch.ballots.get(poll.id))items.push({...base,type:'poll-result',key:'poll-result:'+groupId+':'+poll.id,createdAt:poll.endsAt});
    }
  }
- return items.filter(item=>!state.blockedIds.includes(item.actorId))
+ return items.filter(item=>!state.blockedIds.includes(item.actorId)&&state.notificationSettings[notificationCategoryByType.get(item.type)]!==false)
    .map(item=>{
      const time=typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.();
      return {...item,time,readKey:item.key+':'+time};
@@ -465,13 +482,25 @@ function renderNotifications(){
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
+     'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento'}[item.type];
-   const changes=item.type==='saved-event-change'?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento'}[item.type];
+   const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
- return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
+ return modalWrap('Notificações',`<div class="form-stack"><button class="text-action" data-action="notification-settings">Configurar avisos</button>${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
+}
+function renderNotificationSettings(){
+ return modalWrap('Configurar avisos',`<div class="form-stack">
+ ${state.notificationSettingsLoaded?'':'<p class="tip" role="status">Carregando preferências…</p>'}
+ ${Object.entries(notificationCategories).map(([id,label])=>{
+   const enabled=state.notificationSettings[id]!==false;
+   return `<button class="btn btn-outline" role="switch" aria-checked="${enabled}" aria-label="${esc(label)}"
+   data-action="toggle-notification-setting" data-id="${id}" ${state.notificationSettingsLoaded?'':'disabled'}>${esc(label)} · ${enabled?'Ligado':'Desligado'}</button>`;
+ }).join('')}
+ <p class="tip">Reservas de vaga e cancelamentos de eventos com presença confirmada sempre aparecem no sino.</p>
+ <button class="text-action" data-action="notifications">Voltar aos avisos</button></div>`);
 }
 function unreadBadge(tab) {
  const count=tab==='messages'?state.threads.filter(thread=>unreadThread(thread.id)).length:0;
@@ -1277,6 +1306,7 @@ function renderModal() {
  }
 
  if(state.modal==='notifications')return renderNotifications();
+ if(state.modal==='notification-settings')return renderNotificationSettings();
  if(state.modal==='first-visit')return renderFirstVisit();
  if(state.modal==='group-report-queue')return renderGroupReportQueue(state.groups.find(group=>group.id===state.selectedGroup));
  if(state.modal==='moderation-history')return renderModerationHistory(state.groups.find(group=>group.id===state.selectedGroup));
@@ -2069,6 +2099,14 @@ async function onAction(btn) {
     state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';state.composingRecapId=null;openModal('compose');return;
   }
   case 'notifications':openModal('notifications');return;
+  case 'notification-settings':openModal('notification-settings');return;
+  case 'toggle-notification-setting':await attempt(async()=>{
+    const uid=me();
+    if(!uid||!state.notificationSettingsLoaded||state.modal!=='notification-settings'||!Object.hasOwn(notificationCategories,id))return;
+    const updated={[id]:state.notificationSettings[id]===false};
+    await firebase.setDoc(ref('members',uid,'notificationSettings','main'),updated,{merge:true});
+    if(me()===uid)showToast('Preferência salva.');
+  });return;
   case 'read-notifications':markNotificationsRead(notificationItems());render();return;
   case 'open-notification':{
     const notice=notificationItems().find(item=>item.readKey===id);
@@ -2081,7 +2119,7 @@ async function onAction(btn) {
       if(item){item.focus({preventScroll:true});item.scrollIntoView({block:'center'});}
       return;
     }
-    if(notice.type==='event-seat'||notice.type==='saved-event-change'){openEventDetail(notice.eventId);return;}
+    if(notice.type==='event-seat'||notice.type==='saved-event-change'||notice.type==='confirmed-event-cancellation'){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
     }
