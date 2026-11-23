@@ -796,7 +796,18 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
-    // A equipe administra o feedback do produto no console Firebase.
+    function canTriageProductFeedback(appId) {
+      return loggedIn() && request.auth.token.email_verified == true
+        && hasFeedbackAdminRole(appId, request.auth.uid);
+    }
+    function hasFeedbackAdminRole(appId, uid) {
+      let role = get(/databases/$(database)/documents/artifacts/$(appId)/feedbackAdmins/$(uid)).data;
+      return role.active == true && role.email == request.auth.token.email;
+    }
+    match /artifacts/{appId}/feedbackAdmins/{uid} {
+      allow get: if isMe(uid);
+      allow list, create, update, delete: if false;
+    }
     match /artifacts/{appId}/productFeedback/{feedbackId} {
       allow create: if loggedIn()
         && request.resource.data.keys().hasOnly(['authorId', 'category', 'message', 'createdAt', 'status'])
@@ -805,7 +816,13 @@ service cloud.firestore {
         && validText(request.resource.data.message, 3, 600)
         && request.resource.data.createdAt == request.time
         && request.resource.data.status == 'new';
-      allow read, update, delete: if false;
+      allow read: if canTriageProductFeedback(appId);
+      allow update: if canTriageProductFeedback(appId)
+        && changedOnly(['status','reviewedAt','reviewedBy'])
+        && request.resource.data.status in ['new','in-review','resolved']
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.reviewedBy == request.auth.uid;
+      allow delete: if false;
     }
 
     // Todos os demais caminhos são negados por padrão.
