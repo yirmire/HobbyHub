@@ -836,6 +836,8 @@ test('mobile navigation links directly to Events and marks it as the current pag
   assert.match(mobile,/data-action="tab" data-tab="events" aria-current="page"[^>]*>[\s\S]*?<span>Eventos<\/span>/);
   assert.equal((mobile.match(/aria-current="page"/g)||[]).length,1);
   assert.equal((mobile.match(/<button/g)||[]).length,7);
+  assert.deepEqual([...mobile.matchAll(/data-tab="([^"]+)"/g)].map(match=>match[1]),
+    ['home','explore','events','groups','messages','profile']);
 });
 
 test('read markers advance to received messages only when the private chat is visible', async () => {
