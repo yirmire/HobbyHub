@@ -526,6 +526,25 @@ test('weekly agenda groups confirmations and flags equal start times across filt
   assert.equal(vm.runInContext('state.eventWeekOffset',context),0);
 });
 
+test('notification settings hide optional categories and retain seat offers and confirmed cancellations', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const ts=value=>({toMillis:()=>value});
+    const event={id:'e',title:'Oficina cancelada',createdBy:'host',date:'2099-01-01',attendees:['reader'],
+      cancelled:true,revision:1,scheduleChangedAt:ts(50)};
+    state.events=[event,{id:'seat',title:'Passeio com vaga',date:'2099-01-01',waitlist:['reader'],offerAt:ts(now()-1000)}];
+    state.savedEventDates.set('e',ts(10));
+    state.notifications=[{id:'follow',type:'follow',actorId:'host',createdAt:30}];
+  `,context);
+  assert.match(vm.runInContext('renderNotifications()',context),/começou a seguir você/);
+  const muted=vm.runInContext("state.notificationSettings={polls:false,bulletins:false,savedEvents:false,interactions:false};renderNotifications()",context);
+  assert.doesNotMatch(muted,/começou a seguir você|Evento salvo cancelado/);
+  assert.match(muted,/Evento confirmado cancelado · Oficina cancelada/);
+  assert.match(muted,/Uma vaga está reservada para você · Passeio com vaga/);
+  assert.match(vm.runInContext('renderNotificationSettings()',context),/role="switch" aria-checked="false" aria-label="Enquetes"/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`

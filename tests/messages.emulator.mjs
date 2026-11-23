@@ -370,6 +370,15 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const notificationSettings=`public/data/members/${recipient.localId}/notificationSettings/main`;
+await request(recipient,'GET',notificationSettings,404);
+await request(other,'PATCH',notificationSettings,403,{polls:{booleanValue:false}});
+await request(recipient,'PATCH',notificationSettings,200,{polls:{booleanValue:false}});
+await request(other,'GET',notificationSettings,403);
+await request(recipient,'PATCH',notificationSettings,403,{polls:str('yes')});
+await request(recipient,'PATCH',notificationSettings,403,{urgent:{booleanValue:false}});
+await request(recipient,'PATCH',`${notificationSettings}?updateMask.fieldPaths=bulletins`,200,{bulletins:{booleanValue:false}});
+assert.equal((await request(recipient,'GET',notificationSettings,200)).fields.polls.booleanValue,false);
 const timestampedEvent=`${events}/timestamped`;
 await request(sender,'POST',`${events}?documentId=timestamped`,200,standalone);
 const attendChange={update:{name:documents+timestampedEvent,fields:{location:str('Biblioteca'),revision:{integerValue:'1'}}},
