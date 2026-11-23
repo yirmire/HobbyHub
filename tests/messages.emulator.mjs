@@ -370,6 +370,16 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const timestampedEvent=`${events}/timestamped`;
+await request(sender,'POST',`${events}?documentId=timestamped`,200,standalone);
+const attendChange={update:{name:documents+timestampedEvent,fields:{location:str('Biblioteca'),revision:{integerValue:'1'}}},
+  updateMask:{fieldPaths:['location','revision']},updateTransforms:stamp('scheduleChangedAt')};
+await moderate(other,[attendChange],403);
+await moderate(sender,[{...attendChange,updateTransforms:[],update:{...attendChange.update,fields:{
+  ...attendChange.update.fields,scheduleChangedAt:{timestampValue:'2020-01-01T12:00:00.000Z'}
+}},updateMask:{fieldPaths:['location','revision','scheduleChangedAt']}}],403);
+await moderate(sender,[attendChange],200);
+assert.ok((await request(other,'GET',timestampedEvent,200)).fields.scheduleChangedAt.timestampValue);
 const savedEvent=`public/data/members/${recipient.localId}/savedEvents/group-event`;
 const saveEvent={update:{name:documents+savedEvent,fields:{}},updateTransforms:stamp('savedAt')};
 await moderate(other,[saveEvent],403);

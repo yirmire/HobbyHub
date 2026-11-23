@@ -58,7 +58,7 @@ const dateLabel = (day) => {if(!day)return 'A combinar';const d=new Date(`${day}
 const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
-  threads:[], directMessages:[], comments:[], savedIds:[], savedEventIds:new Set(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
+  threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'',
@@ -229,7 +229,7 @@ function startSession() {
     for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
   },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
-  subscribe(col('members',me(),'savedEvents'),snapshot=>{state.savedEventIds=new Set(snapshot.docs.map(doc=>doc.id));},'eventos salvos');
+  subscribe(col('members',me(),'savedEvents'),snapshot=>{state.savedEventDates=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().savedAt]));},'eventos salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
   subscribe(col('members',me(),'moderation'),snapshot=>{
@@ -262,7 +262,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.savedEventIds.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
@@ -403,6 +403,11 @@ function notificationItems(){
    });
  }
  for(const event of state.events){
+   const savedAt=state.savedEventDates.get(event.id)?.toMillis?.();
+   const changedAt=event.scheduleChangedAt?.toMillis?.();
+   if(changedAt>savedAt&&event.createdBy!==me())items.push({
+     type:'saved-event-change',eventId:event.id,event,key:'saved-event-change:'+event.id+':'+event.revision,createdAt:changedAt
+   });
    if(canReadEventBulletins(event)&&event.createdBy!==me()){
      for(const item of state.eventBulletins.get(event.id)?.entries||[])items.push({
        type:'event-bulletin',eventId:event.id,bulletinId:item.id,key:'event-bulletin:'+event.id+':'+item.id,
@@ -457,10 +462,12 @@ function renderNotifications(){
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
+     'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado'}[item.type];
-   return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p><div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento'}[item.type];
+   const changes=item.type==='saved-event-change'?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
+   return `<div class="card" style="padding:12px"><p>${state.notificationReads.has(item.readKey)?'':'<strong>Novo · </strong>'}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button></div></div>`;
  }).join('');
  return modalWrap('Notificações',`<div class="form-stack">${unread?'<button class="btn btn-outline btn-small" data-action="read-notifications">Marcar todas como lidas</button>':''}${list||'<p class="tip">Nenhuma notificação por enquanto.</p>'}</div>`);
 }
@@ -723,7 +730,7 @@ async function changeEventSeat(id,intent,uid){
 }
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
- const saved=state.savedEventIds.has(event.id);
+ const saved=state.savedEventDates.has(event.id);
  const future=event.date>=today();
  const limited=Number.isInteger(event.capacity),position=limited?event.waitlist.indexOf(me()):-1;
  const offer=limited?eventSeatOffer(event):null;
@@ -880,7 +887,7 @@ function renderEvents(now=new Date()) {
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me());
-   if(eventFilter==='saved')return state.savedEventIds.has(event.id);
+   if(eventFilter==='saved')return state.savedEventDates.has(event.id);
    if(eventFilter==='history')return feedbackAvailable(event)&&canReviewEvent(event);
    if(eventFilter==='waitlist')return event.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
    if(eventFilter==='past')return event.date&&event.date<day;
@@ -1747,7 +1754,7 @@ async function onAction(btn) {
   case 'cancel-event':await attempt(async()=>{
     const event=state.events.find(item=>item.id===id);
     if(!event||event.createdBy!==me()||event.cancelled===true||!confirm('Cancelar este evento? Quem abrir o convite verá o aviso de cancelamento.'))return;
-    await firebase.updateDoc(ref('events',id),{cancelled:true,revision:firebase.increment(1)});
+    await firebase.updateDoc(ref('events',id),{cancelled:true,revision:firebase.increment(1),scheduleChangedAt:firebase.serverTimestamp()});
     showToast('Evento cancelado.');
   });return;
   case 'copy-event-link':
@@ -1942,7 +1949,7 @@ async function onAction(btn) {
       if(item){item.focus({preventScroll:true});item.scrollIntoView({block:'center'});}
       return;
     }
-    if(notice.type==='event-seat'){openEventDetail(notice.eventId);return;}
+    if(notice.type==='event-seat'||notice.type==='saved-event-change'){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
     }
@@ -2197,7 +2204,7 @@ document.addEventListener('submit',async(event)=>{
       if(date===latest.date&&time===latest.time&&location===latest.location)return false;
       const revision=(latest.revision||0)+1;
       const previousSchedule={date:latest.date,time:latest.time,location:latest.location,revision};
-      transaction.update(target,{date,time,location,previousSchedule,revision});
+      transaction.update(target,{date,time,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
       return true;
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);
