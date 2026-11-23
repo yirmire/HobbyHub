@@ -570,6 +570,28 @@ test('muting one community only hides its optional group notices', () => {
   assert.match(vm.runInContext("state.mutedCommunityIds.delete('quiet');renderNotifications()",context),/Nova enquete em Grupo silenciado/);
 });
 
+test('notification settings list muted communities and can restore an entry directly', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='notification-settings';
+    state.mutedCommunitiesLoaded=true;
+    state.groups=[{id:'z',name:'Zoologia'},{id:'a',name:'Arte <teste>'},{id:'other',name:'Grupo ativo'}];
+    state.mutedCommunityIds=new Set(['z','a','missing']);
+    showToast=()=>{};
+    firebase={doc:(_db,...segments)=>segments.slice(-4).join('/'),runTransaction:async(_db,callback)=>callback({
+      get:async()=>({exists:()=>true}),
+      delete:path=>{state.removedPreference=path;state.mutedCommunityIds.delete('missing');}
+    })};
+  `,context);
+  const html=vm.runInContext('renderNotificationSettings()',context);
+  assert.match(html,/Comunidades silenciadas[\s\S]*Arte &lt;teste&gt;[\s\S]*Zoologia/);
+  assert.doesNotMatch(html,/Grupo ativo/);
+  assert.match(html,/Comunidade indisponível/);
+  await vm.runInContext("onAction({dataset:{action:'restore-community-notices',id:'missing'}})",context);
+  assert.equal(vm.runInContext('state.removedPreference',context),'members/reader/mutedCommunities/missing');
+  assert.doesNotMatch(vm.runInContext('renderNotificationSettings()',context),/Comunidade indisponível/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
