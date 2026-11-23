@@ -796,6 +796,18 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // A equipe administra o feedback do produto no console Firebase.
+    match /artifacts/{appId}/productFeedback/{feedbackId} {
+      allow create: if loggedIn()
+        && request.resource.data.keys().hasOnly(['authorId', 'category', 'message', 'createdAt', 'status'])
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.category in ['problem', 'suggestion']
+        && validText(request.resource.data.message, 3, 600)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.status == 'new';
+      allow read, update, delete: if false;
+    }
+
     // Todos os demais caminhos são negados por padrão.
     match /{document=**} { allow read, write: if false; }
   }
