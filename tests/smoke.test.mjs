@@ -690,15 +690,17 @@ test('my feedback shows each state and the resolution notice opens the exact sub
     state.myProductFeedback=[
       {id:'first',category:'problem',message:'Tela com erro',status:'new'},
       {id:'second',category:'suggestion',message:'Ideia em análise',status:'in-review'},
-      {id:'last',category:'problem',message:'A busca agora funciona <bem>',status:'resolved',reviewedAt:{toMillis:()=>20}}
+      {id:'last',category:'problem',message:'A busca agora funciona <bem>',resolution:'Ajustamos a busca <agora>.',status:'resolved',reviewedAt:{toMillis:()=>20}}
     ];
   `,context);
   assert.match(vm.runInContext('renderProfile()',context),/Meus feedbacks/);
   await vm.runInContext("onAction({dataset:{action:'my-product-feedback'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/Novo[\s\S]*Em análise[\s\S]*Resolvido/);
   assert.match(vm.runInContext('renderNotifications()',context),/Seu feedback foi resolvido/);
+  assert.match(vm.runInContext('renderNotifications()',context),/Ver resposta/);
   await vm.runInContext("onAction({dataset:{action:'open-notification',id:'feedback-resolved:last:20'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/A busca agora funciona &lt;bem&gt;/);
+  assert.match(vm.runInContext('renderModal()',context),/Resposta da equipe[\s\S]*Ajustamos a busca &lt;agora&gt;/);
   assert.doesNotMatch(vm.runInContext('renderModal()',context),/Tela com erro/);
 });
 
