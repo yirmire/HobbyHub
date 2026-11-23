@@ -370,6 +370,19 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const productFeedback='productFeedback/product-test';
+const feedbackWrite=(uid,category='suggestion',message='Melhorar a busca por eventos.',status='new')=>({
+  update:{name:documents+productFeedback,fields:{authorId:str(uid),category:str(category),message:str(message),status:str(status)}},
+  updateTransforms:stamp('createdAt')
+});
+await moderate(other,[feedbackWrite(sender.localId)],403);
+await moderate(sender,[feedbackWrite(sender.localId,'invalid')],403);
+await moderate(sender,[feedbackWrite(sender.localId,'problem','x'.repeat(601))],403);
+await moderate(sender,[feedbackWrite(sender.localId,'suggestion','Mensagem válida','reviewed')],403);
+await moderate(sender,[feedbackWrite(sender.localId)],200);
+await request(sender,'GET',productFeedback,403);
+await request(recipient,'GET','productFeedback',403);
+await request(sender,'DELETE',productFeedback,403);
 const readState=`public/data/members/${recipient.localId}/notificationReadState/main`;
 const readKeys=values=>({arrayValue:{values:values.map(str)}});
 await request(recipient,'GET',readState,404);
