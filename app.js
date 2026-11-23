@@ -471,7 +471,7 @@ function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
  for(const item of state.myProductFeedback||[]){
    if(item.status==='resolved'&&item.reviewedAt)items.push({
-     type:'feedback-resolved',feedbackId:item.id,key:'feedback-resolved:'+item.id,createdAt:item.reviewedAt
+     type:'feedback-resolved',feedbackId:item.id,key:'feedback-resolved:'+item.id,createdAt:item.reviewedAt,hasResolution:!!item.resolution
    });
  }
  for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
@@ -554,7 +554,7 @@ function renderNotifications(){
      'feedback-resolved':'Seu feedback foi resolvido',
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':'Ver feedback'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
    ${isUnread?`<button class="text-action" data-action="read-notification" data-id="${esc(item.readKey)}" aria-label="Marcar como lida: ${esc(message)}">Marcar como lida</button>`:''}</div></div>`;
@@ -1420,6 +1420,10 @@ async function loadProductFeedback(){
    if(state.productFeedbackQueue===queue&&state.modal==='product-feedback-admin')render();
  }
 }
+function renderFeedbackResolution(item){
+ return item.status==='resolved'&&item.resolution
+   ?`<div><strong>Resposta da equipe</strong><p class="post-copy" style="margin:0">${esc(item.resolution)}</p></div>`:'';
+}
 function renderProductFeedbackAdmin(){
  if(!state.feedbackAdmin)return modalWrap('Painel de feedback','<p>Este painel é restrito à administração.</p>');
  const queue=state.productFeedbackQueue;
@@ -1429,23 +1433,39 @@ function renderProductFeedbackAdmin(){
  ${entries.map(item=>`<article class="card form-stack" style="padding:14px">
  <div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong><small>${when(item.createdAt?.toMillis?.())}</small></div>
  <p class="post-copy" style="margin:0">${esc(item.message)}</p>
- <label class="field">Estado<select class="select" id="feedback-status-${esc(item.id)}" data-feedback-status="${esc(item.id)}" ${state.busy?'disabled':''}>
+ ${renderFeedbackResolution(item)}
+ ${queue.resolutionId===item.id&&item.status!=='resolved'?`<form id="product-feedback-resolution-form" data-draft="true" data-draft-key="feedback-resolution-${esc(item.id)}" class="form-stack">
+ <label class="field">Resposta da equipe (opcional)<textarea class="input" id="feedback-resolution-text" name="resolution" maxlength="600" rows="3"></textarea></label>
+ <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Marcar como resolvido</button>
+ <button class="btn btn-outline" type="button" data-action="cancel-feedback-resolution" ${state.busy?'disabled':''}>Cancelar</button>
+ </form>`:`<label class="field">Estado<select class="select" id="feedback-status-${esc(item.id)}" data-feedback-status="${esc(item.id)}" ${state.busy?'disabled':''}>
  ${Object.entries(productFeedbackStatuses).map(([id,label])=>`<option value="${id}" ${item.status===id?'selected':''}>${label}</option>`).join('')}
- </select></label></article>`).join('')}
+ </select></label>`}</article>`).join('')}
  ${queue?.error?`<p class="tip">${esc(queue.error)}</p>`:queue?.loading?'<p class="tip">Carregando feedback…</p>':entries.length?'':'<p class="tip">Nenhum item para exibir.</p>'}
  ${queue?.more?`<button class="btn btn-outline btn-small" data-action="load-product-feedback" ${queue.loading?'disabled':''}>${queue.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
-async function updateProductFeedbackStatus(id,status){
+async function updateProductFeedbackStatus(id,status,resolution=''){
  await attempt(async()=>{
    const queue=state.productFeedbackQueue,uid=me();
    if(!state.feedbackAdmin||state.modal!=='product-feedback-admin'||!Object.hasOwn(productFeedbackStatuses,status))return;
    const entry=queue?.entries.find(item=>item.id===id);
    if(!entry||entry.status===status)return;
+   if(resolution.length>600)throw new Error('A resposta pode ter até 600 caracteres.');
    await firebase.updateDoc(firebase.doc(db,'artifacts',PROJECT,'productFeedback',id),{
-     status,reviewedAt:firebase.serverTimestamp(),reviewedBy:uid
+     status,reviewedAt:firebase.serverTimestamp(),reviewedBy:uid,
+     ...(status==='resolved'?{resolution}:{})
    });
    if(me()!==uid||state.productFeedbackQueue!==queue)return;
    entry.status=status;
+   if(status==='resolved'){
+     entry.resolution=resolution;
+     if(queue.resolutionId===id){
+       const input=document.getElementById('feedback-resolution-text');
+       if(input)input.value='';
+       state.drafts.delete('feedback-resolution-'+id);
+       queue.resolutionId=null;
+     }
+   }
    showToast('Estado do feedback atualizado.');
  });
 }
@@ -1456,6 +1476,7 @@ function renderModal() {
    const item=state.myProductFeedback?.find(entry=>entry.id===state.selectedFeedbackId);
    return modalWrap('Meu feedback',item?`<div class="form-stack"><div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong>
    <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span></div><p class="post-copy" style="margin:0">${esc(item.message)}</p>
+   ${renderFeedbackResolution(item)}
    <button class="text-action" data-action="my-product-feedback">Voltar aos meus feedbacks</button></div>`:'<p>Este feedback está indisponível.</p>');
  }
  if(state.modal==='product-feedback-admin')return renderProductFeedbackAdmin();
@@ -2377,6 +2398,16 @@ async function onAction(btn) {
       openModal('product-feedback-admin');await loadProductFeedback();
     }else showToast('Confirme o e-mail pelo link recebido e tente novamente.');
   });return;
+  case 'cancel-feedback-resolution':{
+    const queue=state.productFeedbackQueue;
+    if(state.modal!=='product-feedback-admin'||!queue?.resolutionId||state.busy)return;
+    const id=queue.resolutionId;
+    queue.resolutionId=null;
+    render();
+    state.drafts.delete('feedback-resolution-'+id);
+    document.getElementById('feedback-status-'+id)?.focus();
+    return;
+  }
   case 'product-feedback-category':{
     const queue=state.productFeedbackQueue,category=btn.dataset.value;
     if(!state.feedbackAdmin||!queue||!['','problem','suggestion'].includes(category))return;
@@ -2527,7 +2558,17 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
- if(event.target.dataset?.feedbackStatus){void updateProductFeedbackStatus(event.target.dataset.feedbackStatus,event.target.value);return;}
+ if(event.target.dataset?.feedbackStatus){
+   const id=event.target.dataset.feedbackStatus,status=event.target.value,queue=state.productFeedbackQueue;
+   if(status==='resolved'&&state.feedbackAdmin&&state.modal==='product-feedback-admin'&&queue?.entries.some(item=>item.id===id&&item.status!==status)){
+     queue.resolutionId=id;
+     render();
+     document.getElementById('feedback-resolution-text')?.focus();
+   }else{
+     void updateProductFeedbackStatus(id,status);
+   }
+   return;
+ }
  if(event.target.id==='moderation-member'){
    void loadModerationSelection(event.target.dataset.group,event.target.value);return;
  }
@@ -2764,6 +2805,8 @@ document.addEventListener('submit',async(event)=>{
     clearSubmittedDraft(form.id,key,'message',data.message);
     if(me()===payload.senderId)showToast('Mensagem enviada.');
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
+  case 'product-feedback-resolution-form':
+    await updateProductFeedbackStatus(state.productFeedbackQueue?.resolutionId,'resolved',val('resolution'));return;
   case 'product-feedback-form':await attempt(async()=>{
     const uid=me(),category=val('category'),message=val('message');
     if(!uid||state.modal!=='product-feedback'||!['problem','suggestion'].includes(category))return;
