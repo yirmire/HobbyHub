@@ -467,7 +467,7 @@ test('saved events are filtered separately from attendance and queues', () => {
     state.user={uid:'reader'};state.eventFilter='saved';
     state.events=[{id:'saved',title:'Oficina guardada',date:'2099-01-01',location:'Biblioteca',time:'14:30',capacity:4,attendees:['host'],waitlist:[]},
       {id:'confirmed',title:'Feira confirmada',date:'2099-01-01',attendees:['reader']}];
-    state.savedEventIds.add('saved');
+    state.savedEventDates.set('saved',null);
     renderEvents()
   `,context);
   assert.match(saved,/Oficina guardada/);
@@ -476,7 +476,30 @@ test('saved events are filtered separately from attendance and queues', () => {
   assert.match(saved,/Remover dos salvos/);
   assert.match(saved,/Confirmar presença/);
   assert.doesNotMatch(saved,/Feira confirmada/);
-  assert.match(vm.runInContext("state.savedEventIds.clear();renderEvents()",context),/Você ainda não salvou nenhum evento/);
+  assert.match(vm.runInContext("state.savedEventDates.clear();renderEvents()",context),/Você ainda não salvou nenhum evento/);
+});
+
+test('bookmark notices report only schedule changes made after saving and open the event', async () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'reader'};
+    const ts=value=>({toMillis:()=>value});
+    const event={id:'saved',title:'Oficina',createdBy:'host',date:'2099-01-02',time:'15:00',location:'Biblioteca',
+      revision:1,scheduleChangedAt:ts(20),previousSchedule:{revision:1,date:'2099-01-01',time:'14:00',location:'Praça'}};
+    state.events=[event,{...event,id:'old',title:'Já alterado',scheduleChangedAt:ts(5)},
+      {...event,id:'unsaved',title:'Não salvo'}];
+    state.savedEventDates=new Map([['saved',ts(10)],['old',ts(10)]]);
+    openEventDetail=id=>{state.selectedEvent=id;};
+    renderNotifications()
+  `,context);
+  assert.match(html,/Seu evento salvo mudou · Oficina/);
+  assert.match(html,/Data alterada de 01\/01\/2099 para 02\/01\/2099/);
+  assert.match(html,/Horário alterado de 14:00 para 15:00/);
+  assert.match(html,/Local alterado de Praça para Biblioteca/);
+  assert.doesNotMatch(html,/Já alterado|Não salvo/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'saved-event-change:saved:1:20'}})", context);
+  assert.equal(vm.runInContext('state.selectedEvent',context),'saved');
+  assert.match(vm.runInContext("event.cancelled=true;event.revision=2;event.scheduleChangedAt=ts(30);renderNotifications()",context),/Evento salvo cancelado · Oficina/);
 });
 
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
