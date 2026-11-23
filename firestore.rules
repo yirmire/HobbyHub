@@ -163,6 +163,16 @@ service cloud.firestore {
         allow update: if false;
       }
       // Private activity notices are coupled to their source write in the same commit.
+      match /notificationSettings/main {
+        function validSettings(data) {
+          return data.keys().hasOnly(['polls','bulletins','savedEvents','interactions'])
+            && data.get('polls', true) is bool && data.get('bulletins', true) is bool
+            && data.get('savedEvents', true) is bool && data.get('interactions', true) is bool;
+        }
+        allow get: if isMe(uid);
+        allow create, update: if isMe(uid) && validSettings(request.resource.data);
+        allow list, delete: if false;
+      }
       match /notifications/{noticeId} {
         function newFollow(data) {
           let follow = /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(data.actorId)/following/$(uid);
