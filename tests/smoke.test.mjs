@@ -592,6 +592,30 @@ test('notification settings list muted communities and can restore an entry dire
   assert.doesNotMatch(vm.runInContext('renderNotificationSettings()',context),/Comunidade indisponível/);
 });
 
+test('unread notifications can be marked individually without opening the content', async () => {
+  const context=appContext();
+  context.document.querySelector=()=>null;
+  vm.runInContext(`
+    state.user={uid:'reader'};state.notifications=[
+      {id:'first',type:'follow',actorId:'a',createdAt:10},
+      {id:'second',type:'follow',actorId:'b',createdAt:20}
+    ];
+    state.members=[{uid:'a',name:'Ana'},{uid:'b',name:'Bruno'}];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'notification-filter',value:'unread'}})",context);
+  await vm.runInContext("onAction({dataset:{action:'read-notification',id:'first:10'}})",context);
+  const unread=vm.runInContext('renderNotifications()',context);
+  assert.doesNotMatch(unread,/Ana começou/);
+  assert.match(unread,/Bruno começou/);
+  assert.match(vm.runInContext('notificationButton()',context),/1 não lidas/);
+  await vm.runInContext("onAction({dataset:{action:'notification-filter',value:'all'}})",context);
+  const all=vm.runInContext('renderNotifications()',context);
+  assert.match(all,/Ana começou/);
+  assert.equal((all.match(/data-action="read-notification"/g)||[]).length,1);
+  await vm.runInContext("onAction({dataset:{action:'read-notifications'}});state.notificationFilter='unread';",context);
+  assert.match(vm.runInContext('renderNotifications()',context),/Nenhuma notificação não lida/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
