@@ -483,7 +483,7 @@ function renderSidebar() {
   <div class="sidebar-footer"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button><p>Feito para viver mais daquilo que você ama. ✨</p><small>HobbyHub © ${new Date().getFullYear()}</small></div></aside>`;
 }
 function renderBottomNav(){
-  const items=[['home','Início','home'],['explore','Explorar','compass'],['compose','','plus'],['groups','Grupos','users'],['events','Eventos','calendar'],['messages','Chat','chat'],['profile','Perfil','user']];
+  const items=[['home','Início','home'],['explore','Explorar','compass'],['events','Eventos','calendar'],['compose','','plus'],['groups','Grupos','users'],['messages','Chat','chat'],['profile','Perfil','user']];
   return `<nav class="bottom-nav" aria-label="Navegação móvel">${items.map(([tab,title,ico])=>`<button data-action="${tab==='compose'?'compose':'tab'}" ${tab!=='compose'?`data-tab="${tab}"`:'aria-label="Criar publicação"'} ${state.tab===tab?'aria-current="page"':''} class="${state.tab===tab?'active':''} ${tab==='compose'?'add-nav':''}">${icon(ico)}${title?`<span>${title}</span>`:''}${unreadBadge(tab)}</button>`).join('')}</nav>`;
 }
 function titleBar() {
