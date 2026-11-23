@@ -383,6 +383,38 @@ await moderate(sender,[feedbackWrite(sender.localId)],200);
 await request(sender,'GET',productFeedback,403);
 await request(recipient,'GET','productFeedback',403);
 await request(sender,'DELETE',productFeedback,403);
+const adminRole=`feedbackAdmins/${recipient.localId}`;
+const enabled={active:{booleanValue:true},email:str(recipient.email)};
+await request(recipient,'GET',adminRole,404);
+await request(recipient,'PATCH',adminRole,403,enabled);
+await request({idToken:'owner'},'PATCH',adminRole,200,enabled);
+await request(sender,'GET',adminRole,403);
+await request(recipient,'GET','productFeedback',403);
+const verifyResponse=await fetch(`http://${authHost}/identitytoolkit.googleapis.com/v1/projects/${project}/accounts:update`,{
+  method:'POST',headers:{'content-type':'application/json',authorization:'Bearer owner'},
+  body:JSON.stringify({localId:recipient.localId,emailVerified:true})
+});
+assert.equal(verifyResponse.status,200,await verifyResponse.text());
+const verifiedLogin=await fetch(`http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo`,{
+  method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+    email:recipient.email,password:'Somente-emulador-123',returnSecureToken:true
+  })
+});
+assert.equal(verifiedLogin.status,200);
+const reviewer=await verifiedLogin.json();
+await request(reviewer,'GET','productFeedback',200);
+const triage=(actor,status)=>({
+  update:{name:documents+productFeedback,fields:{status:str(status),reviewedBy:str(actor.localId)}},
+  updateMask:{fieldPaths:['status','reviewedBy']},updateTransforms:stamp('reviewedAt')
+});
+await moderate(sender,[triage(sender,'resolved')],403);
+await moderate(reviewer,[triage(reviewer,'invalid')],403);
+await moderate(reviewer,[{...triage(reviewer,'in-review'),updateMask:{fieldPaths:['status','reviewedBy','message']}}],403);
+await moderate(reviewer,[triage(reviewer,'in-review')],200);
+await moderate(reviewer,[triage(reviewer,'resolved')],200);
+assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.status.stringValue,'resolved');
+await request({idToken:'owner'},'PATCH',adminRole,200,{active:{booleanValue:false}});
+await request(reviewer,'GET','productFeedback',403);
 const readState=`public/data/members/${recipient.localId}/notificationReadState/main`;
 const readKeys=values=>({arrayValue:{values:values.map(str)}});
 await request(recipient,'GET',readState,404);
