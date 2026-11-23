@@ -816,7 +816,7 @@ service cloud.firestore {
         && validText(request.resource.data.message, 3, 600)
         && request.resource.data.createdAt == request.time
         && request.resource.data.status == 'new';
-      allow read: if canTriageProductFeedback(appId);
+      allow read: if isMe(resource.data.authorId) || canTriageProductFeedback(appId);
       allow update: if canTriageProductFeedback(appId)
         && changedOnly(['status','reviewedAt','reviewedBy'])
         && request.resource.data.status in ['new','in-review','resolved']

@@ -683,6 +683,25 @@ test('the feedback panel is restricted, filters categories and changes triage st
   assert.match(vm.runInContext('renderProductFeedbackAdmin()',context),/value="in-review" selected/);
 });
 
+test('my feedback shows each state and the resolution notice opens the exact submission', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.profile={name:'Leitora'};
+    state.myProductFeedback=[
+      {id:'first',category:'problem',message:'Tela com erro',status:'new'},
+      {id:'second',category:'suggestion',message:'Ideia em análise',status:'in-review'},
+      {id:'last',category:'problem',message:'A busca agora funciona <bem>',status:'resolved',reviewedAt:{toMillis:()=>20}}
+    ];
+  `,context);
+  assert.match(vm.runInContext('renderProfile()',context),/Meus feedbacks/);
+  await vm.runInContext("onAction({dataset:{action:'my-product-feedback'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Novo[\s\S]*Em análise[\s\S]*Resolvido/);
+  assert.match(vm.runInContext('renderNotifications()',context),/Seu feedback foi resolvido/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'feedback-resolved:last:20'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/A busca agora funciona &lt;bem&gt;/);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Tela com erro/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`

@@ -380,9 +380,21 @@ await moderate(sender,[feedbackWrite(sender.localId,'invalid')],403);
 await moderate(sender,[feedbackWrite(sender.localId,'problem','x'.repeat(601))],403);
 await moderate(sender,[feedbackWrite(sender.localId,'suggestion','Mensagem válida','reviewed')],403);
 await moderate(sender,[feedbackWrite(sender.localId)],200);
-await request(sender,'GET',productFeedback,403);
+await request(sender,'GET',productFeedback,200);
+await request(other,'GET',productFeedback,403);
+await request(sender,'GET','productFeedback',403);
 await request(recipient,'GET','productFeedback',403);
 await request(sender,'DELETE',productFeedback,403);
+async function listOwnFeedback(actor,author,expected){
+  const result=await fetch(base+':runQuery',{method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${actor.idToken}`},
+    body:JSON.stringify({structuredQuery:{from:[{collectionId:'productFeedback'}],
+      where:{fieldFilter:{field:{fieldPath:'authorId'},op:'EQUAL',value:str(author.localId)}}}})});
+  assert.equal(result.status,expected);
+  return result.json();
+}
+assert.equal((await listOwnFeedback(sender,sender,200)).filter(row=>row.document).length,1);
+await listOwnFeedback(other,sender,403);
 const adminRole=`feedbackAdmins/${recipient.localId}`;
 const enabled={active:{booleanValue:true},email:str(recipient.email)};
 await request(recipient,'GET',adminRole,404);
@@ -413,6 +425,7 @@ await moderate(reviewer,[{...triage(reviewer,'in-review'),updateMask:{fieldPaths
 await moderate(reviewer,[triage(reviewer,'in-review')],200);
 await moderate(reviewer,[triage(reviewer,'resolved')],200);
 assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.status.stringValue,'resolved');
+assert.equal((await request(sender,'GET',productFeedback,200)).fields.status.stringValue,'resolved');
 await request({idToken:'owner'},'PATCH',adminRole,200,{active:{booleanValue:false}});
 await request(reviewer,'GET','productFeedback',403);
 const readState=`public/data/members/${recipient.localId}/notificationReadState/main`;

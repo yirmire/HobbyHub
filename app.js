@@ -79,6 +79,7 @@ const state = {
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
+  myProductFeedback:null, selectedFeedbackId:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -245,6 +246,9 @@ function startSession() {
     state.feedbackAdminRole=snapshot.data()||null;
     updateFeedbackAdminAccess();
   },'acesso ao painel de feedback');
+  subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'productFeedback'),firebase.where('authorId','==',me())),snapshot=>{
+    state.myProductFeedback=docs(snapshot).sort((a,b)=>(b.createdAt?.toMillis()||0)-(a.createdAt?.toMillis()||0));
+  },'seus feedbacks');
   const readSync=state.notificationReadSync;
   subscribe(ref('members',me(),'notificationReadState','main'),snapshot=>{
     if(state.notificationReadSync!==readSync)return;
@@ -296,6 +300,7 @@ async function init() {
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
       state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
+      state.myProductFeedback=null;state.selectedFeedbackId=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -464,6 +469,11 @@ const notificationCategoryByType=new Map([
 const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
+ for(const item of state.myProductFeedback||[]){
+   if(item.status==='resolved'&&item.reviewedAt)items.push({
+     type:'feedback-resolved',feedbackId:item.id,key:'feedback-resolved:'+item.id,createdAt:item.reviewedAt
+   });
+ }
  for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
  for(const group of state.groups.filter(canManageGroup)){
    for(const item of state.reportNotices.get(group.id)||[])items.push({
@@ -541,9 +551,10 @@ function renderNotifications(){
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
+     'feedback-resolved':'Seu feedback foi resolvido',
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':'Ver feedback'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
    ${isUnread?`<button class="text-action" data-action="read-notification" data-id="${esc(item.readKey)}" aria-label="Marcar como lida: ${esc(message)}">Marcar como lida</button>`:''}</div></div>`;
@@ -1103,7 +1114,7 @@ function renderProfile() {
  ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
- <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
+ <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button><button class="text-action" data-action="my-product-feedback">Meus feedbacks</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
@@ -1373,6 +1384,17 @@ function renderCommunityMute(groupId){
 }
 const productFeedbackKinds={problem:'Problema',suggestion:'Sugestão'};
 const productFeedbackStatuses={new:'Novo','in-review':'Em análise',resolved:'Resolvido'};
+function renderMyProductFeedback(){
+ const entries=state.myProductFeedback;
+ return modalWrap('Meus feedbacks',`<div class="form-stack">${!entries?'<p class="tip">Carregando seus feedbacks…</p>':entries.length?entries.map(item=>`<article class="card" style="padding:12px">
+ <div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong><span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span></div>
+ <p class="post-copy" style="margin:6px 0">${esc(short(item.message,145))}</p>
+ <button class="text-action" data-action="view-my-feedback" data-id="${esc(item.id)}">Ver feedback</button></article>`).join(''):'<p class="tip">Você ainda não enviou feedback.</p>'}</div>`);
+}
+function openMyProductFeedback(id){
+ if(!state.myProductFeedback?.some(item=>item.id===id))return;
+ state.selectedFeedbackId=id;openModal('my-feedback-detail');
+}
 function hasFeedbackAdminRole(){
  return Boolean(state.feedbackAdminRole?.active===true&&state.user?.email&&state.user.email===state.feedbackAdminRole.email);
 }
@@ -1429,6 +1451,13 @@ async function updateProductFeedbackStatus(id,status){
 }
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='my-product-feedback')return renderMyProductFeedback();
+ if(state.modal==='my-feedback-detail'){
+   const item=state.myProductFeedback?.find(entry=>entry.id===state.selectedFeedbackId);
+   return modalWrap('Meu feedback',item?`<div class="form-stack"><div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong>
+   <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span></div><p class="post-copy" style="margin:0">${esc(item.message)}</p>
+   <button class="text-action" data-action="my-product-feedback">Voltar aos meus feedbacks</button></div>`:'<p>Este feedback está indisponível.</p>');
+ }
  if(state.modal==='product-feedback-admin')return renderProductFeedbackAdmin();
  if(state.modal==='feedback-admin-verification')return modalWrap('Ativar painel de feedback',`<div class="form-stack">
  <p>Confirme o e-mail da sua conta para abrir o painel administrativo. Depois de clicar no link do e-mail, volte aqui e toque em <strong>Já confirmei</strong>.</p>
@@ -2292,6 +2321,7 @@ async function onAction(btn) {
     if(!notice)return;
     if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
+    if(notice.type==='feedback-resolved'){openMyProductFeedback(notice.feedbackId);return;}
     if(notice.type==='event-bulletin'){
       openEventDetail(notice.eventId);
       const item=document.getElementById('event-bulletin-'+notice.bulletinId);
@@ -2327,6 +2357,8 @@ async function onAction(btn) {
     state.productFeedbackQueue={entries:[],category:'',last:null,more:true,loading:false,error:''};
     openModal('product-feedback-admin');await loadProductFeedback();return;
   }
+  case 'my-product-feedback':if(me())openModal('my-product-feedback');return;
+  case 'view-my-feedback':openMyProductFeedback(id);return;
   case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
   case 'send-feedback-verification':await attempt(async()=>{
     if(!hasFeedbackAdminRole()||state.feedbackAdmin)return;
