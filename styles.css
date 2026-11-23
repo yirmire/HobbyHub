@@ -33,8 +33,9 @@
 
 @media(max-width:850px){
  .mobile-search input,.input,.textarea,.select,.chat-send .input{font-size:16px}
- .bottom-nav button{min-width:0;min-height:44px;flex:1 1 0;padding-inline:3px}
- .bottom-nav .add-nav{flex:0 0 43px}
+ .bottom-nav{padding-inline:6px}
+ .bottom-nav button{min-width:44px;min-height:44px;flex:1 1 0;padding-inline:3px}
+ .bottom-nav .add-nav{flex:0 0 44px;min-width:44px}
  .card-bottom,.filters{flex-wrap:wrap}
  .card-bottom .btn{white-space:normal}
  .modal-head h2,.event-card h3,.chat-contact .name{overflow-wrap:anywhere}
