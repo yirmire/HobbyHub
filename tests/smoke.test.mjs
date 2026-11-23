@@ -830,6 +830,14 @@ test('unread navigation counts conversations and highlights each one in the list
   assert.equal(vm.runInContext("state.privateReadAt.set('a_b',200);unreadBadge('messages')", context), '');
 });
 
+test('mobile navigation links directly to Events and marks it as the current page', () => {
+  const context=appContext();
+  const mobile=vm.runInContext("state.tab='events';renderBottomNav()",context);
+  assert.match(mobile,/data-action="tab" data-tab="events" aria-current="page"[^>]*>[\s\S]*?<span>Eventos<\/span>/);
+  assert.equal((mobile.match(/aria-current="page"/g)||[]).length,1);
+  assert.equal((mobile.match(/<button/g)||[]).length,7);
+});
+
 test('read markers advance to received messages only when the private chat is visible', async () => {
   const context = appContext();
   context.writes = [];
