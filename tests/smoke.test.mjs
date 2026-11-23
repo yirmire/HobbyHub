@@ -653,6 +653,26 @@ test('calendar data includes the clean event link and escapes user text', () => 
   assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
 });
 
+test('weekly calendar exports confirmed, scheduled events in one file', () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
+  const file=vm.runInContext(`
+    state.user={uid:'reader'};
+    const days=eventWeek(new Date(2099,0,7,12),0);
+    const event={id:'first',title:'Oficina',location:'Biblioteca',date:localDateKey(days[0]),time:'14:00',attendees:['reader']};
+    state.events=[event,{...event,id:'second',date:localDateKey(days[6]),time:'09:00'},
+      {...event,id:'cancelled',cancelled:true},{...event,id:'saved',attendees:['other']},
+      {...event,id:'bad',time:'25:00'},{...event,id:'later',date:'2099-03-01'}];
+    calendarEventsFile(exportableWeekEvents(days),new Date('2026-11-23T10:00:00Z'))
+  `,context);
+  assert.equal((file.match(/BEGIN:VCALENDAR/g)||[]).length,1);
+  assert.equal((file.match(/BEGIN:VEVENT/g)||[]).length,2);
+  assert.match(file,/UID:first@example.test[\s\S]*UID:second@example.test/);
+  assert.match(file,/LOCATION:Biblioteca/);
+  assert.match(file,/URL:https:\/\/example.test\/HobbyHub\/#event=first/);
+  assert.doesNotMatch(file,/UID:(cancelled|saved|bad|later)@/);
+});
+
 test('event notices show schedule changes and only reach confirmed members with unseen revisions', () => {
   const context = appContext();
   const initial = vm.runInContext(`

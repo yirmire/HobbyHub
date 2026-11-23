@@ -875,6 +875,12 @@ function eventWeek(date,offset){
  const monday=new Date(date.getFullYear(),date.getMonth(),date.getDate()-(date.getDay()+6)%7+offset*7,12);
  return Array.from({length:7},(_,i)=>new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i,12));
 }
+function exportableWeekEvents(days){
+ const first=localDateKey(days[0]),last=localDateKey(days[6]);
+ return state.events.filter(event=>event.cancelled!==true&&event.attendees?.includes(me())
+   && event.date>=first&&event.date<=last&&hasCalendarSchedule(event))
+   .sort((a,b)=>(a.date+' '+a.time).localeCompare(b.date+' '+b.time));
+}
 function renderEventWeek(days,events){
  const starts=new Map();
  for(const event of state.events){
@@ -896,6 +902,8 @@ function renderEventWeek(days,events){
  <strong role="status">${label(days[0])} a ${label(days[6])}</strong>
  <button id="event-week-next" class="btn btn-outline btn-small" data-action="event-week" data-value="next">Próxima semana</button>
  <button id="event-week-current" class="text-action" data-action="event-week" data-value="current">Semana atual</button></div>
+ ${exportableWeekEvents(days).length?`<div><button class="btn btn-outline btn-small" data-action="export-event-week">Exportar semana</button>
+ <p class="tip">O arquivo inclui os encontros confirmados da semana. Consulte o HobbyHub para ver alterações posteriores.</p></div>`:''}
  ${sections||'<p class="tip">Nenhum encontro confirmado nesta semana com os filtros atuais.</p>'}</div>`;
 }
 function renderEvents(now=new Date()) {
@@ -1595,16 +1603,21 @@ async function copyContentLink(link, confirmation, promptLabel) {
  }
  window.prompt(promptLabel,link);
 }
-function calendarFile(event, stamp=new Date()) {
+function calendarFile(event,stamp=new Date()){
+ return calendarEventsFile([event],stamp);
+}
+function calendarEventsFile(events, stamp=new Date()) {
  const escapeText=value=>String(value??'').replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/[,;]/g,character=>'\\'+character);
- const link=contentLink('event',event.id);
- const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//HobbyHub//Eventos//PT-BR','BEGIN:VEVENT',
+ const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//HobbyHub//Eventos//PT-BR',...events.flatMap(event=>{
+   const link=contentLink('event',event.id);
+   return ['BEGIN:VEVENT',
    `UID:${escapeText(event.id)}@${window.location.hostname}`,
    `DTSTAMP:${stamp.toISOString().replace(/[-:]|\.\d{3}/g,'')}`,
    `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
    `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
    `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(event.location)}`,
-   `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT','END:VCALENDAR'];
+   `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT'];
+ }),'END:VCALENDAR'];
  const encoder=new TextEncoder();
  return lines.map(line=>{
    let folded='',bytes=0;
@@ -1616,13 +1629,19 @@ function calendarFile(event, stamp=new Date()) {
    return folded;
  }).join('\r\n')+'\r\n';
 }
+function hasCalendarSchedule(event){
+ return /^\d{4}-\d{2}-\d{2}$/.test(event.date)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(event.time);
+}
 function downloadEventCalendar(event) {
- if(!/^\d{4}-\d{2}-\d{2}$/.test(event.date)||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(event.time)){
+ if(!hasCalendarSchedule(event)){
    showToast('O evento precisa de uma data e um horário válidos.',true);return;
  }
- const url=URL.createObjectURL(new Blob([calendarFile(event)],{type:'text/calendar;charset=utf-8'}));
+ downloadCalendar(calendarFile(event),'evento-hobbyhub.ics');
+}
+function downloadCalendar(file,name){
+ const url=URL.createObjectURL(new Blob([file],{type:'text/calendar;charset=utf-8'}));
  const link=document.createElement('a');
- link.href=url;link.download='evento-hobbyhub.ics';
+ link.href=url;link.download=name;
  document.body.appendChild(link);link.click();link.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
@@ -1750,6 +1769,12 @@ async function onAction(btn) {
     if(direction==='previous')state.eventWeekOffset--;
     if(direction==='next')state.eventWeekOffset++;
     render();return;
+  }
+  case 'export-event-week':{
+    if(state.tab!=='events'||state.eventFilter!=='mine'||state.eventAgendaView!=='week')return;
+    const days=eventWeek(new Date(),state.eventWeekOffset),events=exportableWeekEvents(days);
+    if(events.length)downloadCalendar(calendarEventsFile(events),`hobbyhub-semana-${localDateKey(days[0])}.ics`);
+    return;
   }
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
