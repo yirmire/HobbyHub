@@ -382,6 +382,29 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const editable='public/data/posts/editable-post';
+await request(sender,'POST','public/data/posts?documentId=editable-post',200,welcome);
+const editableLikes={arrayValue:{values:[str(recipient.localId)]}};
+await request(recipient,'PATCH',editable+'?updateMask.fieldPaths=likes',200,{likes:editableLikes});
+await request(recipient,'POST',editable+'/comments?documentId=original',200,{
+  userId:str(recipient.localId),text:str('Comentário preservado'),createdAt:{integerValue:'100'}
+});
+const editPost=(content)=>({
+  update:{name:documents+editable,fields:{content:str(content)}},
+  updateMask:{fieldPaths:['content']},updateTransforms:stamp('editedAt')
+});
+await moderate(recipient,[editPost('Tentativa de outra conta')],403);
+await moderate(sender,[editPost('   ')],403);
+const tampered=editPost('Texto com curtidas alteradas');
+tampered.update.fields.likes={arrayValue:{values:[]}};
+tampered.updateMask.fieldPaths.push('likes');
+await moderate(sender,[tampered],403);
+await moderate(sender,[editPost('Texto corrigido')],200);
+const edited=(await request(recipient,'GET',editable,200)).fields;
+assert.equal(edited.content.stringValue,'Texto corrigido');
+assert.ok(edited.editedAt.timestampValue);
+assert.deepEqual(edited.likes,editableLikes);
+await request(recipient,'GET',editable+'/comments/original',200);
 const onlineEvent=events+'/online-test',roomPath=onlineEvent+'/private/room';
 const online={...standalone,format:str('online'),location:str('Online'),timeZone:str('America/Manaus')};
 const roomFields={url:str('https://meet.example.test/sala'),ownerId:str(sender.localId)};
