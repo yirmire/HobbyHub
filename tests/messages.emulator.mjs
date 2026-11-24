@@ -435,6 +435,25 @@ await moderate(reviewer,[triage(reviewer,'resolved','a'.repeat(601))],403);
 await moderate(reviewer,[triage(reviewer,'resolved','Corrigimos o envio.')],200);
 await moderate(reviewer,[triage(reviewer,'resolved','Outra resposta')],403);
 assert.equal((await request(sender,'GET',productFeedback,200)).fields.resolution.stringValue,'Corrigimos o envio.');
+const resolutionChoice=value=>({
+  update:{name:documents+productFeedback,fields:{resolutionChoice:str(value)}},
+  updateMask:{fieldPaths:['resolutionChoice']}
+});
+await moderate(other,[resolutionChoice('helped')],403);
+await moderate(reviewer,[resolutionChoice('helped')],403);
+await moderate(sender,[resolutionChoice('invalid')],403);
+await moderate(sender,[{...resolutionChoice('helped'),updateMask:{fieldPaths:['resolutionChoice','message']}}],403);
+await moderate(sender,[resolutionChoice('needs-help')],200);
+await moderate(sender,[resolutionChoice('helped')],403);
+assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.resolutionChoice.stringValue,'needs-help');
+await moderate(reviewer,[triage(reviewer,'in-review')],200);
+assert.equal((await request(sender,'GET',productFeedback,200)).fields.resolution.stringValue,'Corrigimos o envio.');
+await moderate(reviewer,[triage(reviewer,'resolved','Novo retorno.')],403);
+const followup=triage(reviewer,'resolved','Novo retorno.');
+followup.update.fields.resolutionChoice=str('');
+followup.updateMask.fieldPaths.push('resolutionChoice');
+await moderate(reviewer,[followup],200);
+await moderate(sender,[resolutionChoice('helped')],200);
 await request(other,'GET',productFeedback,403);
 await request({idToken:'owner'},'PATCH',adminRole,200,{active:{booleanValue:false}});
 await request(reviewer,'GET','productFeedback',403);
