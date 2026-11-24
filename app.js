@@ -61,7 +61,7 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'',
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null,
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -224,7 +224,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();void loadEventRoom();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -288,6 +288,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
+      state.eventFormat='';state.eventRoom=null;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
@@ -716,7 +717,7 @@ function renderEventReminders(day=tomorrow()) {
    <h2 style="font-size:16px;margin:0 0 8px">Seus eventos de amanhã</h2>
    <div class="form-stack">${events.map(event=>`<div>
      <strong>${esc(event.title)}</strong>
-     <p class="mini">${event.time?`Às ${esc(event.time)} · `:''}${esc(event.location||'Local a combinar')}</p>
+     <p class="mini">${event.time?`Às ${esc(event.time)} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
      <button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Abrir evento</button>
    </div>`).join('')}</div>
  </section>`;
@@ -881,10 +882,72 @@ async function changeEventSeat(id,intent,uid,confirmedConflict=false){
    return status;
  });
 }
+function eventFormat(event){
+ if(event.format==='online'||event.format==='in-person')return event.format;
+ const label=norm(event.location);
+ return !label||/^(?:(?:evento|encontro) )?(?:on[- ]?line|virtual|remot[oa]|a distancia)\b/.test(label)||
+   /^(?:zoom|google meet|microsoft teams|discord)(?:$|\s*[:–—-])/.test(label)||/https?:\/\/|^www\./i.test(label)?'online':'in-person';
+}
+function eventFormatOptions(format){
+ return [['in-person','Presencial'],['online','Online']].map(([value,label])=>
+   `<option value="${value}" ${format===value?'selected':''}>${label}</option>`).join('');
+}
+function eventFormatFields(format,location,roomUrl=''){
+ const online=format==='online';
+ return `<label class="field">Formato<select class="select" name="format" required>${eventFormatOptions(format)}</select></label>
+ <div data-format-field="in-person" ${online?'hidden':''}><label class="field">Local presencial<input class="input" name="location" maxlength="120" value="${esc(location)}" placeholder="Ex.: Praça central, Nova Friburgo" ${online?'disabled':'required'}></label></div>
+ <div data-format-field="online" ${online?'':'hidden'}><label class="field">Link da sala online<input class="input" type="url" name="roomUrl" maxlength="2048" placeholder="https://" value="${esc(roomUrl)}" ${online?'required':'disabled'}></label><p class="tip">O link da sala fica disponível para quem confirmar presença.</p></div>`;
+}
+function syncEventFormatFields(form){
+ form.querySelectorAll('[data-format-field]').forEach(section=>{
+   const input=section.querySelector('input'),active=section.dataset.formatField===form.elements.format.value;
+   section.hidden=!active;input.disabled=!active;input.required=active;
+ });
+}
+function validEventRoomUrl(value){
+ if(!/^https:\/\/[^\s]+$/.test(value)||value.length>2048)return false;
+ try{const url=new URL(value);return Boolean(url.hostname&&!url.username&&!url.password);}
+ catch{return false;}
+}
+function canReadEventRoom(event,uid=me()){
+ return Boolean(uid&&event?.format==='online'&&event.cancelled!==true&&
+   (event.createdBy===uid||event.attendees?.includes(uid)));
+}
+async function loadEventRoom(force=false){
+ const uid=me(),event=state.events.find(item=>item.id===state.selectedEvent);
+ if(!['event-detail','event-edit'].includes(state.modal)||!canReadEventRoom(event,uid)){
+   state.eventRoom=null;return;
+ }
+ if(!force&&state.eventRoom?.id===event.id&&state.eventRoom.revision===event.revision)return;
+ const room={id:event.id,revision:event.revision,url:'',loading:true,error:false};
+ state.eventRoom=room;render();
+ try{
+   const snapshot=await firebase.getDoc(ref('events',event.id,'private','room'));
+   if(state.eventRoom!==room||me()!==uid)return;
+   const url=snapshot.data()?.url||'';
+   room.url=validEventRoomUrl(url)?url:'';
+   if(state.modal==='event-edit'&&state.drafts.get('event-edit-form')?.roomUrl===''){
+     state.drafts.get('event-edit-form').roomUrl=room.url;
+     const input=document.querySelector('#event-edit-form [name="roomUrl"]');
+     if(input&&!input.value)input.value=room.url;
+   }
+ }catch{room.error=true;}
+ finally{
+   room.loading=false;
+   if(state.eventRoom===room&&state.selectedEvent===room.id&&['event-detail','event-edit'].includes(state.modal))render();
+ }
+}
+function renderEventRoom(event){
+ if(!canReadEventRoom(event)||!event.attendees?.includes(me()))return '';
+ const room=state.eventRoom?.id===event.id?state.eventRoom:null;
+ if(room?.url)return `<a class="btn btn-primary btn-small" href="${esc(room.url)}" target="_blank" rel="noopener noreferrer">Entrar no encontro</a>`;
+ if(room?.error)return '<p class="tip">Não foi possível abrir o link da sala. <button class="text-action" data-action="retry-event-room">Tentar novamente</button></p>';
+ return room?.loading?'<p class="tip">Carregando link da sala…</p>':'';
+}
 function eventDirectionsLink(event){
  const location=String(event.location??'').trim();
  const label=norm(location);
- if(event.cancelled===true||!/[\p{L}\d]/u.test(location)||
+ if(event.cancelled===true||eventFormat(event)==='online'||!/[\p{L}\d]/u.test(location)||
    /^(?:(?:evento|encontro|local|endereco) )?(?:on[- ]?line|virtual|remot[oa]|a distancia|a combinar|a definir|a confirmar|nao informado|indefinido|em breve)\b/.test(label)||
    /^(?:zoom|google meet|microsoft teams|discord)(?:$|\s*[:–—-])/.test(label)||
    /https?:\/\/|^www\./i.test(location))return '';
@@ -905,7 +968,7 @@ function eventCard(event, inGroup=false, detail=false) {
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}${eventEndTime(event)?`–${esc(eventEndTime(event))}`:''}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
- <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${esc(event.location||'Online')} ${eventDirectionsLink(event)}</div>
+ <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')} ${eventDirectionsLink(event)}</div>
  <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
  ${!detail&&event.cancelled!==true?`<button class="text-action" data-action="share-event" data-id="${esc(event.id)}">Compartilhar evento</button>`:''}
  ${detail?'':eventCalendarButton(event)}
@@ -1077,11 +1140,12 @@ function renderEvents(now=new Date()) {
  const hobbies=[...new Set(state.events.map(event=>event.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
  const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
- const filtering=Boolean(query||state.eventHobby||state.eventCommunity);
+ const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat);
  const events=state.events.filter(event=>{
    const group=communities.get(event.groupId);
    if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
    if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
+   if(state.eventFormat&&eventFormat(event)!==state.eventFormat)return false;
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(event.date>=localDateKey(days[0])&&event.date<=localDateKey(days[6])));
@@ -1111,6 +1175,7 @@ function renderEvents(now=new Date()) {
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
+ <label class="field">Formato<select class="select" id="event-format-filter"><option value="">Todos os formatos</option>${eventFormatOptions(state.eventFormat)}</select></label>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
  ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
@@ -1737,6 +1802,7 @@ function renderModal() {
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
    <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${eventCalendarButton(event)}</div>
+   ${renderEventRoom(event)}
    ${canExportEventCalendar(event)?'<p class="tip" style="margin-top:12px">Abra o arquivo .ics baixado para salvar o evento no seu calendário.</p>':''}
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
@@ -1750,8 +1816,9 @@ function renderModal() {
      <label class="field">Data<input class="input" type="date" name="date" required min="${today()}" value="${esc(event.date)}"></label>
      <label class="field">Horário de início<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
      <label class="field">Horário de término (opcional)<input class="input" type="time" name="endTime" value="${esc(event.endTime||'')}"></label>
-     <label class="field">Local<input class="input" name="location" required maxlength="120" value="${esc(event.location)}"></label>
-     <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div>
+     ${eventFormatFields(eventFormat(event),eventFormat(event)==='in-person'?event.location:'',state.eventRoom?.id===event.id?state.eventRoom.url:'')}
+     ${state.eventRoom?.id===event.id&&state.eventRoom.error?'<p class="tip">Não foi possível carregar o link da sala. <button type="button" class="text-action" data-action="retry-event-room">Tentar novamente</button></p>':''}
+     <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy||state.eventRoom?.loading?'disabled':''}>Salvar alterações</button></div>
    </form>`);
  }
  if(state.modal==='compose'){
@@ -1803,7 +1870,8 @@ function renderModal() {
  return modalWrap(template&&!fromPoll?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${guidance?`<p class="tip">${guidance}</p>`:''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><label class="field">Horário de início<input class="input" name="time" type="time" required></label></div>
  <label class="field">Horário de término (opcional)<input class="input" name="endTime" type="time"></label>
- <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo" value="${esc(template?.location)}"></div>
+ <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div>
+ ${eventFormatFields(template?eventFormat(template):'in-person',template&&eventFormat(template)==='in-person'?template.location:'')}
  <label class="field">Número de vagas (opcional)<input class="input" type="number" name="capacity" min="2" max="200" step="1" value="${esc(template?.capacity)}" placeholder="Em branco para vagas ilimitadas"></label>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
@@ -1884,8 +1952,9 @@ function captureDrafts(){
 }
 function restoreDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
-   const values=state.drafts.get(f.dataset.draftKey||f.id);if(!values)return;
-   f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{if(Object.hasOwn(values,el.name))el.value=values[el.name];});
+   const values=state.drafts.get(f.dataset.draftKey||f.id);
+   if(values)f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{if(Object.hasOwn(values,el.name))el.value=values[el.name];});
+   if(f.id==='event-form'||f.id==='event-edit-form')syncEventFormatFields(f);
  });
 }
 function clearSubmittedDraft(formId,key,field,value) {
@@ -1982,6 +2051,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.eventRoom=null;
  state.eventConflict=null;
  state.composingRecapId=null;
  clearContentLink();
@@ -2046,10 +2116,12 @@ async function loadEventFeedback(event) {
 }
 function openEventDetail(id,questionId='') {
  state.eventConflict=null;
+ state.eventRoom=null;
  state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;openModal('event-detail');
  if(me()&&state.events.some(event=>event.id===id&&event.createdBy===me()))void loadEventCheckins(id);
  if(state.events.some(event=>event.id===id))void loadEventQuestions(id,questionId);
  void loadEventFeedback(state.events.find(event=>event.id===id));
+ void loadEventRoom();
 }
 async function loadModerationSelection(groupId,targetId) {
  const group=state.groups.find(item=>item.id===groupId);
@@ -2147,7 +2219,7 @@ function calendarEventsFile(events, stamp=new Date()) {
    `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
    `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
    ...(eventEndTime(event)?[`DTEND:${event.date.replace(/-/g,'')}T${event.endTime.replace(':','')}00`]:[]),
-   `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(event.location)}`,
+   `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(eventFormat(event)==='online'?'Online':event.location)}`,
    `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT'];
  }),'END:VCALENDAR'];
  const encoder=new TextEncoder();
@@ -2325,7 +2397,8 @@ async function onAction(btn) {
   }
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
-  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';render();return;
+  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';render();return;
+  case 'retry-event-room':await loadEventRoom(true);return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openModal('compose');return;
   case 'compose-event-recap':{
     const event=state.events.find(item=>item.id===id);
@@ -2360,7 +2433,7 @@ async function onAction(btn) {
   }
   case 'edit-event':{
     const event=state.events.find(item=>item.id===id);
-    if(event?.createdBy===me()&&event.cancelled!==true){state.selectedEvent=id;openModal('event-edit');}
+    if(event?.createdBy===me()&&event.cancelled!==true){state.selectedEvent=id;openModal('event-edit');void loadEventRoom();}
     return;
   }
   case 'cancel-event':await attempt(async()=>{
@@ -2861,6 +2934,9 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
+ if(event.target.name==='format'&&['event-form','event-edit-form'].includes(event.target.form?.id)){
+   syncEventFormatFields(event.target.form);return;
+ }
  if(event.target.dataset?.feedbackStatus){
    const id=event.target.dataset.feedbackStatus,status=event.target.value,queue=state.productFeedbackQueue;
    if(status==='resolved'&&state.feedbackAdmin&&state.modal==='product-feedback-admin'&&queue?.entries.some(item=>item.id===id&&item.status!==status)){
@@ -2882,6 +2958,7 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='welcome-hobby')state.welcomeHobby=event.target.value;
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
+ else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
  else if(event.target.id==='group-hobby')state.groupHobby=event.target.value;
  else if(event.target.id==='group-city')state.groupCity=event.target.value;
  else return;
@@ -2944,9 +3021,23 @@ document.addEventListener('submit',async(event)=>{
     const uid=me(),isRepeat=Boolean(state.eventTemplate&&!fromPoll);
     const limit=val('capacity'),capacity=Number(limit);
     if(limit&&(!Number.isInteger(capacity)||capacity<2||capacity>200))throw new Error('Escolha entre 2 e 200 vagas.');
-    const time=val('time'),endTime=val('endTime');
+    const time=val('time'),endTime=val('endTime'),format=val('format')||'in-person',roomUrl=val('roomUrl');
+    const location=format==='online'?'Online':val('location');
+    if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
+    if(!location)throw new Error('Informe o local do encontro.');
     validateEventEndTime(time,endTime);
-    const created=await firebase.addDoc(col('events'),{...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
+    const fields={...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),hobby:val('hobby'),format,location,description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})};
+    let created;
+    if(format==='online'){
+      if(fields.description.includes(roomUrl))throw new Error('Use apenas o campo privado para o link da sala.');
+      created=firebase.doc(col('events'));
+      const batch=firebase.writeBatch(db);
+      batch.set(created,fields);
+      batch.set(ref('events',created.id,'private','room'),{url:roomUrl,ownerId:uid});
+      await batch.commit();
+    }else{
+      created=await firebase.addDoc(col('events'),fields);
+    }
     if(me()!==uid)return;
     state.eventTemplate=null;
     closeModal();setTab(groupId?'groups':'events');
@@ -2957,17 +3048,26 @@ document.addEventListener('submit',async(event)=>{
   case 'event-edit-form':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
     if(!event||event.createdBy!==me()||event.cancelled===true)return;
-    const date=val('date'),time=val('time'),endTime=val('endTime'),location=val('location');
+    const date=val('date'),time=val('time'),endTime=val('endTime'),format=val('format')||eventFormat(event),roomUrl=val('roomUrl');
+    const location=format==='online'?'Online':val('location');
     if(date<today()||!time||!location)throw new Error('Informe data, horário e local válidos.');
+    if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
     validateEventEndTime(time,endTime);
     const target=ref('events',event.id);
     const changed=await firebase.runTransaction(db,async transaction=>{
       const latest=(await transaction.get(target)).data();
       if(!latest||latest.cancelled===true)throw new Error('Este evento já foi cancelado ou removido.');
-      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&location===latest.location)return false;
+      const roomRef=ref('events',event.id,'private','room');
+      const previousRoom=latest.format==='online'?(await transaction.get(roomRef)).data()?.url:'';
+      if(format==='online'&&latest.description?.includes(roomUrl))throw new Error('Escolha um link que não esteja na descrição pública do evento.');
+      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&location===latest.location&&format===latest.format&&
+         (format!=='online'||previousRoom===roomUrl))return false;
       const revision=(latest.revision||0)+1;
-      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',location:latest.location,revision};
-      transaction.update(target,{date,time,endTime,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
+      const previousLocation=format==='online'&&/https?:\/\/|www\./i.test(latest.location)?'Online':latest.location;
+      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',location:previousLocation,revision};
+      transaction.update(target,{date,time,endTime,format,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
+      if(format==='online')transaction.set(roomRef,{url:roomUrl,ownerId:latest.createdBy});
+      else if(latest.format==='online')transaction.delete(roomRef);
       return true;
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);

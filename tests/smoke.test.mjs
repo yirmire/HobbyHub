@@ -1020,6 +1020,23 @@ test('event cards and details link only to an in-person destination', () => {
   assert.equal(vm.runInContext("eventDirectionsLink({location:'Praça da Sé',cancelled:true})",context),'');
 });
 
+test('event format filters include legacy labels and room links require confirmation', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};state.eventFilter='all';state.eventFormat='online';
+    const online={id:'e',title:'Encontro virtual',format:'online',location:'Online',attendees:['guest']};
+    state.events=[online,{id:'p',title:'Encontro no parque',format:'in-person',location:'Parque'},
+      {id:'legacy',title:'Reunião antiga',location:'Google Meet'}];
+    state.eventRoom={id:'e',url:'https://meet.example.test/room'};
+  `,context);
+  const agenda=vm.runInContext('renderEvents()',context);
+  assert.match(agenda,/Encontro virtual[\s\S]*Reunião antiga/);
+  assert.doesNotMatch(agenda,/Encontro no parque|https:\/\/meet\.example/);
+  assert.match(vm.runInContext('renderEventRoom(online)',context),/href="https:\/\/meet\.example\.test\/room"[^>]*>Entrar no encontro/);
+  assert.equal(vm.runInContext("online.attendees=[];renderEventRoom(online)",context),'');
+  assert.equal(vm.runInContext("validEventRoomUrl('javascript:alert(1)')",context),false);
+});
+
 test('calendar data includes the clean event link and escapes user text', () => {
   const context = appContext();
   context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};
