@@ -639,6 +639,8 @@ function eventChangeDescriptions(event) {
  const changes=[];
  if(previous.date!==event.date)changes.push(`Data alterada de ${formatDate(previous.date)} para ${formatDate(event.date)}.`);
  if(previous.time!==event.time)changes.push(`Horário alterado de ${previous.time} para ${event.time}.`);
+ const previousEnd=previous.endTime??event.endTime??'',endTime=event.endTime||'';
+ if(previousEnd!==endTime)changes.push(endTime?`Novo horário de término: ${endTime}.`:'Horário de término removido.');
  if(previous.location!==event.location)changes.push(`Local alterado de ${previous.location} para ${event.location}.`);
  return changes.length?changes:['Confira as informações atualizadas do evento.'];
 }
@@ -695,7 +697,10 @@ function isConfirmedEventOn(event,day){
 }
 function conflictingEvents(event){
  return hasCalendarSchedule(event)?state.events.filter(other=>other.id!==event.id&&
-   other.time===event.time&&isConfirmedEventOn(other,event.date)):[];
+   isConfirmedEventOn(other,event.date)&&hasCalendarSchedule(other)&&
+   (other.time===event.time||
+    (other.time>event.time&&other.time<eventEndTime(event))||
+    (event.time>other.time&&event.time<eventEndTime(other)))):[];
 }
 function leaveEventConflict(){
  const conflict=state.eventConflict;
@@ -897,7 +902,7 @@ function eventCard(event, inGroup=false, detail=false) {
  const waiting=limited&&((event.attendees||[]).length>=event.capacity||event.waitlist.length>0);
  const group=state.groups.find(item=>item.id===event.groupId);
  const canJoin=!event.groupId||group?.members?.includes(me());
- return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
+ return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}${eventEndTime(event)?`–${esc(eventEndTime(event))}`:''}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${esc(event.location||'Online')} ${eventDirectionsLink(event)}</div>
@@ -1042,18 +1047,12 @@ function exportableWeekEvents(days){
    .sort((a,b)=>(a.date+' '+a.time).localeCompare(b.date+' '+b.time));
 }
 function renderEventWeek(days,events){
- const starts=new Map();
- for(const event of state.events){
-   if(event.cancelled===true||!event.time||!event.attendees?.includes(me()))continue;
-   const key=event.date+' '+event.time;
-   starts.set(key,(starts.get(key)||0)+1);
- }
  const sections=days.map(day=>{
    const entries=events.filter(event=>event.date===localDateKey(day));
    return entries.length?`<section class="form-stack"><h3>${day.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</h3>
    <div class="grid-two">${entries.map(event=>{
-     const conflict=event.cancelled!==true&&(starts.get(event.date+' '+event.time)||0)>1;
-     return `<div>${conflict?'<p class="tip">Conflito: outro encontro confirmado começa neste horário.</p>':''}${eventCard(event)}</div>`;
+     const conflict=isConfirmedEventOn(event,localDateKey(day))&&conflictingEvents(event).length;
+     return `<div>${conflict?'<p class="tip">Conflito: outro encontro confirmado coincide com este horário.</p>':''}${eventCard(event)}</div>`;
    }).join('')}</div></section>`:'';
  }).join('');
  const label=day=>day.toLocaleDateString('pt-BR');
@@ -1749,7 +1748,8 @@ function renderModal() {
    if(!event||event.createdBy!==me()||event.cancelled===true)return modalWrap('Edição indisponível','<p>Este evento não pode ser editado.</p>');
    return modalWrap('Editar evento',`<form id="event-edit-form" data-draft="true" class="form-stack">
      <label class="field">Data<input class="input" type="date" name="date" required min="${today()}" value="${esc(event.date)}"></label>
-     <label class="field">Horário<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
+     <label class="field">Horário de início<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
+     <label class="field">Horário de término (opcional)<input class="input" type="time" name="endTime" value="${esc(event.endTime||'')}"></label>
      <label class="field">Local<input class="input" name="location" required maxlength="120" value="${esc(event.location)}"></label>
      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div>
    </form>`);
@@ -1801,7 +1801,8 @@ function renderModal() {
  const guidance=fromPoll?(template.title?'Revise o título sugerido pela enquete e preencha os detalhes do encontro.':'A enquete terminou sem uma opção vencedora. Escolha um título e preencha os detalhes do encontro.')
    :template?'Escolha uma nova data e um horário. Os participantes confirmam presença novamente.':'';
  return modalWrap(template&&!fromPoll?'Nova edição do evento':eventGroup?`Evento em ${eventGroup.name}`:'Organizar encontro',`<form id="event-form" data-draft="true" class="form-stack">${guidance?`<p class="tip">${guidance}</p>`:''}<div class="field"><label>Título do evento</label><input class="input" name="title" maxlength="90" minlength="3" required placeholder="Ex.: Caminhada fotográfica na praça" value="${esc(template?.title)}"></div>
- <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><div class="field"><label>Horário</label><input class="input" name="time" type="time" required></div></div>
+ <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><label class="field">Horário de início<input class="input" name="time" type="time" required></label></div>
+ <label class="field">Horário de término (opcional)<input class="input" name="endTime" type="time"></label>
  <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div><div class="field"><label>Local (espaço público ou online)</label><input class="input" name="location" maxlength="120" required placeholder="Ex.: Praça central, Nova Friburgo" value="${esc(template?.location)}"></div>
  <label class="field">Número de vagas (opcional)<input class="input" type="number" name="capacity" min="2" max="200" step="1" value="${esc(template?.capacity)}" placeholder="Em branco para vagas ilimitadas"></label>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
@@ -2145,6 +2146,7 @@ function calendarEventsFile(events, stamp=new Date()) {
    `DTSTAMP:${stamp.toISOString().replace(/[-:]|\.\d{3}/g,'')}`,
    `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
    `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
+   ...(eventEndTime(event)?[`DTEND:${event.date.replace(/-/g,'')}T${event.endTime.replace(':','')}00`]:[]),
    `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(event.location)}`,
    `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT'];
  }),'END:VCALENDAR'];
@@ -2159,8 +2161,17 @@ function calendarEventsFile(events, stamp=new Date()) {
    return folded;
  }).join('\r\n')+'\r\n';
 }
+function isEventTime(time){
+ return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time);
+}
+function eventEndTime(event){
+ return isEventTime(event.time)&&isEventTime(event.endTime)&&event.endTime>event.time?event.endTime:'';
+}
+function validateEventEndTime(time,endTime){
+ if(endTime&&!eventEndTime({time,endTime}))throw new Error('O término deve ser depois do início, no mesmo dia.');
+}
 function hasCalendarSchedule(event){
- return /^\d{4}-\d{2}-\d{2}$/.test(event.date)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(event.time);
+ return /^\d{4}-\d{2}-\d{2}$/.test(event.date)&&isEventTime(event.time);
 }
 function canExportEventCalendar(event){
  return Boolean(event&&me()&&event.cancelled!==true&&event.attendees?.includes(me())&&hasCalendarSchedule(event));
@@ -2933,7 +2944,9 @@ document.addEventListener('submit',async(event)=>{
     const uid=me(),isRepeat=Boolean(state.eventTemplate&&!fromPoll);
     const limit=val('capacity'),capacity=Number(limit);
     if(limit&&(!Number.isInteger(capacity)||capacity<2||capacity>200))throw new Error('Escolha entre 2 e 200 vagas.');
-    const created=await firebase.addDoc(col('events'),{...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time:val('time'),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
+    const time=val('time'),endTime=val('endTime');
+    validateEventEndTime(time,endTime);
+    const created=await firebase.addDoc(col('events'),{...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),hobby:val('hobby'),location:val('location'),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})});
     if(me()!==uid)return;
     state.eventTemplate=null;
     closeModal();setTab(groupId?'groups':'events');
@@ -2944,16 +2957,17 @@ document.addEventListener('submit',async(event)=>{
   case 'event-edit-form':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
     if(!event||event.createdBy!==me()||event.cancelled===true)return;
-    const date=val('date'),time=val('time'),location=val('location');
+    const date=val('date'),time=val('time'),endTime=val('endTime'),location=val('location');
     if(date<today()||!time||!location)throw new Error('Informe data, horário e local válidos.');
+    validateEventEndTime(time,endTime);
     const target=ref('events',event.id);
     const changed=await firebase.runTransaction(db,async transaction=>{
       const latest=(await transaction.get(target)).data();
       if(!latest||latest.cancelled===true)throw new Error('Este evento já foi cancelado ou removido.');
-      if(date===latest.date&&time===latest.time&&location===latest.location)return false;
+      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&location===latest.location)return false;
       const revision=(latest.revision||0)+1;
-      const previousSchedule={date:latest.date,time:latest.time,location:latest.location,revision};
-      transaction.update(target,{date,time,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
+      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',location:latest.location,revision};
+      transaction.update(target,{date,time,endTime,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
       return true;
     });
     if(state.modal==='event-edit'&&state.selectedEvent===event.id)openEventDetail(event.id);
