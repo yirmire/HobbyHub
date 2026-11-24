@@ -60,7 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
-  savedView:'saved', followedPostsFilter:'all',
+  savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -296,6 +296,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';
+      state.savedSearch='';
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
@@ -1337,7 +1338,14 @@ function unreadFollowedComments(postId){
  return watch.entries.filter(comment=>comment.userId!==me()&&!state.blockedIds.includes(comment.userId)&&
    !state.notificationReads.has(followedCommentReadKey(postId,comment.id))&&!directReads.has(comment.id));
 }
-function renderFollowedPosts(){
+function savedPostMatches(post,query){
+ if(!query)return true;
+ if(!post)return false;
+ const community=state.groups.find(group=>group.id===post.groupId);
+ const text=norm(post.content),author=norm(authorName(post)),group=norm(community?.name);
+ return query.split(' ').every(term=>text.includes(term)||author.includes(term)||group.includes(term));
+}
+function renderFollowedPosts(query){
  const posts=new Map(state.posts.map(post=>[post.id,post]));
  const entries=[...state.followedPosts].sort((a,b)=>(b[1]||0)-(a[1]||0)).map(([id])=>{
    const post=posts.get(id);
@@ -1347,7 +1355,8 @@ function renderFollowedPosts(){
  const filters=`<div class="filters" role="group" aria-label="Filtrar publicações acompanhadas">${[['all','Todas'],['unread','Com novidades']].map(([value,label])=>
    `<button class="filter ${filter===value?'active':''}" data-action="followed-posts-filter" data-value="${value}" aria-pressed="${filter===value}">${label}</button>`).join('')}</div>`;
  if(!entries.length)return filters+empty('🔔','Você ainda não acompanha publicações','Use o menu de uma publicação para acompanhar novos comentários.','Explorar publicações','explore');
- const visible=filter==='unread'?entries.filter(entry=>entry.unread>0):entries;
+ const visible=entries.filter(entry=>(filter!=='unread'||entry.unread>0)&&savedPostMatches(entry.post,query));
+ if(!visible.length&&query)return filters+'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>';
  if(!visible.length)return filters+'<p class="tip">Nenhuma publicação com comentários novos.</p>';
  return filters+`<div class="form-stack">${visible.map(({id,post,unread})=>{
    return `<article class="card form-stack" style="padding:16px">
@@ -1362,11 +1371,15 @@ function renderFollowedPosts(){
  }).join('')}</div>`;
 }
 function renderSaved() {
+ const query=norm(state.savedSearch);
  const filters=`<div class="filters" role="group" aria-label="Tipo de publicação">${[['saved','Salvos'],['following','Acompanhando']].map(([view,label])=>
    `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
- if(state.savedView==='following')return filters+renderFollowedPosts();
+ const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="Texto, autor ou comunidade" value="${esc(state.savedSearch)}"></label>
+ ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
+ if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
  const posts=state.posts.filter(p=>state.savedIds.includes(p.id));
- return filters+`<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${posts.length?posts.map(postCard).join(''):empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ const results=posts.filter(post=>savedPostMatches(post,query));
+ return filters+search+`<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${results.length?results.map(postCard).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
 function mediaUrl(value) {
  try {
@@ -3312,6 +3325,11 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'clear-saved-search':
+    if(state.tab==='saved'){
+      state.savedSearch='';render();document.getElementById('saved-search')?.focus();
+    }
+    return;
   case 'followed-posts-filter':
     if(state.tab==='saved'&&state.savedView==='following'&&['all','unread'].includes(btn.dataset.value)){
       state.followedPostsFilter=btn.dataset.value;render();
@@ -3427,6 +3445,7 @@ window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
  if(event.target.form?.id==='post-form')savePostDraft(event.target.form);
  if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
+ if(event.target.id==='saved-search'){state.savedSearch=event.target.value;render();return;}
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;state.postSearchLimit=20;render();}
 });
 document.addEventListener('submit',async(event)=>{
