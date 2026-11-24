@@ -425,13 +425,13 @@ const replyPath=editable+'/comments/reply';
 const replyWrite={update:{name:documents+replyPath,fields:{
   userId:str(sender.localId),text:str('Resposta de teste'),createdAt:{integerValue:'200'},parentId:str('original')
 }}};
-const replyNotice=(target)=>({
+const commentReplyNotice=(target)=>({
   update:{name:documents+'public/data/members/'+target.localId+'/notifications/comment-reply-editable-post:reply',fields:{
     type:str('comment-reply'),actorId:str(sender.localId),postId:str('editable-post'),commentId:str('reply')
   }},updateTransforms:stamp('createdAt')
 });
-await moderate(sender,[replyWrite,replyNotice(other)],403);
-await moderate(sender,[replyWrite,replyNotice(recipient)],200);
+await moderate(sender,[replyWrite,commentReplyNotice(other)],403);
+await moderate(sender,[replyWrite,commentReplyNotice(recipient)],200);
 await request(recipient,'GET','public/data/members/'+recipient.localId+'/notifications/comment-reply-editable-post:reply',200);
 await request(other,'GET','public/data/members/'+recipient.localId+'/notifications/comment-reply-editable-post:reply',403);
 await moderate(sender,[{update:{name:documents+editable+'/comments/nested',fields:{...replyWrite.update.fields,parentId:str('reply')}}}],403);
