@@ -1227,6 +1227,29 @@ test('renaming and deleting a collection preserve the saved posts and other coll
   assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
 });
 
+test('my comment filters combine type and community and find matches on older pages', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.groups=[{id:'photo',name:'Fotografia'},{id:'travel',name:'Viagens'}];
+    state.posts=[{id:'p1',groupId:'travel'},{id:'p2',groupId:'photo'}];
+    const doc=(id,postId,data)=>({id,ref:{path:postId+'/comments/'+id,parent:{parent:{id:postId,path:[...BASE,'posts',postId].join('/')}}},data:()=>({userId:'reader',...data})});
+    const first=Array.from({length:30},(_,index)=>doc('recent'+index,'p1',{text:'Comentário recente'}));
+    const second=[doc('old','p2',{parentId:'parent',text:'Resposta antiga na fotografia'})];
+    state.pages=0;
+    firebase={collectionGroup:()=>null,where:()=>0,orderBy:()=>0,limit:()=>0,startAfter:()=>0,query:()=>0,
+      getDocs:async()=>({docs:state.pages++===0?first:second})};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'my-comment-activity'}})",context);
+  assert.equal(vm.runInContext('state.pages',context),1);
+  await vm.runInContext("filterMyComments('replies','photo')",context);
+  assert.equal(vm.runInContext('state.pages',context),2);
+  assert.match(vm.runInContext('renderModal()',context),/value="photo" selected>Fotografia[\s\S]*Resposta antiga na fotografia/);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Comentário recente/);
+  await vm.runInContext("filterMyComments('comments','photo')",context);
+  assert.match(vm.runInContext('renderModal()',context),/Nenhum comentário com esses filtros/);
+});
+
 test('my comments queries only the signed-in author and opens the exact reply', async () => {
   const context=appContext();
   vm.runInContext(`
