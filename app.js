@@ -65,6 +65,7 @@ const state = {
   savedSelection:null,
   savedNotes:new Map(), savedNotePostId:null,
   savedComments:new Map(), savedCommentWatches:new Map(),
+  myCommentActivity:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -326,6 +327,7 @@ async function init() {
       state.editingSavedCollectionId=null;
       state.savedSelection=null;
       state.savedNotes.clear();state.savedNotePostId=null;
+      state.myCommentActivity=null;
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
@@ -1559,7 +1561,9 @@ function renderProfile() {
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
  <div class="card" style="padding:16px">${renderTestimonials(state.receivedTestimonials,true)}</div>
- <div class="section-head"><h2>Suas publicações</h2><button class="text-action" data-action="compose">Publicar algo ${icon('plus')}</button></div>
+ <div class="section-head"><h2>Suas publicações</h2><div class="toggle-row" style="flex-wrap:wrap">
+ <button class="text-action" data-action="my-comment-activity">Meus comentários</button>
+ <button class="text-action" data-action="compose">Publicar algo ${icon('plus')}</button></div></div>
  ${posts.length?posts.map(postCard).join(''):empty('🎨','Conte sua primeira história','O que você está aprendendo, criando ou descobrindo?','Criar publicação','compose')}`;
 }
 function renderMessages() {
@@ -2085,7 +2089,42 @@ function renderCommentThreads(belongsToGroup,canModerate){
    return '';
  }).join('');
 }
+async function loadMyCommentActivity(){
+ const uid=me(),activity=state.myCommentActivity;
+ if(!uid||!activity||state.modal!=='my-comment-activity'||activity.loading||!activity.more)return;
+ activity.loading=true;activity.error='';render();
+ try{
+   const filters=[firebase.where('userId','==',uid),firebase.orderBy('createdAt','desc'),firebase.limit(30)];
+   if(activity.last)filters.push(firebase.startAfter(activity.last));
+   const result=await firebase.getDocs(firebase.query(firebase.collectionGroup(db,'comments'),...filters));
+   if(me()!==uid||state.myCommentActivity!==activity)return;
+   for(const doc of result.docs){
+     const post=doc.ref.parent.parent;
+     if(post?.path!==[...BASE,'posts',post?.id].join('/'))continue;
+     activity.entries.push({...doc.data(),postId:post.id,commentId:doc.id,key:doc.ref.path});
+   }
+   activity.last=result.docs.at(-1)||activity.last;
+   activity.more=result.docs.length===30;
+ }catch(error){activity.error=friendlyError(error);}
+ finally{
+   activity.loading=false;
+   if(state.myCommentActivity===activity&&state.modal==='my-comment-activity')render();
+ }
+}
+function renderMyCommentActivity(){
+ const activity=state.myCommentActivity,posts=new Map(state.posts.map(post=>[post.id,post]));
+ const entries=activity?.entries.filter(item=>posts.has(item.postId))||[];
+ return modalWrap('Meus comentários',`<div class="form-stack">
+ ${entries.map(item=>`<article class="card form-stack" style="padding:14px">
+ <div class="toggle-row" style="flex-wrap:wrap"><strong>${item.parentId?'Resposta':'Comentário'}</strong><small>${when(item.createdAt)}</small></div>
+ <p class="post-copy" style="margin:0">${esc(short(item.text,240))}</p>
+ <small>Em uma publicação de ${esc(authorName(posts.get(item.postId)))}</small>
+ <button class="text-action" data-action="open-my-comment" data-id="${esc(item.key)}">Abrir comentário</button></article>`).join('')}
+ ${activity?.error?`<p class="tip" role="status">${esc(activity.error)}</p>`:activity?.loading?'<p class="tip" role="status">Carregando comentários…</p>':!entries.length?'<p class="tip">Nenhum comentário para exibir.</p>':''}
+ ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
+}
 function renderModal() {
+ if(state.modal==='my-comment-activity')return renderMyCommentActivity();
  if(state.modal==='edit-saved-note'){
    const id=state.savedNotePostId;
    if(!state.savedIds.includes(id))return modalWrap('Nota privada','<p>Esta publicação não está mais em Salvos.</p>');
@@ -2529,6 +2568,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.myCommentActivity=null;
  state.savedNotePostId=null;
  state.editingSavedCollectionId=null;
  state.collectionPostId=null;
@@ -3385,6 +3425,19 @@ async function onAction(btn) {
   },'updatingBlock');return;
   case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
+  case 'my-comment-activity':
+    if(me()){
+      state.myCommentActivity={entries:[],last:null,more:true,loading:false,error:''};
+      openModal('my-comment-activity');await loadMyCommentActivity();
+    }
+    return;
+  case 'load-my-comments':await loadMyCommentActivity();return;
+  case 'open-my-comment':{
+    if(!me()||state.modal!=='my-comment-activity')return;
+    const item=state.myCommentActivity?.entries.find(entry=>entry.key===id&&entry.userId===me());
+    if(item)openComments(item.postId,item.commentId);
+    return;
+  }
   case 'toggle-comment-replies':
     if(state.modal==='comments'&&state.comments.filter(comment=>comment.parentId===id).length>=3){
       if(!state.expandedCommentReplies.delete(id))state.expandedCommentReplies.add(id);
