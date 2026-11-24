@@ -1024,6 +1024,33 @@ test('followed posts watch only new comments, avoid duplicates and stop when unf
   assert.equal(vm.runInContext("notificationItems().some(item=>item.type==='followed-comment')",context),false);
 });
 
+test('the followed tab in Saved shows new comments and lets the user open or unfollow a post', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';
+    state.posts=[{id:'followed',userId:'owner',content:'Texto acompanhado'},
+      {id:'saved',userId:'owner',content:'Texto guardado'}];
+    state.savedIds=['saved'];state.followedPosts.set('followed',100);state.followedPosts.set('missing',101);
+    state.followedPostWatches.set('followed',{entries:[
+      {id:'new',userId:'owner'},{id:'own',userId:'reader'},{id:'read',userId:'owner'}
+    ]});
+    state.notificationReads.add('followed-comment:followed:read');
+    openComments=(...args)=>{state.openedFollowed=args.join(':');};
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),deleteDoc:async path=>{state.deletedFollow=path;}};
+  `,context);
+  assert.match(vm.runInContext('renderSaved()',context),/Texto guardado/);
+  await vm.runInContext("onAction({dataset:{action:'saved-view',value:'following'}})",context);
+  const followed=vm.runInContext('renderSaved()',context);
+  assert.match(followed,/Publicação indisponível[\s\S]*1 comentário novo[\s\S]*Texto acompanhado[\s\S]*Abrir conversa/);
+  assert.doesNotMatch(followed,/Texto guardado/);
+  await vm.runInContext("onAction({dataset:{action:'open-followed-conversation',id:'followed'}})",context);
+  assert.equal(vm.runInContext('state.openedFollowed',context),'followed:new');
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/comentário novo/);
+  await vm.runInContext("onAction({dataset:{action:'stop-followed-post',id:'missing'}})",context);
+  assert.match(vm.runInContext('state.deletedFollow',context),/\/reader\/followedPosts\/missing$/);
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};
