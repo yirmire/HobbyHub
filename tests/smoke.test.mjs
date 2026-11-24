@@ -920,7 +920,7 @@ test('event invitations wait for login and display participation before the cale
   assert.equal(vm.runInContext('state.modal', context), null);
   const guest = vm.runInContext(`
     state.user={uid:'guest'};state.groups=[{id:'g',name:'Fotografia',members:[]}];
-    state.events=[{id:'e',groupId:'g',title:'Caminhada',date:'2099-01-01',attendees:[]}];
+    state.events=[{id:'e',groupId:'g',title:'Caminhada',date:'2099-01-01',time:'10:30',attendees:[]}];
     openLinkedContent();renderModal()
   `, context);
   assert.match(guest, /Caminhada/);
@@ -928,6 +928,8 @@ test('event invitations wait for login and display participation before the cale
   assert.doesNotMatch(guest, /data-action="event-calendar"/);
   const joined = vm.runInContext(`state.groups[0].members.push('guest');state.events[0].attendees.push('guest');renderModal()`, context);
   assert.match(joined, /Adicionar ao calendário/);
+  assert.equal((joined.match(/data-action="event-calendar"/g)||[]).length,1);
+  assert.match(vm.runInContext('eventCard(state.events[0])',context),/Adicionar ao calendário/);
 });
 
 test('calendar data includes the clean event link and escapes user text', () => {
@@ -945,6 +947,27 @@ test('calendar data includes the clean event link and escapes user text', () => 
   assert.match(file, /URL:https:\/\/example.test\/HobbyHub\/#event=e/);
   assert.doesNotMatch(file, /utm_source/);
   assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
+});
+
+test('the calendar action downloads the confirmed event from its card', async () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    state.events=[
+      {id:'e',title:'Caminhada',location:'Parque',date:'2099-01-01',time:'10:30',attendees:['guest']},
+      {id:'other',date:'2099-01-01',time:'10:30',attendees:['other']},
+      {id:'invalid',date:'2099-01-01',attendees:['guest']},
+      {id:'cancelled',date:'2099-01-01',time:'10:30',cancelled:true,attendees:['guest']}
+    ];
+    state.downloads=[];downloadCalendar=(file,name)=>state.downloads.push({file,name});
+  `,context);
+  for(const id of ['other','invalid','cancelled','e']){
+    await vm.runInContext(`onAction({dataset:{action:'event-calendar',id:${JSON.stringify(id)}}})`,context);
+  }
+  assert.equal(vm.runInContext('state.downloads.length',context),1);
+  assert.equal(vm.runInContext('state.downloads[0].name',context),'evento-hobbyhub.ics');
+  assert.match(vm.runInContext('state.downloads[0].file',context),/DTSTART:20990101T103000[\s\S]*SUMMARY:Caminhada[\s\S]*LOCATION:Parque[\s\S]*URL:https:\/\/example.test\/HobbyHub\/#event=e/);
 });
 
 test('weekly calendar exports confirmed, scheduled events in one file', () => {
@@ -1004,7 +1027,7 @@ test('organizer controls are private and cancelled event links remain readable',
   const context = appContext();
   const setup = `
     state.user={uid:'owner'};state.modal='event-detail';state.selectedEvent='e';
-    state.events=[{id:'e',createdBy:'owner',title:'Caminhada',date:'2099-01-01',attendees:['owner','guest'],revision:1}];
+    state.events=[{id:'e',createdBy:'owner',title:'Caminhada',date:'2099-01-01',time:'10:30',attendees:['owner','guest'],revision:1}];
     renderModal()
   `;
   const organizer = vm.runInContext(setup, context);
