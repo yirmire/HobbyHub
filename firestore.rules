@@ -159,6 +159,20 @@ service cloud.firestore {
         allow update: if isMe(uid) && changedOnly(['note'])
           && validText(request.resource.data.note, 0, 500);
       }
+      match /savedComments/{savedId} {
+        function validSavedComment(data) {
+          return data.keys().hasOnly(['postId','commentId','savedAt'])
+            && validText(data.postId, 1, 120) && data.postId.matches('[A-Za-z0-9_-]+')
+            && validText(data.commentId, 1, 120) && data.commentId.matches('[A-Za-z0-9_-]+')
+            && savedId == data.postId + ':' + data.commentId
+            && data.savedAt == request.time
+            && exists(publicPostPath(appId, data.postId))
+            && exists(publicCommentPath(appId, data.postId, data.commentId));
+        }
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && validSavedComment(request.resource.data);
+        allow update: if false;
+      }
       match /savedCollections/{collectionId} {
         function validCollectionName(data) {
           return validText(data.name, 1, 60) && data.name.matches('(?s).*[^\\s].*');

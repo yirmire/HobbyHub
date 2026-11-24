@@ -64,6 +64,7 @@ const state = {
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
   savedNotes:new Map(), savedNotePostId:null,
+  savedComments:new Map(), savedCommentWatches:new Map(),
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -140,6 +141,8 @@ function unsubscribeAll() {
  state.eventBulletins.clear();
  for(const watch of state.followedPostWatches.values())watch.unsubscribe();
  state.followedPostWatches.clear();state.followedPosts.clear();
+ for(const watch of state.savedCommentWatches.values())watch.unsubscribe();
+ state.savedCommentWatches.clear();state.savedComments.clear();
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -221,6 +224,7 @@ function startSession() {
   subscribe(col('posts'), (s)=>{
     state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
     watchFollowedPosts();
+    watchSavedComments();
     queueMicrotask(openLinkedContent);
   },'publicações');
   subscribe(col('groups'), (s)=>{
@@ -254,6 +258,10 @@ function startSession() {
     state.savedCollections=docs(snapshot).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
     if(!state.savedCollections.some(item=>item.id===state.selectedSavedCollection))state.selectedSavedCollection='';
   },'coleções salvas');
+  subscribe(col('members',me(),'savedComments'),snapshot=>{
+    state.savedComments=new Map(snapshot.docs.map(doc=>[doc.id,doc.data()]));
+    watchSavedComments();
+  },'comentários salvos');
   subscribe(col('members',me(),'followedPosts'),snapshot=>{
     state.followedPosts=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().followedAt?.toMillis?.()]));
     watchFollowedPosts();
@@ -525,6 +533,27 @@ function watchFollowedPosts(){
      if(watches.get(id)!==watch)return;
      watch.entries=[];render();
    });
+ }
+}
+function savedCommentKey(postId,commentId){
+ return postId+':'+commentId;
+}
+function watchSavedComments(){
+ const watches=state.savedCommentWatches,uid=me();
+ const posts=new Set(state.posts.map(post=>post.id));
+ for(const [key,watch] of watches){
+   if(!posts.has(state.savedComments.get(key)?.postId)){watch.unsubscribe();watches.delete(key);}
+ }
+ if(!uid)return;
+ for(const [key,{postId,commentId}] of state.savedComments){
+   if(watches.has(key)||!posts.has(postId)||typeof commentId!=='string')continue;
+   const watch={loading:true,comment:null,unsubscribe:()=>{}};
+   watches.set(key,watch);
+   const finish=comment=>{
+     if(me()!==uid||watches.get(key)!==watch)return;
+     watch.loading=false;watch.comment=comment;render();
+   };
+   watch.unsubscribe=firebase.onSnapshot(ref('posts',postId,'comments',commentId),snapshot=>finish(snapshot.data()),()=>finish(null));
  }
 }
 function followedCommentReadKey(postId,commentId){
@@ -1392,13 +1421,27 @@ function renderFollowedPosts(query){
    </article>`;
  }).join('')}</div>`;
 }
+function renderSavedComments(){
+ const entries=[...state.savedComments].sort((a,b)=>(b[1].savedAt?.toMillis?.()||0)-(a[1].savedAt?.toMillis?.()||0));
+ if(!entries.length)return '<p class="tip">Você ainda não salvou comentários. Use o menu ⋯ de um comentário para guardá-lo.</p>';
+ return `<div class="form-stack">${entries.map(([key,{postId}])=>{
+   const watch=state.savedCommentWatches.get(key),comment=watch?.comment;
+   return `<article class="card form-stack" style="padding:16px">
+   ${comment?`<strong>${esc(authorName(comment))}</strong><p class="post-copy" style="margin:0">${esc(short(comment.text,240))}</p>`
+   :`<p class="tip">${watch?.loading?'Carregando comentário…':'Comentário indisponível.'}</p>`}
+   <div class="toggle-row" style="flex-wrap:wrap">
+   ${comment&&state.posts.some(post=>post.id===postId)?`<button class="btn btn-outline btn-small" data-action="open-saved-comment" data-id="${esc(key)}">Abrir comentário</button>`:''}
+   <button class="text-action" data-action="remove-saved-comment" data-id="${esc(key)}" ${state.busy?'disabled':''}>Remover dos salvos</button></div></article>`;
+ }).join('')}</div>`;
+}
 function renderSaved() {
  const query=norm(state.savedSearch);
- const filters=`<div class="filters" role="group" aria-label="Tipo de publicação">${[['saved','Salvos'],['following','Acompanhando']].map(([view,label])=>
+ const filters=`<div class="filters" role="group" aria-label="Tipo de item salvo">${[['saved','Salvos'],['following','Acompanhando'],['comments','Comentários']].map(([view,label])=>
    `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
  const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="${state.savedView==='saved'?'Texto, autor, comunidade ou nota':'Texto, autor ou comunidade'}" value="${esc(state.savedSearch)}"></label>
  ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
  if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
+ if(state.savedView==='comments')return filters+renderSavedComments();
  const selected=state.selectedSavedCollection;
  const collection=state.savedCollections.find(item=>item.id===selected);
  const selection=state.savedSelection;
@@ -1991,10 +2034,11 @@ function renderProductNews(){
 }
 function renderPostComment(comment,belongsToGroup,canModerate){
  const id=esc(comment.id),own=Boolean(me()&&comment.userId===me());
- const editor=own&&state.commentEditor?.id===comment.id?state.commentEditor:null;
+ const editor=state.commentEditor?.id===comment.id?state.commentEditor:null;
+ const saved=state.savedComments.has(savedCommentKey(state.selectedPost,comment.id));
  return `<div class="comment" id="post-comment-${id}" tabindex="-1">${avatar({avatar:member(comment.userId)?.avatar||'💬'})}
  <div class="comment-body"><strong>${esc(member(comment.userId)?.name||comment.userName||'Pessoa')}</strong>
- ${editor?.editing?`<form id="edit-comment-form" data-draft="true" data-draft-key="edit-comment:${esc(state.selectedPost)}:${id}" class="form-stack">
+ ${own&&editor?.editing?`<form id="edit-comment-form" data-draft="true" data-draft-key="edit-comment:${esc(state.selectedPost)}:${id}" class="form-stack">
  <label class="field">Texto do comentário<textarea id="edit-comment-text" class="textarea" name="text" required maxlength="800">${esc(comment.text)}</textarea></label>
  <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="text-action" data-action="close-comment-options">Cancelar</button>
  <button type="submit" class="btn btn-primary btn-small" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`:`<p>${esc(comment.text)}</p>`}
@@ -2002,10 +2046,11 @@ function renderPostComment(comment,belongsToGroup,canModerate){
  ${!comment.parentId?` <button class="text-action" data-action="reply-to-comment" data-id="${id}">Responder</button>`:''}
  ${belongsToGroup&&!own?` <button class="text-action" data-action="report-group-comment" data-id="${id}">Denunciar comentário</button>`:''}
  ${editor&&!editor.editing?`<div class="toggle-row" style="flex-wrap:wrap">
- <button class="text-action" data-action="edit-comment" data-id="${id}">Editar comentário</button>
- <button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button></div>`:''}</div>
- ${own?`<button class="post-action" data-action="comment-options" data-id="${id}" aria-label="Opções do comentário" aria-expanded="${Boolean(editor)}">⋯</button>`
- :canModerate?`<button data-action="moderate-comment" data-id="${id}" aria-label="Remover comentário com motivo">${icon('trash')}</button>`:''}
+ <button class="text-action" data-action="toggle-saved-comment" data-id="${id}" ${state.busy?'disabled':''}>${saved?'Remover dos salvos':'Salvar comentário'}</button>
+ ${own?`<button class="text-action" data-action="edit-comment" data-id="${id}">Editar comentário</button>`:''}
+ ${own?`<button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button>`:''}</div>`:''}</div>
+ ${me()?`<button class="post-action" data-action="comment-options" data-id="${id}" aria-label="Opções do comentário" aria-expanded="${Boolean(editor)}">⋯</button>`:''}
+ ${!own&&canModerate?`<button data-action="moderate-comment" data-id="${id}" aria-label="Remover comentário com motivo">${icon('trash')}</button>`:''}
  </div>`;
 }
 function renderCommentThreads(belongsToGroup,canModerate){
@@ -3449,11 +3494,31 @@ async function onAction(btn) {
     state.modal='post-options';render();return;
   }
   case 'saved-view':
-    if(state.tab==='saved'&&['saved','following'].includes(btn.dataset.value)){
+    if(state.tab==='saved'&&['saved','following','comments'].includes(btn.dataset.value)){
       if(state.savedView!==btn.dataset.value)state.savedSelection=null;
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'open-saved-comment':{
+    const saved=state.savedComments.get(id);
+    if(state.tab==='saved'&&state.savedView==='comments'&&saved&&state.savedCommentWatches.get(id)?.comment){
+      openComments(saved.postId,saved.commentId);
+    }
+    return;
+  }
+  case 'remove-saved-comment':
+  case 'toggle-saved-comment':await attempt(async()=>{
+    const uid=me(),fromSaved=btn.dataset.action==='remove-saved-comment';
+    if(!uid)return;
+    const postId=state.selectedPost,key=fromSaved?id:savedCommentKey(postId,id);
+    const saved=state.savedComments.has(key);
+    if(fromSaved?state.tab!=='saved'||state.savedView!=='comments'||!saved:
+       state.modal!=='comments'||!postId||!state.comments.some(comment=>comment.id===id))return;
+    const target=ref('members',uid,'savedComments',key);
+    if(saved)await firebase.deleteDoc(target);
+    else await firebase.setDoc(target,{postId,commentId:id,savedAt:firebase.serverTimestamp()});
+    if(me()===uid)showToast(saved?'Comentário removido dos salvos.':'Comentário salvo.');
+  });return;
   case 'export-saved-posts':{
     if(!me()||state.tab!=='saved'||state.savedView!=='saved'||state.savedSelection)return;
     const collection=state.savedCollections.find(item=>item.id===state.selectedSavedCollection);
@@ -3572,7 +3637,7 @@ async function onAction(btn) {
       showToast('Publicação excluída.');
     });return;
   case 'comment-options':
-    if(state.modal!=='comments'||state.busy||!me()||!state.comments.some(item=>item.id===id&&item.userId===me()))return;
+    if(state.modal!=='comments'||state.busy||!me()||!state.comments.some(item=>item.id===id))return;
     state.commentEditor=state.commentEditor?.id===id?null:{id,editing:false};
     render();return;
   case 'edit-comment':

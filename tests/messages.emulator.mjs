@@ -442,6 +442,15 @@ assert.equal(edited.content.stringValue,'Texto corrigido');
 assert.ok(edited.editedAt.timestampValue);
 assert.deepEqual(edited.likes,editableLikes);
 await request(recipient,'GET',editable+'/comments/original',200);
+const savedCommentPath='public/data/members/'+sender.localId+'/savedComments/editable-post:original';
+const saveCommentWrite={update:{name:documents+savedCommentPath,fields:{postId:str('editable-post'),commentId:str('original')}},
+  updateTransforms:stamp('savedAt'),currentDocument:{exists:false}};
+await moderate(recipient,[saveCommentWrite],403);
+await moderate(sender,[saveCommentWrite],200);
+await request(sender,'GET',savedCommentPath,200);
+await request(recipient,'GET',savedCommentPath,403);
+await request(recipient,'DELETE',savedCommentPath,403);
+await request(sender,'DELETE',savedCommentPath,200);
 const editableComment=editable+'/comments/original';
 const editComment=(text)=>({
   update:{name:documents+editableComment,fields:{text:str(text)}},
