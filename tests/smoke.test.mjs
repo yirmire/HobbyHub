@@ -982,7 +982,10 @@ test('only the author can open the edit menu and the form updates just the post 
     showToast=()=>{};
     firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,updateDoc:async(path,data)=>{state.written={path,data};}};
   `,context);
-  assert.doesNotMatch(vm.runInContext('postCard(state.posts[1])',context),/post-options/);
+  assert.match(vm.runInContext('postCard(state.posts[1])',context),/post-options/);
+  await vm.runInContext("onAction({dataset:{action:'post-options',id:'other'}})",context);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Editar publicação/);
+  vm.runInContext("state.modal='comments'",context);
   assert.match(vm.runInContext('renderModal()',context),/Opções da publicação/);
   await vm.runInContext("onAction({dataset:{action:'post-options',id:'own'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/Editar publicação/);
@@ -993,6 +996,32 @@ test('only the author can open the edit menu and the form updates just the post 
   assert.match(vm.runInContext('state.written.path',context),/\/posts\/own$/);
   assert.equal(vm.runInContext('state.modal',context),'comments');
   assert.match(vm.runInContext('state.posts[0].editedAt=123;postCard(state.posts[0])',context),/Editado[\s\S]*1 curtidas/);
+});
+
+test('followed posts watch only new comments, avoid duplicates and stop when unfollowed', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.posts=[{id:'post',userId:'owner',content:'Publicação'}];
+    state.followedPosts.set('post',100);
+    const contents=[{id:'new',userId:'owner',createdAt:120},{id:'mine',userId:'reader',createdAt:110}];
+    firebase={collection:()=>null,where:(...args)=>args,orderBy:(...args)=>args,limit:value=>value,
+      query:(_ref,...filters)=>filters,onSnapshot:(filters,callback)=>{
+        state.filters=filters;callback({docs:contents.map(item=>({id:item.id,data:()=>item}))});
+        return ()=>{state.unsubscribed=true;};
+      }};
+    watchFollowedPosts();
+  `,context);
+  assert.equal(vm.runInContext('JSON.stringify(state.filters[0])',context),'["createdAt",">",100]');
+  assert.match(vm.runInContext('renderNotifications()',context),/comentou em uma publicação que você acompanha/);
+  assert.equal(vm.runInContext("notificationItems().filter(item=>item.type==='followed-comment').length",context),1);
+  vm.runInContext("openComments=(...args)=>{state.opened=args.join(':');}",context);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'followed-comment:post:new'}})",context);
+  assert.equal(vm.runInContext('state.opened',context),'post:new');
+  vm.runInContext("state.notifications=[{id:'direct',type:'comment-reply',postId:'post',commentId:'new',actorId:'owner',createdAt:121}];state.notificationFilter='unread';",context);
+  assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/respondeu ao seu comentário|comentou em uma publicação/);
+  vm.runInContext("state.notifications=[];state.followedPosts.clear();watchFollowedPosts()",context);
+  assert.equal(vm.runInContext('state.unsubscribed',context),true);
+  assert.equal(vm.runInContext("notificationItems().some(item=>item.type==='followed-comment')",context),false);
 });
 
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
