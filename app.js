@@ -58,7 +58,7 @@ const dateLabel = (day) => {if(!day)return 'A combinar';const d=new Date(`${day}
 const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
-  threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
+  threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
@@ -134,6 +134,8 @@ function unsubscribeAll() {
  state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);clearTimeout(state.eventOfferTimer);clearTimeout(state.eventReminderTimer);
  for(const watch of state.eventBulletins.values())watch.unsubscribe();
  state.eventBulletins.clear();
+ for(const watch of state.followedPostWatches.values())watch.unsubscribe();
+ state.followedPostWatches.clear();state.followedPosts.clear();
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}
 }
@@ -214,6 +216,7 @@ function startSession() {
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
   subscribe(col('posts'), (s)=>{
     state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    watchFollowedPosts();
     queueMicrotask(openLinkedContent);
   },'publicações');
   subscribe(col('groups'), (s)=>{
@@ -233,6 +236,10 @@ function startSession() {
     for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
   },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
+  subscribe(col('members',me(),'followedPosts'),snapshot=>{
+    state.followedPosts=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().followedAt?.toMillis?.()]));
+    watchFollowedPosts();
+  },'publicações acompanhadas');
   subscribe(col('members',me(),'savedEvents'),snapshot=>{state.savedEventDates=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().savedAt]));},'eventos salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
   subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
@@ -470,9 +477,50 @@ const notificationCategoryByType=new Map([
  ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['comment-reply','interactions'],['testimonial','interactions']
 ]);
 const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
+function watchFollowedPosts(){
+ const uid=me(),available=new Set(state.posts.map(post=>post.id));
+ const watches=state.followedPostWatches;
+ for(const [id,watch] of watches){
+   if(!available.has(id)||state.followedPosts.get(id)!==watch.since){
+     watch.unsubscribe();watches.delete(id);
+   }
+ }
+ if(!uid)return;
+ for(const [id,since] of state.followedPosts){
+   if(!available.has(id)||!Number.isFinite(since)||watches.has(id))continue;
+   const list=firebase.query(col('posts',id,'comments'),firebase.where('createdAt','>',since),
+     firebase.orderBy('createdAt','desc'),firebase.limit(50));
+   const watch={since,entries:[],unsubscribe:()=>{}};
+   watches.set(id,watch);
+   watch.unsubscribe=firebase.onSnapshot(list,snapshot=>{
+     if(me()!==uid||watches.get(id)!==watch)return;
+     watch.entries=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}));
+     render();
+   },()=>{
+     if(watches.get(id)!==watch)return;
+     watch.entries=[];render();
+   });
+ }
+}
+function followedCommentReadKey(postId,commentId){
+ return 'followed-comment:'+postId+':'+commentId;
+}
+function isNotificationRead(item){
+ return state.notificationReads.has(item.readKey)||
+   (['comment','comment-reply'].includes(item.type)&&state.notificationReads.has(followedCommentReadKey(item.postId,item.commentId)));
+}
 const eventReminderOptions={eve:'Na véspera',day:'No dia',both:'Na véspera e no dia',off:'Desligados'};
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
+ const directComments=new Set(state.notificationSettings.interactions===false?[]:state.notifications
+   .filter(item=>item.type==='comment'||item.type==='comment-reply').map(item=>followedCommentReadKey(item.postId,item.commentId)));
+ for(const [postId,watch] of state.followedPostWatches){
+   for(const comment of watch.entries){
+     const key=followedCommentReadKey(postId,comment.id);
+     if(comment.userId===me()||directComments.has(key))continue;
+     items.push({type:'followed-comment',postId,commentId:comment.id,actorId:comment.userId,createdAt:comment.createdAt,key});
+   }
+ }
  const date=new Date(),day=localDateKey(date),nextDay=tomorrow(date);
  const reminders=state.notificationSettings.eventReminders||'eve';
  const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
@@ -534,12 +582,13 @@ function notificationItems(){
    && !(communityNoticeTypes.has(item.type)&&state.mutedCommunityIds.has(item.groupId)))
    .map(item=>{
      const time=typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.();
-     return {...item,time,readKey:item.type==='event-reminder'?item.key:item.key+':'+time};
+     return {...item,time,readKey:['event-reminder','followed-comment'].includes(item.type)?item.key:item.key+':'+time};
    }).filter(item=>Number.isFinite(item.time))
    .sort((a,b)=>b.time-a.time).slice(0,50);
 }
 function markNotificationsRead(items){
- const keys=items.map(item=>item.readKey);
+ const keys=items.flatMap(item=>['comment','comment-reply'].includes(item.type)&&state.followedPosts.has(item.postId)?
+   [item.readKey,followedCommentReadKey(item.postId,item.commentId)]:[item.readKey]);
  state.notificationReads=new Set(mergeNotificationReads([...state.notificationReads],keys));
  const sync=state.notificationReadSync;
  if(!sync||!keys.length)return;
@@ -548,22 +597,23 @@ function markNotificationsRead(items){
  void syncNotificationReads();
 }
 function notificationButton(mobile=false){
- const count=notificationItems().filter(item=>!state.notificationReads.has(item.readKey)).length;
+ const count=notificationItems().filter(item=>!isNotificationRead(item)).length;
  const badge=count?`<span class="unread-count" aria-hidden="true">${count}</span>`:'';
  return `<button class="${mobile?'circle-btn':'nav-btn'}" data-action="notifications" title="Notificações" aria-label="Notificações${count?', '+count+' não lidas':''}">${icon('bell')}${mobile?'':'<span>Notificações</span>'}${badge}</button>`;
 }
 function renderNotifications(){
  const items=notificationItems();
- const unread=items.filter(item=>!state.notificationReads.has(item.readKey));
+ const unread=items.filter(item=>!isNotificationRead(item));
  const filter=state.notificationFilter;
  const list=(filter==='unread'?unread:items).map(item=>{
-   const isUnread=!state.notificationReads.has(item.readKey);
+   const isUnread=!isNotificationRead(item);
    const actor=member(item.actorId)?.name||'Alguém';
    const group=state.groups.find(group=>group.id===item.groupId);
    const message={
      follow:actor+' começou a seguir você.',
      comment:actor+' comentou na sua publicação.',
      'comment-reply':actor+' respondeu ao seu comentário.',
+     'followed-comment':actor+' comentou em uma publicação que você acompanha.',
      testimonial:actor+' enviou um depoimento para você.',
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
@@ -578,7 +628,7 @@ function renderNotifications(){
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -685,7 +735,7 @@ function eventRecapButton(event){
  return post?`<button class="btn btn-outline btn-small" data-action="comments" data-id="${esc(post.id)}">Ler relato</button>`:'';
 }
 function postOptionsButton(post){
- return me()&&post.userId===me()?`<button class="post-action" data-action="post-options" data-id="${esc(post.id)}" aria-label="Opções da publicação" aria-haspopup="dialog">⋯</button>`:'';
+ return me()?`<button class="post-action" data-action="post-options" data-id="${esc(post.id)}" aria-label="Opções da publicação" aria-haspopup="dialog">⋯</button>`:'';
 }
 function editedPostLabel(post){
  return post.editedAt?'<small class="muted">Editado</small>':'';
@@ -705,7 +755,7 @@ function postCard(post) {
  <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} ${state.tab==='explore'?'Abrir publicação':'Comentar'}</button>
  <button class="post-action ${saved?'bookmarked':''}" data-action="save" data-id="${esc(post.id)}">${icon('bookmark')} ${saved?'Salvo':'Salvar'}</button>
  <button class="post-action" data-action="share-post" data-id="${esc(post.id)}" aria-label="Compartilhar publicação">${icon('send')} Compartilhar</button>
- ${owner?postOptionsButton(post):`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
+ ${postOptionsButton(post)}${owner?'':`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
 }
 function filteredPosts(posts=state.posts) {
  let found=[...posts];
@@ -1847,12 +1897,14 @@ function renderCommentThreads(belongsToGroup,canModerate){
 }
 function renderModal() {
  if(state.modal==='post-options'||state.modal==='edit-post'){
-   const post=state.posts.find(item=>item.id===state.postEditor?.id&&item.userId===me());
+   const post=state.posts.find(item=>item.id===state.postEditor?.id);
    if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está mais disponível.</p>');
    if(state.modal==='post-options')return modalWrap('Opções da publicação',`<div class="form-stack">
-   <button class="btn btn-primary" data-action="edit-post" data-id="${esc(post.id)}">Editar publicação</button>
-   <button class="btn btn-outline" data-action="delete-post" data-id="${esc(post.id)}">Excluir publicação</button>
+   <button class="btn btn-outline" data-action="toggle-followed-post" data-id="${esc(post.id)}" ${state.busy?'disabled':''}>${state.followedPosts.has(post.id)?'Parar de acompanhar':'Acompanhar publicação'}</button>
+   ${post.userId===me()?`<button class="btn btn-primary" data-action="edit-post" data-id="${esc(post.id)}">Editar publicação</button>
+   <button class="btn btn-outline" data-action="delete-post" data-id="${esc(post.id)}">Excluir publicação</button>`:''}
    <button class="text-action" data-action="return-to-post">Voltar</button></div>`);
+   if(post.userId!==me())return modalWrap('Publicação indisponível','<p>Esta publicação não está mais disponível.</p>');
    return modalWrap('Editar publicação',`<form id="edit-post-form" data-draft="true" data-draft-key="edit-post:${esc(post.id)}" class="form-stack">
    <label class="field">Texto da publicação<textarea class="textarea" id="edit-post-content" name="content" required maxlength="2000">${esc(post.content)}</textarea></label>
    <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="return-to-post">Cancelar</button>
@@ -2973,8 +3025,8 @@ async function onAction(btn) {
     if(notice.type==='testimonial'){
       setTab('profile');document.getElementById('received-testimonials')?.scrollIntoView();return;
     }
-    if((notice.type==='comment'||notice.type==='comment-reply')&&state.posts.some(post=>post.id===notice.postId)){
-      openComments(notice.postId,notice.type==='comment-reply'?notice.commentId:'');return;
+    if(['comment','comment-reply','followed-comment'].includes(notice.type)&&state.posts.some(post=>post.id===notice.postId)){
+      openComments(notice.postId,notice.type==='comment'?'':notice.commentId);return;
     }
     if(notice.type==='follow'&&member(notice.actorId)){
       state.viewUser=notice.actorId;state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='Carregando depoimentos…';
@@ -3212,10 +3264,18 @@ async function onAction(btn) {
     showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
   case 'post-options':{
-    if(!me()||!state.posts.some(post=>post.id===id&&post.userId===me()))return;
+    if(!me()||!state.posts.some(post=>post.id===id))return;
     state.postEditor={id,previous:['comments','group-detail'].includes(state.modal)?state.modal:null};
     state.modal='post-options';render();return;
   }
+  case 'toggle-followed-post':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id))return;
+    const target=ref('members',uid,'followedPosts',id),following=state.followedPosts.has(id);
+    if(following)await firebase.deleteDoc(target);
+    else await firebase.setDoc(target,{followedAt:firebase.serverTimestamp()});
+    if(me()===uid)showToast(following?'Você parou de acompanhar a publicação.':'Você está acompanhando a publicação.');
+  });return;
   case 'edit-post':
     if(state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id&&post.userId===me()))return;
     state.drafts.delete('edit-post:'+id);
