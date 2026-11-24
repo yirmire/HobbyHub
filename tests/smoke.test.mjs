@@ -17,6 +17,26 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('private replies quote messages from the same conversation and can be cancelled', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=[
+      {id:'original',senderId:'peer',text:'Onde fica <o local>?',createdAt:1},
+      {id:'answer',senderId:'owner',text:'Na praça',replyTo:'original',createdAt:2},
+      {id:'missing',senderId:'owner',text:'Até logo',replyTo:'unknown',createdAt:3}
+    ];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'reply-direct-message',id:'original'}})",context);
+  const html=vm.runInContext('renderMessages()',context);
+  assert.match(html,/Respondendo a/);
+  assert.match(html,/data-action="jump-direct-message" data-id="original".*Onde fica &lt;o local&gt;\?/);
+  assert.doesNotMatch(html,/data-action="jump-direct-message" data-id="unknown"/);
+  await vm.runInContext("onAction({dataset:{action:'cancel-direct-reply'}})",context);
+  assert.doesNotMatch(vm.runInContext('renderMessages()',context),/Respondendo a/);
+});
+
 test('private chat search finds accented text outside the recent window and opens its message', () => {
   const context = appContext();
   vm.runInContext(`
