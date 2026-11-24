@@ -888,6 +888,37 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('long reply threads can be collapsed and a notice expands the correct thread before focusing', async () => {
+  const context=appContext();
+  let focused=false,scrolled=false;
+  context.document.getElementById=id=>id==='post-comment-third'?{
+    focus:()=>{focused=true;},scrollIntoView:()=>{scrolled=true;}
+  }:null;
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='comments';state.selectedPost='post';
+    state.posts=[{id:'post',content:'Publicação'}];
+    state.comments=[{id:'root',text:'Comentário original'},{id:'short',text:'Outro comentário'},
+      {id:'first',parentId:'root',text:'Primeira resposta'},
+      {id:'second',parentId:'root',text:'Segunda resposta'},
+      {id:'third',parentId:'root',text:'Terceira resposta'},
+      {id:'only',parentId:'short',text:'Resposta única'}];
+    const docs=state.comments.map(item=>({id:item.id,data:()=>item}));
+    firebase={collection:()=>null,onSnapshot:(_ref,callback)=>{callback({docs});return ()=>{};}};
+  `,context);
+  const markup=()=>vm.runInContext('renderModal()',context);
+  assert.match(markup(),/aria-expanded="false">Ver 3 respostas/);
+  assert.match(markup(),/Resposta única/);
+  assert.doesNotMatch(markup(),/Terceira resposta/);
+  const toggle=()=>vm.runInContext("onAction({dataset:{action:'toggle-comment-replies',id:'root'}})",context);
+  await toggle();
+  assert.match(markup(),/aria-expanded="true">Recolher respostas[\s\S]*Terceira resposta/);
+  await toggle();
+  assert.doesNotMatch(markup(),/Terceira resposta/);
+  vm.runInContext("openComments('post','third')",context);
+  assert.match(markup(),/Recolher respostas[\s\S]*Terceira resposta/);
+  assert.equal(focused&&scrolled,true);
+});
+
 test('comment replies sit under their parent and open from the privacy-aware bell', async () => {
   const handlers={},context=appContext(handlers);
   context.FormData=function(){return [['text',' Uma resposta nova ']];};
