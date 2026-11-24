@@ -961,7 +961,7 @@ test('the comment author can edit in place without changing the conversation ord
     firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,updateDoc:async(path,data)=>{state.written={path,data};}};
   `,context);
   await vm.runInContext("onAction({dataset:{action:'comment-options',id:'other'}})",context);
-  assert.equal(vm.runInContext('state.commentEditor',context),null);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/data-action="edit-comment" data-id="other"/);
   await vm.runInContext("onAction({dataset:{action:'comment-options',id:'own'}})",context);
   await vm.runInContext("onAction({dataset:{action:'edit-comment',id:'own'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/Original &lt;texto&gt;[\s\S]*Outro comentário/);
@@ -1225,6 +1225,27 @@ test('renaming and deleting a collection preserve the saved posts and other coll
   assert.match(vm.runInContext('state.collectionWrites[1].path',context),/\/reader\/savedCollections\/photo$/);
   assert.equal(vm.runInContext('state.selectedSavedCollection',context),'');
   assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
+});
+
+test('saved comments can be kept privately and opened at their original position', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';state.selectedPost='post';state.modal='comments';
+    state.posts=[{id:'post',content:'Publicação'}];state.comments=[{id:'reply',parentId:'parent',userId:'another',userName:'Ana',text:'Dica de café'}];
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>99,
+      setDoc:async(path,data)=>{state.savedWrite={path,data};},deleteDoc:async path=>{state.removed=path;}};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'comment-options',id:'reply'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Salvar comentário/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-saved-comment',id:'reply'}})",context);
+  assert.match(vm.runInContext('state.savedWrite.path',context),/\/reader\/savedComments\/post:reply$/);
+  vm.runInContext("state.savedView='comments';state.savedComments.set('post:reply',state.savedWrite.data);state.savedCommentWatches.set('post:reply',{comment:state.comments[0]});openComments=(...args)=>{state.opened=args.join(':');}",context);
+  assert.match(vm.runInContext('renderSaved()',context),/Ana[\s\S]*Dica de café[\s\S]*Abrir comentário/);
+  await vm.runInContext("onAction({dataset:{action:'open-saved-comment',id:'post:reply'}})",context);
+  assert.equal(vm.runInContext('state.opened',context),'post:reply');
+  await vm.runInContext("onAction({dataset:{action:'remove-saved-comment',id:'post:reply'}})",context);
+  assert.match(vm.runInContext('state.removed',context),/savedComments\/post:reply$/);
 });
 
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
