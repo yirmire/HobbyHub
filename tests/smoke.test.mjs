@@ -730,6 +730,11 @@ test('my feedback shows each state and the resolution notice opens the exact sub
   await vm.runInContext("onAction({dataset:{action:'open-notification',id:'feedback-resolved:last:20'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/A busca agora funciona &lt;bem&gt;/);
   assert.match(vm.runInContext('renderModal()',context),/Resposta da equipe[\s\S]*Ajustamos a busca &lt;agora&gt;/);
+  assert.match(vm.runInContext('renderModal()',context),/Isso resolveu\?[\s\S]*Ainda preciso de ajuda/);
+  vm.runInContext("state.myProductFeedback[2].resolutionChoice='needs-help';state.myProductFeedback[2].status='in-review'",context);
+  assert.match(vm.runInContext('renderModal()',context),/Resposta do autor: Ainda preciso de ajuda/);
+  assert.match(vm.runInContext('renderModal()',context),/Ajustamos a busca/);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Isso resolveu/);
   assert.doesNotMatch(vm.runInContext('renderModal()',context),/Tela com erro/);
 });
 
