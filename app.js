@@ -477,6 +477,9 @@ function notificationItems(){
    if(item.status==='resolved'&&item.reviewedAt)items.push({
      type:'feedback-resolved',feedbackId:item.id,key:'feedback-resolved:'+item.id,createdAt:item.reviewedAt,hasResolution:!!item.resolution
    });
+   if(item.status==='in-review'&&item.resolutionChoice==='needs-help'&&item.reviewedAt)items.push({
+     type:'feedback-resumed',feedbackId:item.id,key:'feedback-resumed:'+item.id,createdAt:item.reviewedAt
+   });
  }
  for(const item of state.receivedTestimonials)items.push({type:'testimonial',actorId:item.id,key:'testimonial-'+item.id,createdAt:item.createdAt});
  for(const group of state.groups.filter(canManageGroup)){
@@ -556,10 +559,11 @@ function renderNotifications(){
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
      'feedback-resolved':'Seu feedback foi resolvido',
+     'feedback-resumed':'A equipe retomou a análise do seu feedback',
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -2419,7 +2423,7 @@ async function onAction(btn) {
     if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
     if(notice.type==='product-news'){openModal('product-news');return;}
-    if(notice.type==='feedback-resolved'){openMyProductFeedback(notice.feedbackId);return;}
+    if(notice.type==='feedback-resolved'||notice.type==='feedback-resumed'){openMyProductFeedback(notice.feedbackId);return;}
     if(notice.type==='event-bulletin'){
       openEventDetail(notice.eventId);
       const item=document.getElementById('event-bulletin-'+notice.bulletinId);
