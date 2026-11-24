@@ -469,6 +469,10 @@ const notificationCategoryByType=new Map([
 const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
+ const latestNews=productNews[0];
+ if(me()&&latestNews)items.push({
+   type:'product-news',news:latestNews,key:'product-news:'+latestNews.id,createdAt:Date.parse(latestNews.date)
+ });
  for(const item of state.myProductFeedback||[]){
    if(item.status==='resolved'&&item.reviewedAt)items.push({
      type:'feedback-resolved',feedbackId:item.id,key:'feedback-resolved:'+item.id,createdAt:item.reviewedAt,hasResolution:!!item.resolution
@@ -552,11 +556,13 @@ function renderNotifications(){
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
      'feedback-resolved':'Seu feedback foi resolvido',
+     'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
-   return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${when(item.time)}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
+   const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
+   return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
    ${isUnread?`<button class="text-action" data-action="read-notification" data-id="${esc(item.readKey)}" aria-label="Marcar como lida: ${esc(message)}">Marcar como lida</button>`:''}</div></div>`;
  }).join('');
  const options=[['all','Todas'],['unread','Não lidas']].map(([id,label])=>
@@ -1469,8 +1475,9 @@ async function updateProductFeedbackStatus(id,status,resolution=''){
    showToast('Estado do feedback atualizado.');
  });
 }
+// Add new entries first, with a unique ID for each update.
 const productNews=[
- {date:'2026-11-23',title:'Respostas da equipe aos feedbacks',
+ {id:'feedback-responses',date:'2026-11-23',title:'Respostas da equipe aos feedbacks',
   summary:'Ao resolver um feedback, a equipe pode deixar uma resposta privada. Se houver uma resposta, você pode abri-la pelo aviso no sino.',
   action:'my-product-feedback',label:'Abrir meus feedbacks'}
 ];
@@ -2356,6 +2363,7 @@ async function onAction(btn) {
     if(!notice)return;
     if(notice.type==='event-answer'&&!state.eventsLoaded){showToast('Aguarde a agenda carregar para abrir a resposta.');return;}
     markNotificationsRead([notice]);
+    if(notice.type==='product-news'){openModal('product-news');return;}
     if(notice.type==='feedback-resolved'){openMyProductFeedback(notice.feedbackId);return;}
     if(notice.type==='event-bulletin'){
       openEventDetail(notice.eventId);

@@ -33,7 +33,7 @@ test('notifications count unread items and only show reports to current moderato
   assert.match(html, /Lia começou a seguir você/);
   assert.match(html, /Ver depoimentos/);
   assert.doesNotMatch(html, /Pintura/);
-  assert.match(vm.runInContext('notificationButton(true)', context), /3 não lidas/);
+  assert.match(vm.runInContext('notificationButton(true)', context), /4 não lidas/);
   vm.runInContext('markNotificationsRead(notificationItems())', context);
   assert.doesNotMatch(vm.runInContext('notificationButton()', context), /não lidas/);
   vm.runInContext("state.notifications[0].createdAt=50", context);
@@ -247,7 +247,7 @@ test('poll notifications show open polls to members and final counts to voters',
   const openResult = `onAction({dataset:{action:'open-notification',id:notificationItems().find(item=>item.type==='poll-result').readKey}})`;
   await vm.runInContext(openResult, context);
   assert.equal(vm.runInContext('state.pollDetail.poll.id', context), 'voted');
-  assert.match(vm.runInContext('notificationButton()', context), /1 não lidas/);
+  assert.match(vm.runInContext('notificationButton()', context), /2 não lidas/);
 });
 
 test('a closed poll drafts a group event with the sole winning option for active moderators', async () => {
@@ -311,7 +311,7 @@ test('an event answer notice identifies the event and opens the exact question',
   await vm.runInContext("onAction({dataset:{action:'open-notification',id:'reply:10'}})", context);
   assert.equal(vm.runInContext('state.selectedEvent', context), 'event');
   assert.equal(vm.runInContext('state.eventAnswerId', context), 'older-question');
-  assert.doesNotMatch(vm.runInContext('notificationButton()', context), /não lidas/);
+  assert.match(vm.runInContext('notificationButton()', context), /1 não lidas/);
 });
 
 test('limited events offer the reserved seat only to the head of the waitlist', () => {
@@ -607,11 +607,11 @@ test('unread notifications can be marked individually without opening the conten
   const unread=vm.runInContext('renderNotifications()',context);
   assert.doesNotMatch(unread,/Ana começou/);
   assert.match(unread,/Bruno começou/);
-  assert.match(vm.runInContext('notificationButton()',context),/1 não lidas/);
+  assert.match(vm.runInContext('notificationButton()',context),/2 não lidas/);
   await vm.runInContext("onAction({dataset:{action:'notification-filter',value:'all'}})",context);
   const all=vm.runInContext('renderNotifications()',context);
   assert.match(all,/Ana começou/);
-  assert.equal((all.match(/data-action="read-notification"/g)||[]).length,1);
+  assert.equal((all.match(/data-action="read-notification"/g)||[]).length,2);
   await vm.runInContext("onAction({dataset:{action:'read-notifications'}});state.notificationFilter='unread';",context);
   assert.match(vm.runInContext('renderNotifications()',context),/Nenhuma notificação não lida/);
 });
@@ -681,6 +681,21 @@ test('the feedback panel is restricted, filters categories and changes triage st
   assert.match(vm.runInContext('state.triage.path',context),/\/productFeedback\/broken$/);
   assert.equal(vm.runInContext('state.triage.data.reviewedBy',context),'reviewer');
   assert.match(vm.runInContext('renderProductFeedbackAdmin()',context),/value="in-review" selected/);
+});
+
+test('the bell shows only the latest product update and marks it read when opened', async () => {
+  const context=appContext();
+  vm.runInContext("state.user={uid:'reader'};state.notificationFilter='unread'",context);
+  const first=vm.runInContext("notificationItems().find(item=>item.type==='product-news').readKey",context);
+  assert.match(vm.runInContext('renderNotifications()',context),/Respostas da equipe aos feedbacks[\s\S]*Ver novidades/);
+  await vm.runInContext(`onAction({dataset:{action:'open-notification',id:${JSON.stringify(first)}}})`,context);
+  assert.equal(vm.runInContext('state.modal',context),'product-news');
+  assert.equal(vm.runInContext(`state.notificationReads.has(${JSON.stringify(first)})`,context),true);
+  assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/Ver novidades/);
+  vm.runInContext("productNews.unshift({...productNews[0],id:'mobile-update',title:'Melhorias no celular'})",context);
+  const unread=vm.runInContext('renderNotifications()',context);
+  assert.match(unread,/Melhorias no celular/);
+  assert.doesNotMatch(unread,/Respostas da equipe aos feedbacks/);
 });
 
 test('product news shows dated public updates and links to the private feedback list', async () => {
