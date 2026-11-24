@@ -809,6 +809,19 @@ service cloud.firestore {
       allow list, create, update, delete: if false;
     }
     match /artifacts/{appId}/productFeedback/{feedbackId} {
+      function feedbackPath() {
+        return /databases/$(database)/documents/artifacts/$(appId)/productFeedback/$(feedbackId);
+      }
+      function supplementPath(id) {
+        return /databases/$(database)/documents/artifacts/$(appId)/productFeedback/$(feedbackId)/supplements/$(id);
+      }
+      function marksNewSupplement() {
+        let id = request.resource.data.lastSupplementId;
+        return validText(id, 1, 128)
+          && request.resource.data.hasUnreadSupplements == true
+          && !exists(supplementPath(id))
+          && getAfter(supplementPath(id)).data.createdAt == request.time;
+      }
       allow create: if loggedIn()
         && request.resource.data.keys().hasOnly(['authorId', 'category', 'message', 'createdAt', 'status'])
         && request.resource.data.authorId == request.auth.uid
@@ -833,18 +846,24 @@ service cloud.firestore {
         && resource.data.get('resolutionChoice','') == ''
         && changedOnly(['resolutionChoice'])
         && request.resource.data.resolutionChoice in ['helped','needs-help'];
+      allow update: if isMe(resource.data.authorId) && resource.data.status == 'in-review'
+        && changedOnly(['hasUnreadSupplements','lastSupplementId']) && marksNewSupplement();
+      allow update: if canTriageProductFeedback(appId) && resource.data.get('hasUnreadSupplements',false) == true
+        && changedOnly(['hasUnreadSupplements']) && request.resource.data.hasUnreadSupplements == false;
       allow delete: if false;
 
       match /supplements/{supplementId} {
         function parentFeedback() {
-          return get(/databases/$(database)/documents/artifacts/$(appId)/productFeedback/$(feedbackId)).data;
+          return get(feedbackPath()).data;
         }
         allow read: if canTriageProductFeedback(appId) || isMe(parentFeedback().authorId);
         allow create: if isMe(parentFeedback().authorId)
           && parentFeedback().status == 'in-review'
           && request.resource.data.keys().hasOnly(['message','createdAt'])
           && validText(request.resource.data.message, 3, 600)
-          && request.resource.data.createdAt == request.time;
+          && request.resource.data.createdAt == request.time
+          && getAfter(feedbackPath()).data.lastSupplementId == supplementId
+          && getAfter(feedbackPath()).data.hasUnreadSupplements == true;
         allow update, delete: if false;
       }
     }

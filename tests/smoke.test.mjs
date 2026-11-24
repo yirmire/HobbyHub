@@ -716,6 +716,31 @@ test('the attention queue queries pending feedback and resumes only open follow-
   assert.match(vm.runInContext('renderModal()',context),/Nenhum feedback precisa de atenção/);
 });
 
+test('the supplement queue keeps newer details unread and removes a case after review', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reviewer'};state.feedbackAdmin=true;state.modal='feedback-admin-detail';
+    const entry={id:'case',message:'Envio original',hasUnreadSupplements:true,lastSupplementId:'first'};
+    state.productFeedbackQueue={category:'supplements',entries:[entry]};
+    state.feedbackSupplements={id:'case',modal:state.modal,entries:[{id:'first',message:'Primeiro complemento'}]};
+    state.latestSupplement='second';state.readWrites=0;
+    showToast=()=>{};
+    firebase={doc:()=>null,runTransaction:async(_db,fn)=>fn({
+      get:async()=>({data:()=>({hasUnreadSupplements:true,lastSupplementId:state.latestSupplement})}),
+      update:()=>state.readWrites++
+    })};
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/Marcar complementos como lidos/);
+  await vm.runInContext("onAction({dataset:{action:'read-feedback-supplements'}})",context);
+  assert.equal(vm.runInContext('state.readWrites',context),0);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Marcar complementos como lidos/);
+  vm.runInContext("state.feedbackSupplements.entries=[{id:'second',message:'Outro complemento'}]",context);
+  await vm.runInContext("onAction({dataset:{action:'read-feedback-supplements'}})",context);
+  assert.equal(vm.runInContext('state.readWrites',context),1);
+  await vm.runInContext("onAction({dataset:{action:'back-feedback-admin'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Nenhum complemento novo/);
+});
+
 test('the bell shows only the latest product update and marks it read when opened', async () => {
   const context=appContext();
   vm.runInContext("state.user={uid:'reader'};state.notificationFilter='unread'",context);

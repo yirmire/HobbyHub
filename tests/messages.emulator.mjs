@@ -460,16 +460,31 @@ async function listFeedbackNeedingAttention(actor,expected){
 assert.equal((await listFeedbackNeedingAttention(reviewer,200)).find(row=>row.document).document.name,documents+productFeedback);
 await listFeedbackNeedingAttention(sender,403);
 const supplementPath=productFeedback+'/supplements/first';
-const addSupplement=message=>({
-  update:{name:documents+supplementPath,fields:{message:str(message)}},
+const addSupplement=(message,id='first')=>[{
+  update:{name:documents+productFeedback+'/supplements/'+id,fields:{message:str(message)}},
   updateTransforms:stamp('createdAt'),currentDocument:{exists:false}
-});
-await moderate(sender,[addSupplement('Detalhes adicionais')],403);
+},{
+  update:{name:documents+productFeedback,fields:{hasUnreadSupplements:{booleanValue:true},lastSupplementId:str(id)}},
+  updateMask:{fieldPaths:['hasUnreadSupplements','lastSupplementId']}
+}];
+await moderate(sender,addSupplement('Detalhes adicionais'),403);
 await moderate(reviewer,[triage(reviewer,'in-review')],200);
-await moderate(other,[addSupplement('Tentativa de outra conta')],403);
-await moderate(reviewer,[addSupplement('Tentativa da equipe')],403);
-await moderate(sender,[addSupplement('ab')],403);
-await moderate(sender,[addSupplement('Detalhes adicionais')],200);
+await moderate(other,addSupplement('Tentativa de outra conta'),403);
+await moderate(reviewer,addSupplement('Tentativa da equipe'),403);
+await moderate(sender,addSupplement('ab'),403);
+await moderate(sender,addSupplement('Detalhes adicionais').slice(0,1),403);
+await moderate(sender,addSupplement('Detalhes adicionais').slice(1),403);
+await moderate(sender,addSupplement('Detalhes adicionais'),200);
+assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.hasUnreadSupplements.booleanValue,true);
+const clearSupplementFlag={
+  update:{name:documents+productFeedback,fields:{hasUnreadSupplements:{booleanValue:false}}},
+  updateMask:{fieldPaths:['hasUnreadSupplements']}
+};
+await moderate(sender,[clearSupplementFlag],403);
+await moderate(reviewer,[clearSupplementFlag],200);
+assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.hasUnreadSupplements.booleanValue,false);
+await moderate(sender,addSupplement('Mais detalhes','second'),200);
+assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.lastSupplementId.stringValue,'second');
 assert.equal((await request(reviewer,'GET',supplementPath,200)).fields.message.stringValue,'Detalhes adicionais');
 await request(sender,'GET',productFeedback+'/supplements',200);
 await request(reviewer,'GET',productFeedback+'/supplements',200);

@@ -1459,6 +1459,7 @@ async function loadProductFeedback(){
  try{
    const filters=queue.category==='attention'
      ?[firebase.where('status','==','resolved'),firebase.where('resolutionChoice','==','needs-help')]
+     :queue.category==='supplements'?[firebase.where('hasUnreadSupplements','==',true)]
      :[firebase.orderBy('createdAt','desc')];
    filters.push(firebase.limit(40));
    if(queue.last)filters.push(firebase.startAfter(queue.last));
@@ -1509,25 +1510,51 @@ function renderProductFeedbackAdmin(){
  if(!state.feedbackAdmin)return modalWrap('Painel de feedback','<p>Este painel é restrito à administração.</p>');
  const queue=state.productFeedbackQueue;
  const attention=queue?.category==='attention';
- const entries=queue?.entries.filter(item=>attention?feedbackNeedsAttention(item):!queue.category||item.category===queue.category)||[];
+ const supplements=queue?.category==='supplements';
+ const entries=queue?.entries.filter(item=>attention?feedbackNeedsAttention(item):supplements?item.hasUnreadSupplements===true:!queue.category||item.category===queue.category)||[];
  return modalWrap('Painel de feedback',`<div class="form-stack">
- <div class="filters" role="group" aria-label="Filtrar feedback">${[['','Todos'],['problem','Problemas'],['suggestion','Sugestões'],['attention','Precisa de atenção']].map(([id,label])=>`<button class="filter ${queue?.category===id?'active':''}" data-action="product-feedback-category" data-value="${id}" aria-pressed="${queue?.category===id}">${label}</button>`).join('')}</div>
- ${attention?`<button class="text-action" data-action="refresh-feedback-attention" ${queue.loading||state.busy?'disabled':''}>Atualizar fila</button>`:''}
+ <div class="filters" role="group" aria-label="Filtrar feedback">${[['','Todos'],['problem','Problemas'],['suggestion','Sugestões'],['attention','Precisa de atenção'],['supplements','Novos complementos']].map(([id,label])=>`<button class="filter ${queue?.category===id?'active':''}" data-action="product-feedback-category" data-value="${id}" aria-pressed="${queue?.category===id}">${label}</button>`).join('')}</div>
+ ${attention||supplements?`<button class="text-action" data-action="refresh-feedback-queue" ${queue.loading||state.busy?'disabled':''}>Atualizar fila</button>`:''}
  ${entries.map(item=>`<article class="card form-stack" style="padding:14px">
  <div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong><small>${when(item.createdAt?.toMillis?.())}</small></div>
  <p class="post-copy" style="margin:0">${esc(item.message)}</p>
  ${renderFeedbackResolution(item)}
  ${renderFeedbackResolutionChoice(item)}
  <button class="text-action" data-action="view-admin-feedback-detail" data-id="${esc(item.id)}">Ver complementos</button>
- ${attention?`<button class="btn btn-primary btn-small" data-action="resume-feedback-review" data-id="${esc(item.id)}" ${state.busy?'disabled':''}>Retomar análise</button>`:queue.resolutionId===item.id&&item.status!=='resolved'?`<form id="product-feedback-resolution-form" data-draft="true" data-draft-key="feedback-resolution-${esc(item.id)}" class="form-stack">
+ ${supplements?'':attention?`<button class="btn btn-primary btn-small" data-action="resume-feedback-review" data-id="${esc(item.id)}" ${state.busy?'disabled':''}>Retomar análise</button>`:queue.resolutionId===item.id&&item.status!=='resolved'?`<form id="product-feedback-resolution-form" data-draft="true" data-draft-key="feedback-resolution-${esc(item.id)}" class="form-stack">
  <label class="field">Resposta da equipe (opcional)<textarea class="input" id="feedback-resolution-text" name="resolution" maxlength="600" rows="3"></textarea></label>
  <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Marcar como resolvido</button>
  <button class="btn btn-outline" type="button" data-action="cancel-feedback-resolution" ${state.busy?'disabled':''}>Cancelar</button>
  </form>`:`<label class="field">Estado<select class="select" id="feedback-status-${esc(item.id)}" data-feedback-status="${esc(item.id)}" ${state.busy?'disabled':''}>
  ${Object.entries(productFeedbackStatuses).map(([id,label])=>`<option value="${id}" ${item.status===id?'selected':''}>${label}</option>`).join('')}
  </select></label>`}</article>`).join('')}
- ${queue?.error?`<p class="tip">${esc(queue.error)}</p>`:queue?.loading?'<p class="tip">Carregando feedback…</p>':entries.length?'':attention?'<p class="tip">Nenhum feedback precisa de atenção nesta lista.</p>':'<p class="tip">Nenhum item para exibir.</p>'}
+ ${queue?.error?`<p class="tip">${esc(queue.error)}</p>`:queue?.loading?'<p class="tip">Carregando feedback…</p>':entries.length?'':supplements?'<p class="tip">Nenhum complemento novo.</p>':attention?'<p class="tip">Nenhum feedback precisa de atenção nesta lista.</p>':'<p class="tip">Nenhum item para exibir.</p>'}
  ${queue?.more?`<button class="btn btn-outline btn-small" data-action="load-product-feedback" ${queue.loading?'disabled':''}>${queue.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
+}
+async function markFeedbackSupplementsRead(){
+ await attempt(async()=>{
+   const queue=state.productFeedbackQueue,detail=state.feedbackSupplements,uid=me();
+   if(!uid||!state.feedbackAdmin||state.modal!=='feedback-admin-detail'||!detail)return;
+   const entry=queue?.entries.find(item=>item.id===detail.id);
+   if(!entry?.hasUnreadSupplements||!detail.entries.some(item=>item.id===entry.lastSupplementId))return;
+   const target=firebase.doc(db,'artifacts',PROJECT,'productFeedback',entry.id);
+   const current=await firebase.runTransaction(db,async transaction=>{
+     const item=(await transaction.get(target)).data();
+     if(item?.hasUnreadSupplements&&item.lastSupplementId===entry.lastSupplementId){
+       transaction.update(target,{hasUnreadSupplements:false});
+       return {hasUnreadSupplements:false,lastSupplementId:item.lastSupplementId};
+     }
+     return {hasUnreadSupplements:item?.hasUnreadSupplements===true,lastSupplementId:item?.lastSupplementId};
+   });
+   if(me()!==uid||state.productFeedbackQueue!==queue||state.feedbackSupplements!==detail||state.modal!==detail.modal)return;
+   Object.assign(entry,current);
+   if(current.hasUnreadSupplements){
+     openFeedbackSupplements(entry.id,detail.modal);
+     showToast('Chegou outro complemento. Confira antes de marcar como lidos.');
+   }else{
+     showToast('Complementos marcados como lidos.');
+   }
+ });
 }
 async function resumeFeedbackReview(id){
  await attempt(async()=>{
@@ -1595,6 +1622,7 @@ function renderModal() {
    <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span>
    <p class="post-copy" style="margin:0">${esc(item.message)}</p>
    ${renderFeedbackResolution(item)}${renderFeedbackResolutionChoice(item)}${renderFeedbackSupplements()}
+   ${item.hasUnreadSupplements&&state.feedbackSupplements.entries.some(entry=>entry.id===item.lastSupplementId)?`<button class="btn btn-primary btn-small" data-action="read-feedback-supplements" ${state.busy?'disabled':''}>Marcar complementos como lidos</button>`:''}
    <button class="text-action" data-action="back-feedback-admin">Voltar ao painel</button></div>`:'<p>Este feedback está indisponível.</p>');
  }
  if(state.modal==='my-feedback-detail'){
@@ -2555,19 +2583,20 @@ async function onAction(btn) {
   case 'product-feedback-category':{
     const queue=state.productFeedbackQueue,category=btn.dataset.value;
     if(!state.feedbackAdmin||state.modal!=='product-feedback-admin'||!queue||state.busy||
-       !['','problem','suggestion','attention'].includes(category)||category===queue.category)return;
-    if(category==='attention'||queue.category==='attention'){
+       !['','problem','suggestion','attention','supplements'].includes(category)||category===queue.category)return;
+    if(['attention','supplements'].some(filter=>filter===category||filter===queue.category)){
       resetProductFeedbackQueue(category);await loadProductFeedback();return;
     }
     queue.category=category;render();return;
   }
-  case 'refresh-feedback-attention':
-    if(state.feedbackAdmin&&state.modal==='product-feedback-admin'&&state.productFeedbackQueue?.category==='attention'&&
+  case 'refresh-feedback-queue':
+    if(state.feedbackAdmin&&state.modal==='product-feedback-admin'&&['attention','supplements'].includes(state.productFeedbackQueue?.category)&&
        !state.productFeedbackQueue.loading&&!state.busy){
-      resetProductFeedbackQueue('attention');await loadProductFeedback();
+      resetProductFeedbackQueue(state.productFeedbackQueue.category);await loadProductFeedback();
     }
     return;
   case 'resume-feedback-review':await resumeFeedbackReview(id);return;
+  case 'read-feedback-supplements':await markFeedbackSupplementsRead();return;
   case 'load-product-feedback':await loadProductFeedback();return;
   case 'send-feedback':if(me())openModal('product-feedback');return;
   case 'quiz':state.quizMood=null;openModal('quiz');return;
@@ -2965,7 +2994,12 @@ document.addEventListener('submit',async(event)=>{
     if(!uid||state.modal!=='my-feedback-detail'||detail?.id!==state.selectedFeedbackId||
        !state.myProductFeedback?.some(item=>item.id===detail.id&&item.status==='in-review'))return;
     if(message.length<3||message.length>600)throw new Error('Escreva um complemento de 3 a 600 caracteres.');
-    const saved=await firebase.addDoc(feedbackSupplementsRef(detail.id),{message,createdAt:firebase.serverTimestamp()});
+    const saved=firebase.doc(feedbackSupplementsRef(detail.id));
+    const feedback=firebase.doc(db,'artifacts',PROJECT,'productFeedback',detail.id);
+    const batch=firebase.writeBatch(db);
+    batch.set(saved,{message,createdAt:firebase.serverTimestamp()});
+    batch.update(feedback,{hasUnreadSupplements:true,lastSupplementId:saved.id});
+    await batch.commit();
     if(me()!==uid||state.feedbackSupplements!==detail||state.modal!==detail.modal)return;
     if(!detail.entries.some(item=>item.id===saved.id)){
       detail.entries.unshift({id:saved.id,message,createdAt:{toMillis:()=>Date.now()}});
