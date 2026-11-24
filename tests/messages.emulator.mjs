@@ -405,6 +405,22 @@ assert.equal(edited.content.stringValue,'Texto corrigido');
 assert.ok(edited.editedAt.timestampValue);
 assert.deepEqual(edited.likes,editableLikes);
 await request(recipient,'GET',editable+'/comments/original',200);
+const editableComment=editable+'/comments/original';
+const editComment=(text)=>({
+  update:{name:documents+editableComment,fields:{text:str(text)}},
+  updateMask:{fieldPaths:['text']},updateTransforms:stamp('editedAt')
+});
+await moderate(sender,[editComment('Tentativa de editar comentário de outra pessoa')],403);
+await moderate(recipient,[editComment('   ')],403);
+const movedComment=editComment('Tentativa de alterar a ordem');
+movedComment.update.fields.createdAt={integerValue:'200'};
+movedComment.updateMask.fieldPaths.push('createdAt');
+await moderate(recipient,[movedComment],403);
+await moderate(recipient,[editComment('Comentário corrigido')],200);
+const editedComment=(await request(other,'GET',editableComment,200)).fields;
+assert.equal(editedComment.text.stringValue,'Comentário corrigido');
+assert.equal(editedComment.createdAt.integerValue,'100');
+assert.ok(editedComment.editedAt.timestampValue);
 const onlineEvent=events+'/online-test',roomPath=onlineEvent+'/private/room';
 const online={...standalone,format:str('online'),location:str('Online'),timeZone:str('America/Manaus')};
 const roomFields={url:str('https://meet.example.test/sala'),ownerId:str(sender.localId)};
