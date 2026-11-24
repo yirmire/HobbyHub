@@ -64,10 +64,28 @@ await request(other, 'POST', `${thread}/messages?documentId=other`, 403, {
 });
 
 const blocked = `public/data/members/${sender.localId}/blocked`;
+const reactionPath = `${thread}/messages/hello?updateMask.fieldPaths=reactions`;
+const reactionMap = entries => ({ reactions: { mapValue: {
+  fields: Object.fromEntries(entries.map(([uid, stringValue]) => [uid, { stringValue }]))
+} } });
+const senderReaction = [sender.localId, '👍'];
+const recipientReaction = [recipient.localId, '❤️'];
+await request(sender, 'POST', `${thread}/messages?documentId=forged-reaction`, 403, {
+  ...message, ...reactionMap([recipientReaction])
+});
+await request(sender, 'PATCH', reactionPath, 200, reactionMap([senderReaction]));
+await request(recipient, 'PATCH', reactionPath, 200, reactionMap([senderReaction, recipientReaction]));
+await request(other, 'PATCH', reactionPath, 403, reactionMap([senderReaction, recipientReaction, [other.localId, '🙌']]));
+await request(sender, 'PATCH', reactionPath, 403, reactionMap([senderReaction]));
+await request(sender, 'PATCH', reactionPath, 403, reactionMap([[sender.localId, '⭐'], recipientReaction]));
+await request(sender, 'PATCH', `${thread}/messages/hello`, 403, { ...message, ...reactionMap([recipientReaction]), text: {stringValue:'Texto alterado'} });
+await request(sender, 'PATCH', reactionPath, 200, reactionMap([[sender.localId, '😂'], recipientReaction]));
+await request(sender, 'PATCH', reactionPath, 200, reactionMap([recipientReaction]));
 const block = `${blocked}/${recipient.localId}`;
 const blockFields = { createdAt: { integerValue: String(Date.now()) } };
 await request(recipient, 'POST', `${blocked}?documentId=${recipient.localId}`, 403, blockFields);
 await request(sender, 'POST', `${blocked}?documentId=${recipient.localId}`, 200, blockFields);
+await request(recipient, 'PATCH', reactionPath, 403, reactionMap([]));
 await request(sender, 'GET', blocked, 200);
 await request(recipient, 'GET', block, 403);
 await request(recipient, 'GET', `${thread}/messages/hello`, 200);

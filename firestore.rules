@@ -891,12 +891,26 @@ service cloud.firestore {
         && betweenUnblockedMembers(appId, request.resource.data.participants);
       allow update, delete: if false;
       match /messages/{messageId} {
+        function validDirectMessage(data) {
+          return validText(data.text, 1, 1500) && data.createdAt is number;
+        }
+        function validReactionUpdate() {
+          let before = resource.data.get('reactions', {});
+          let after = request.resource.data.get('reactions', {});
+          let uid = request.auth.uid;
+          return before is map && after is map
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            && after.diff(before).affectedKeys().hasOnly([uid])
+            && (!(uid in after) || after[uid] in ['👍', '❤️', '😂', '😮', '🙌']);
+        }
         allow read: if threadMember(appId, id);
         allow create: if loggedIn() && canSendDirectMessage(appId, id)
           && request.resource.data.senderId == request.auth.uid
-          && validText(request.resource.data.text, 1, 1500)
-          && request.resource.data.createdAt is number;
-        allow update, delete: if false;
+          && validDirectMessage(request.resource.data)
+          && !('reactions' in request.resource.data);
+        allow update: if loggedIn() && canSendDirectMessage(appId, id)
+          && validDirectMessage(request.resource.data) && validReactionUpdate();
+        allow delete: if false;
       }
     }
 
