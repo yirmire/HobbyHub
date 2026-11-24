@@ -1058,6 +1058,25 @@ test('event format filters include legacy labels and room links require confirma
   assert.equal(vm.runInContext("validEventRoomUrl('javascript:alert(1)')",context),false);
 });
 
+test('online event time zones preserve the same instant across local dates, conflicts and calendar exports', () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    const event={id:'brasilia',format:'online',title:'Conversa',date:'2026-11-25',time:'19:00',endTime:'20:00',timeZone:'America/Sao_Paulo'};
+    const manaus={...event,id:'manaus',timeZone:'America/Manaus',time:'18:30',endTime:'19:00',attendees:['guest']};
+    state.events=[event,manaus];
+  `,context);
+  assert.equal(vm.runInContext('new Date(eventTimeInstant(event)).toISOString()',context),'2026-11-25T22:00:00.000Z');
+  assert.equal(vm.runInContext('conflictingEvents(event).map(item=>item.id).join()',context),'manaus');
+  const file=vm.runInContext('calendarFile(event)',context);
+  assert.match(file,/DTSTART:20261125T220000Z\r\nDTEND:20261125T230000Z/);
+  const expected=new Date('2026-11-26T02:30:00Z');
+  context.expected=expected;
+  assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).date`,context),vm.runInContext('localDateKey(expected)',context));
+  assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
+});
+
 test('calendar data includes the clean event link and escapes user text', () => {
   const context = appContext();
   context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};
