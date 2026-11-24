@@ -565,6 +565,13 @@ await request(recipient,'PATCH',notificationSettings,403,{polls:str('yes')});
 await request(recipient,'PATCH',notificationSettings,403,{urgent:{booleanValue:false}});
 await request(recipient,'PATCH',`${notificationSettings}?updateMask.fieldPaths=bulletins`,200,{bulletins:{booleanValue:false}});
 assert.equal((await request(recipient,'GET',notificationSettings,200)).fields.polls.booleanValue,false);
+const reminderSettings=notificationSettings+'?updateMask.fieldPaths=eventReminders';
+await request(other,'PATCH',reminderSettings,403,{eventReminders:str('both')});
+await request(recipient,'PATCH',reminderSettings,403,{eventReminders:str('weekly')});
+await request(recipient,'PATCH',reminderSettings,200,{eventReminders:str('both')});
+const savedReminders=(await request(recipient,'GET',notificationSettings,200)).fields;
+assert.equal(savedReminders.eventReminders.stringValue,'both');
+assert.equal(savedReminders.polls.booleanValue,false);
 const timestampedEvent=`${events}/timestamped`;
 await request(sender,'POST',`${events}?documentId=timestamped`,200,standalone);
 const attendChange={update:{name:documents+timestampedEvent,fields:{location:str('Biblioteca'),revision:{integerValue:'1'}}},
