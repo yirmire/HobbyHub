@@ -771,6 +771,24 @@ test('my feedback shows each state and the resolution notice opens the exact sub
   assert.doesNotMatch(vm.runInContext('renderModal()',context),/Tela com erro/);
 });
 
+test('a resumed feedback notice opens the correct case and is marked read', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.notificationFilter='unread';
+    state.myProductFeedback=[
+      {id:'first',message:'Primeira análise',status:'in-review',reviewedAt:{toMillis:()=>10}},
+      {id:'reopened',message:'Envio retomado',status:'in-review',resolutionChoice:'needs-help',reviewedAt:{toMillis:()=>20}},
+      {id:'waiting',message:'Aguardando retorno',status:'resolved',resolutionChoice:'needs-help',reviewedAt:{toMillis:()=>30}}
+    ];
+  `,context);
+  assert.equal(vm.runInContext("notificationItems().filter(item=>item.type==='feedback-resumed').map(item=>item.readKey).join(',')",context),'feedback-resumed:reopened:20');
+  assert.match(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise do seu feedback/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'feedback-resumed:reopened:20'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Em análise[\s\S]*Envio retomado/);
+  assert.equal(vm.runInContext("state.notificationReads.has('feedback-resumed:reopened:20')",context),true);
+  assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
