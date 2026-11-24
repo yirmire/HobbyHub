@@ -306,6 +306,7 @@ service cloud.firestore {
       function ordinaryPost() {
         return request.resource.data.userId == request.auth.uid
         && request.resource.data.likes == []
+        && !request.resource.data.keys().hasAny(['editedAt'])
         && validText(request.resource.data.content, 1, 2000)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.location, 1, 90)
@@ -329,6 +330,12 @@ service cloud.firestore {
           && (request.time - duration.value(3, 'h')).date() > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
       }
       allow update: if onlyMyArrayMembership('likes');
+      allow update: if isMe(resource.data.userId)
+        && changedOnly(['content','editedAt'])
+        && request.resource.data.content != resource.data.content
+        && validText(request.resource.data.content, 1, 2000)
+        && request.resource.data.content.matches('(?s).*[^\\s].*')
+        && request.resource.data.editedAt == request.time;
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
 
       match /comments/{commentId} {

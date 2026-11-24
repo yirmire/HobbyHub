@@ -888,6 +888,29 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('only the author can open the edit menu and the form updates just the post text', async () => {
+  const handlers={},context=appContext(handlers);
+  context.FormData=function(){return [['content',' Texto atualizado ']];};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='comments';state.selectedPost='own';
+    state.posts=[{id:'own',userId:'reader',content:'Texto <original>',likes:['one']},
+      {id:'other',userId:'someone',content:'Outro post',likes:[]}];
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,updateDoc:async(path,data)=>{state.written={path,data};}};
+  `,context);
+  assert.doesNotMatch(vm.runInContext('postCard(state.posts[1])',context),/post-options/);
+  assert.match(vm.runInContext('renderModal()',context),/Opções da publicação/);
+  await vm.runInContext("onAction({dataset:{action:'post-options',id:'own'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Editar publicação/);
+  await vm.runInContext("onAction({dataset:{action:'edit-post',id:'own'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Texto &lt;original&gt;/);
+  await handlers.submit({target:{id:'edit-post-form'},preventDefault(){}});
+  assert.equal(vm.runInContext('JSON.stringify(state.written.data)',context),'{"content":"Texto atualizado","editedAt":123}');
+  assert.match(vm.runInContext('state.written.path',context),/\/posts\/own$/);
+  assert.equal(vm.runInContext('state.modal',context),'comments');
+  assert.match(vm.runInContext('state.posts[0].editedAt=123;postCard(state.posts[0])',context),/Editado[\s\S]*1 curtidas/);
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};
