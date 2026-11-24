@@ -70,7 +70,7 @@ const state = {
   eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
   eventReads:new Map(), eventReadsLoaded:false,
   personalHistory:{records:new Map(),loading:false,error:false},
-  eventOfferTimer:null, eventBulletins:new Map(), eventCheckins:null,
+  eventOfferTimer:null, eventReminderTimer:null, eventBulletins:new Map(), eventCheckins:null,
   eventFeedback:null, eventDiscussion:null, eventAnswerId:null,
   groupRoles:new Map(), moderationSelection:null,
   groupRemoval:null, moderationHistory:null,
@@ -131,7 +131,7 @@ function unsubscribeAll() {
  for(const unsubscribe of state.reportNoticeUnsubs.values())unsubscribe();
  state.reportNoticeUnsubs.clear();state.reportNotices.clear();
  for(const watch of state.pollWatches.values())watch.unsubscribe();
- state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);clearTimeout(state.eventOfferTimer);
+ state.pollWatches.clear();clearTimeout(state.pollNoticeTimer);clearTimeout(state.eventOfferTimer);clearTimeout(state.eventReminderTimer);
  for(const watch of state.eventBulletins.values())watch.unsubscribe();
  state.eventBulletins.clear();
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
@@ -224,7 +224,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;scheduleEventOffers();watchEventBulletins();void loadPersonalHistory();queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -469,6 +469,8 @@ const notificationCategoryByType=new Map([
 const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
+ const date=new Date(),reminderDay=tomorrow(date);
+ const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
  const latestNews=productNews[0];
  if(me()&&latestNews)items.push({
    type:'product-news',news:latestNews,key:'product-news:'+latestNews.id,createdAt:Date.parse(latestNews.date)
@@ -488,6 +490,10 @@ function notificationItems(){
    });
  }
  for(const event of state.events){
+   if(isConfirmedEventOn(event,reminderDay))items.push({
+     type:'event-reminder',eventId:event.id,eventTitle:event.title,eventTime:event.time,
+     key:'event-reminder:'+event.id,createdAt:reminderTime
+   });
    const savedAt=state.savedEventDates.get(event.id)?.toMillis?.();
    const changedAt=event.scheduleChangedAt?.toMillis?.();
    const confirmedCancellation=event.cancelled===true&&event.attendees?.includes(me())&&event.createdBy!==me();
@@ -521,7 +527,7 @@ function notificationItems(){
    && !(communityNoticeTypes.has(item.type)&&state.mutedCommunityIds.has(item.groupId)))
    .map(item=>{
      const time=typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.();
-     return {...item,time,readKey:item.key+':'+time};
+     return {...item,time,readKey:item.type==='event-reminder'?item.key:item.key+':'+time};
    }).filter(item=>Number.isFinite(item.time))
    .sort((a,b)=>b.time-a.time).slice(0,50);
 }
@@ -556,6 +562,7 @@ function renderNotifications(){
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
+     'event-reminder':'Amanhã: '+item.eventTitle+(item.eventTime?' · às '+item.eventTime:''),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
      'feedback-resolved':'Seu feedback foi resolvido',
@@ -563,7 +570,7 @@ function renderNotifications(){
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -683,8 +690,11 @@ function filteredPosts(posts=state.posts) {
  const q=norm(state.search);if(q)found=found.filter(p=>norm([p.content,p.hobby,p.location,authorName(p)].join(' ')).includes(q));
  return found.slice(0,120);
 }
+function isConfirmedEventOn(event,day){
+ return Boolean(me()&&event.date===day&&event.cancelled!==true&&event.attendees?.includes(me()));
+}
 function renderEventReminders(day=tomorrow()) {
- const events=state.events.filter(event=>event.date===day&&event.cancelled!==true&&event.attendees?.includes(me()))
+ const events=state.events.filter(event=>isConfirmedEventOn(event,day))
   .sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
  if(!events.length)return '';
  return `<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Lembretes dos seus eventos">
@@ -1829,6 +1839,18 @@ function today(){return localDateKey(new Date());}
 function tomorrow(date=new Date()){
  return localDateKey(new Date(date.getFullYear(),date.getMonth(),date.getDate()+1));
 }
+function scheduleEventReminderRefresh(){
+ clearTimeout(state.eventReminderTimer);
+ const uid=me();
+ if(!uid)return;
+ const date=new Date();
+ const midnight=new Date(date.getFullYear(),date.getMonth(),date.getDate()+1);
+ state.eventReminderTimer=setTimeout(()=>{
+   if(me()!==uid)return;
+   scheduleEventReminderRefresh();
+   render();
+ },midnight-date);
+}
 function captureDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
    const values={};f.querySelectorAll('input[name],textarea[name],select[name]').forEach(el=>{values[el.name]=el.value;});
@@ -2530,7 +2552,7 @@ async function onAction(btn) {
       if(item){item.focus({preventScroll:true});item.scrollIntoView({block:'center'});}
       return;
     }
-    if(notice.type==='event-seat'||notice.type==='saved-event-change'||notice.type==='confirmed-event-cancellation'){openEventDetail(notice.eventId);return;}
+    if(['event-seat','event-reminder','saved-event-change','confirmed-event-cancellation'].includes(notice.type)){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
     }

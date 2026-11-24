@@ -820,6 +820,23 @@ test('a resumed feedback notice opens the correct case and is marked read', asyn
   assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise/);
 });
 
+test('the bell reminds confirmed attendees once per event and opens its details', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};
+    const event={id:'tomorrow',date:tomorrow(),title:'Caminhada confirmada',time:'14:30',attendees:['guest']};
+    state.events=[event,{...event,id:'cancelled',cancelled:true},{...event,id:'waiting',attendees:[],waitlist:['guest']},{...event,id:'today',date:today()}];
+    state.notificationFilter='unread';
+  `,context);
+  assert.equal(vm.runInContext("notificationItems().filter(item=>item.type==='event-reminder').map(item=>item.readKey).join(',')",context),'event-reminder:tomorrow');
+  assert.match(vm.runInContext('renderNotifications()',context),/Amanhã: Caminhada confirmada · às 14:30/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'event-reminder:tomorrow'}})",context);
+  assert.equal(vm.runInContext('state.selectedEvent',context),'tomorrow');
+  assert.equal(vm.runInContext("state.notificationReads.has('event-reminder:tomorrow')",context),true);
+  assert.doesNotMatch(vm.runInContext("state.events[0].time='15:00';renderNotifications()",context),/Caminhada confirmada/);
+  assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
