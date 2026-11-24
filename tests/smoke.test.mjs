@@ -986,6 +986,36 @@ test('calendar data includes the clean event link and escapes user text', () => 
   assert.ok(file.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
 });
 
+test('sharing from an event card uses the native share menu or copies the same clean link', async () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',search:'?utm_source=test'};
+  const shared=[],copied=[];
+  context.navigator.share=async data=>shared.push(data);
+  context.navigator.clipboard={writeText:async url=>copied.push(url)};
+  vm.runInContext(`
+    showToast=()=>{};
+    state.events=[
+      {id:'walk',title:'Caminhada',date:'2099-01-02',time:'10:30'},
+      {id:'cancelled',date:'2099-01-02',cancelled:true}
+    ];
+  `,context);
+  const share=()=>vm.runInContext("onAction({dataset:{action:'share-event',id:'walk'}})",context);
+  assert.match(vm.runInContext('eventCard(state.events[0])',context),/data-action="share-event"[^>]*>Compartilhar evento/);
+  assert.doesNotMatch(vm.runInContext('eventCard(state.events[1])',context),/data-action="share-event"/);
+  await share();
+  const url='https://example.test/HobbyHub/#event=walk';
+  assert.equal(shared[0].url,url);
+  assert.equal(shared[0].text,'Caminhada · 02/01/2099 às 10:30');
+  context.navigator.share=async()=>{throw Object.assign(new Error(),{name:'AbortError'});};
+  await share();
+  assert.equal(copied.length,0);
+  context.navigator.share=async()=>{throw new Error('Unavailable');};
+  await share();
+  delete context.navigator.share;
+  await share();
+  assert.deepEqual(copied,[url,url]);
+});
+
 test('the calendar action downloads the confirmed event from its card', async () => {
   const context=appContext();
   context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
