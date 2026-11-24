@@ -2057,6 +2057,7 @@ function renderPostComment(comment,belongsToGroup,canModerate){
  ${belongsToGroup&&!own?` <button class="text-action" data-action="report-group-comment" data-id="${id}">Denunciar comentário</button>`:''}
  ${editor&&!editor.editing?`<div class="toggle-row" style="flex-wrap:wrap">
  <button class="text-action" data-action="toggle-saved-comment" data-id="${id}" ${state.busy?'disabled':''}>${saved?'Remover dos salvos':'Salvar comentário'}</button>
+ <button class="text-action" data-action="copy-comment-link" data-id="${id}">Copiar link do comentário</button>
  ${own?`<button class="text-action" data-action="edit-comment" data-id="${id}">Editar comentário</button>`:''}
  ${own?`<button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button>`:''}</div>`:''}</div>
  ${me()?`<button class="post-action" data-action="comment-options" data-id="${id}" aria-label="Opções do comentário" aria-expanded="${Boolean(editor)}">⋯</button>`:''}
@@ -2523,7 +2524,7 @@ function updateMobileViewport(){
  }
 }
 function clearContentLink(){
- if(/^#(?:post|group|event)=/.test(window.location.hash)){
+ if(/^#(?:post|group|event|comment)=/.test(window.location.hash)){
    window.history.replaceState(null,'',window.location.pathname+window.location.search);
  }
 }
@@ -2581,9 +2582,9 @@ async function startDirect(uid){
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  },'openingDirect','Esta conversa privada não está disponível no momento.');
 }
-function contentLink(type,id) {
+function contentLink(type,id,commentId='') {
  const link=new URL(window.location.pathname,window.location.origin);
- link.hash=`${type}=${encodeURIComponent(id)}`;
+ link.hash=`${type}=${encodeURIComponent(id)}${commentId?':'+encodeURIComponent(commentId):''}`;
  return link.href;
 }
 async function loadEventFeedback(event) {
@@ -2660,9 +2661,15 @@ function moderationTargetRefs(postId,commentId) {
    ? {content:ref('posts',postId,'comments',commentId),pointer:ref('posts',postId,'removedComments',commentId)}
    : {content:ref('posts',postId),pointer:ref('removedPosts',postId)};
 }
-function openLinkedContent() {
+function openLinkedContent(event) {
+ const comment=/^#comment=([a-zA-Z0-9_-]{1,120}):([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
+ if(!state.user||state.modal&&!(comment&&event?.type==='hashchange'))return;
+ if(comment){
+   state.welcomePending=false;
+   if(state.posts.some(post=>post.id===comment[1]))openComments(comment[1],comment[2]);
+   return;
+ }
  const match=/^#(post|group|event)=([a-zA-Z0-9_-]{1,120})$/.exec(window.location.hash);
- if(!state.user||state.modal)return;
  if(!match){
    if(state.welcomePending&&state.groupsLoaded){state.welcomePending=false;openModal('first-visit');}
    return;
@@ -3650,6 +3657,11 @@ async function onAction(btn) {
     if(state.modal!=='comments'||state.busy||!me()||!state.comments.some(item=>item.id===id))return;
     state.commentEditor=state.commentEditor?.id===id?null:{id,editing:false};
     render();return;
+  case 'copy-comment-link':
+    if(me()&&state.modal==='comments'&&state.selectedPost&&state.comments.some(comment=>comment.id===id)){
+      await copyContentLink(contentLink('comment',state.selectedPost,id),'Link do comentário copiado!','Copie o link do comentário:');
+    }
+    return;
   case 'edit-comment':
     if(state.modal!=='comments'||state.busy||state.commentEditor?.id!==id||!state.comments.some(item=>item.id===id&&item.userId===me()))return;
     state.drafts.delete('edit-comment:'+state.selectedPost+':'+id);

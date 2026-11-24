@@ -1227,6 +1227,25 @@ test('renaming and deleting a collection preserve the saved posts and other coll
   assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
 });
 
+test('a copied comment link waits for login and opens the exact reply', async () => {
+  const context=appContext();
+  const copied=[];
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',search:'?utm_source=test',hash:'#comment=post:reply'};
+  context.navigator.clipboard={writeText:async url=>copied.push(url)};
+  vm.runInContext(`
+    state.posts=[{id:'post'}];state.comments=[{id:'reply'}];
+    showToast=()=>{};
+    openComments=(...args)=>{state.linkedComment=args.join(':');};
+    openLinkedContent();
+  `,context);
+  assert.equal(vm.runInContext('state.linkedComment',context),undefined);
+  vm.runInContext("state.user={uid:'reader'};openLinkedContent()",context);
+  assert.equal(vm.runInContext('state.linkedComment',context),'post:reply');
+  vm.runInContext("state.modal='comments';state.selectedPost='post'",context);
+  await vm.runInContext("onAction({dataset:{action:'copy-comment-link',id:'reply'}})",context);
+  assert.deepEqual(copied,['https://example.test/HobbyHub/#comment=post:reply']);
+});
+
 test('saved comment search matches its text, author and community without accents', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
