@@ -61,7 +61,7 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
-  savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null,
+  savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -309,6 +309,7 @@ async function init() {
       state.savedView='saved';
       state.savedSearch='';
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
+      state.editingSavedCollectionId=null;
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
@@ -1393,7 +1394,9 @@ function renderSaved() {
  const collection=state.savedCollections.find(item=>item.id===selected);
  const collections=`<div class="toggle-row" style="flex-wrap:wrap"><label class="field">Coleção<select class="select" id="saved-collection-filter">
  <option value="">Todos os salvos</option>${state.savedCollections.map(item=>`<option value="${esc(item.id)}" ${item.id===selected?'selected':''}>${esc(item.name)}</option>`).join('')}
- </select></label><button class="btn btn-outline btn-small" data-action="create-saved-collection">Nova coleção</button></div>`;
+ </select></label><button class="btn btn-outline btn-small" data-action="create-saved-collection">Nova coleção</button>
+ ${collection?`<button class="text-action" data-action="rename-saved-collection" data-id="${esc(collection.id)}">Renomear</button>
+ <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}</div>`;
  const posts=state.posts.filter(post=>state.savedIds.includes(post.id)&&(!collection||state.savedMemberships.get(post.id)?.includes(collection.id)));
  const results=posts.filter(post=>savedPostMatches(post,query));
  return filters+search+collections+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><span class="pill">${posts.length} salvas</span></div>${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${postCard(post)}
@@ -1966,6 +1969,18 @@ function renderCommentThreads(belongsToGroup,canModerate){
  }).join('');
 }
 function renderModal() {
+ if(state.modal==='rename-saved-collection'||state.modal==='delete-saved-collection'){
+   const collection=state.savedCollections.find(item=>item.id===state.editingSavedCollectionId);
+   if(!collection)return modalWrap('Coleção indisponível','<p>Esta coleção não está mais disponível.</p>');
+   if(state.modal==='rename-saved-collection')return modalWrap('Renomear coleção',`<form id="rename-saved-collection-form" data-draft="true" class="form-stack">
+   <label class="field">Nome da coleção<input class="input" name="name" required maxlength="60" value="${esc(collection.name)}"></label>
+   <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="close">Cancelar</button>
+   <button type="submit" class="btn btn-primary" ${state.busy?'disabled':''}>Salvar nome</button></div></form>`);
+   return modalWrap('Excluir coleção',`<div class="form-stack">
+   <p>Excluir <strong>${esc(collection.name)}</strong>? As publicações continuam em Todos os salvos e nas outras coleções.</p>
+   <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-outline" data-action="close">Cancelar</button>
+   <button class="btn btn-primary" data-action="confirm-delete-saved-collection" data-id="${esc(collection.id)}" ${state.busy?'disabled':''}>Excluir coleção</button></div></div>`);
+ }
  if(state.modal==='create-saved-collection')return modalWrap('Nova coleção',`<form id="saved-collection-form" data-draft="true" class="form-stack">
  <label class="field">Nome da coleção<input class="input" name="name" required maxlength="60"></label>
  <button type="submit" class="btn btn-primary" ${state.busy?'disabled':''}>Criar coleção</button></form>`);
@@ -2382,6 +2397,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.editingSavedCollectionId=null;
  state.collectionPostId=null;
  state.commentEditor=null;
  state.commentReplyId=null;
@@ -3367,6 +3383,22 @@ async function onAction(btn) {
       openModal('create-saved-collection');
     }
     return;
+  case 'rename-saved-collection':
+  case 'delete-saved-collection':
+    if(me()&&state.tab==='saved'&&state.savedView==='saved'&&state.selectedSavedCollection===id&&state.savedCollections.some(item=>item.id===id)){
+      state.editingSavedCollectionId=id;openModal(btn.dataset.action);
+    }
+    return;
+  case 'confirm-delete-saved-collection':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.modal!=='delete-saved-collection'||state.editingSavedCollectionId!==id||
+       !state.savedCollections.some(item=>item.id===id))return;
+    await firebase.deleteDoc(ref('members',uid,'savedCollections',id));
+    if(me()!==uid)return;
+    if(state.selectedSavedCollection===id)state.selectedSavedCollection='';
+    if(state.editingSavedCollectionId===id&&state.modal==='delete-saved-collection')closeModal();
+    showToast('Coleção excluída.');
+  });return;
   case 'toggle-saved-collection':await attempt(async()=>{
     const uid=me(),postId=state.collectionPostId;
     if(!uid||state.modal!=='manage-saved-collections'||!state.savedIds.includes(postId)||
@@ -3562,6 +3594,17 @@ document.addEventListener('submit',async(event)=>{
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
+  });return;
+  case 'rename-saved-collection-form':await attempt(async()=>{
+    const uid=me(),id=state.editingSavedCollectionId,name=val('name');
+    const collection=state.savedCollections.find(item=>item.id===id);
+    if(!uid||state.modal!=='rename-saved-collection'||!collection||!name||name.length>60)return;
+    if(name!==collection.name){
+      await firebase.updateDoc(ref('members',uid,'savedCollections',id),{name});
+      if(me()!==uid)return;
+      showToast('Coleção renomeada.');
+    }
+    if(state.editingSavedCollectionId===id&&state.modal==='rename-saved-collection')closeModal();
   });return;
   case 'saved-collection-form':await attempt(async()=>{
     const uid=me(),name=val('name'),postId=state.collectionPostId;

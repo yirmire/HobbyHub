@@ -394,6 +394,14 @@ await request(recipient,'PATCH',savedMembership,200,{savedAt:{integerValue:'10'}
 await request(sender,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionIds',403,{collectionIds:{arrayValue:{values:[str('collection')]}}});
 await request(recipient,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionIds',200,{collectionIds:{arrayValue:{values:[str('collection'),str('another')]}}});
 assert.equal((await request(recipient,'GET',savedMembership,200)).fields.savedAt.integerValue,'10');
+const renameCollection=privateCollection+'?updateMask.fieldPaths=name';
+await request(sender,'PATCH',renameCollection,403,{name:str('Outra conta')});
+await request(recipient,'PATCH',renameCollection,403,{name:str('  ')});
+await request(recipient,'PATCH',renameCollection,200,{name:str('Fotografia analógica')});
+assert.equal((await request(recipient,'GET',privateCollection,200)).fields.name.stringValue,'Fotografia analógica');
+await request(sender,'DELETE',privateCollection,403);
+await request(recipient,'DELETE',privateCollection,200);
+assert.equal((await request(recipient,'GET',savedMembership,200)).fields.collectionIds.arrayValue.values[1].stringValue,'another');
 const editable='public/data/posts/editable-post';
 await request(sender,'POST','public/data/posts?documentId=editable-post',200,welcome);
 const followedPath='public/data/members/'+recipient.localId+'/followedPosts/editable-post';
