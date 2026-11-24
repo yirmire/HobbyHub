@@ -867,6 +867,7 @@ function eventCard(event, inGroup=false, detail=false) {
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
  <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
+ ${detail?'':eventCalendarButton(event)}
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  ${hasPersonalCheckin(event)?'<p class="pill">Presença registrada</p>':''}
  ${!detail&&feedbackAvailable(event)&&(canReviewEvent(event)||event.createdBy===me())?`<button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${event.createdBy===me()?'Ver avaliações':'Avaliar encontro'}</button>`:''}
@@ -1690,7 +1691,8 @@ function renderModal() {
    return modalWrap(event.title,`${eventCard(event,false,true)}
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
-   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${event.cancelled!==true&&(event.attendees||[]).includes(me())?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:''}
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${eventCalendarButton(event)}</div>
+   ${canExportEventCalendar(event)?'<p class="tip" style="margin-top:12px">Abra o arquivo .ics baixado para salvar o evento no seu calendário.</p>':''}
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
    ${event.createdBy===me()&&event.cancelled!==true?`<button class="btn btn-outline btn-small" data-action="edit-event" data-id="${esc(event.id)}">Editar evento</button><button class="btn btn-ghost btn-small" data-action="cancel-event" data-id="${esc(event.id)}">Cancelar evento</button>`:''}</div>
    ${event.cancelled===true||event.revision>0?'<p class="tip" style="margin-top:12px">Se você adicionou este evento a um calendário, atualize ou remova a cópia por lá.</p>':''}
@@ -2089,6 +2091,12 @@ function calendarEventsFile(events, stamp=new Date()) {
 function hasCalendarSchedule(event){
  return /^\d{4}-\d{2}-\d{2}$/.test(event.date)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(event.time);
 }
+function canExportEventCalendar(event){
+ return Boolean(event&&me()&&event.cancelled!==true&&event.attendees?.includes(me())&&hasCalendarSchedule(event));
+}
+function eventCalendarButton(event){
+ return canExportEventCalendar(event)?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:'';
+}
 function downloadEventCalendar(event) {
  if(!hasCalendarSchedule(event)){
    showToast('O evento precisa de uma data e um horário válidos.',true);return;
@@ -2284,7 +2292,7 @@ async function onAction(btn) {
     return;
   case 'event-calendar':{
     const event=state.events.find(item=>item.id===id);
-    if(event?.cancelled!==true&&event?.attendees?.includes(me()))downloadEventCalendar(event);
+    if(canExportEventCalendar(event))downloadEventCalendar(event);
     return;
   }
   case 'group-event':{
