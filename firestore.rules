@@ -151,10 +151,13 @@ service cloud.firestore {
       allow delete: if false;
 
       match /saved/{postId} {
-        allow read, create, delete: if isMe(uid);
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && validText(request.resource.data.get('note',''), 0, 500);
         allow update: if isMe(uid) && changedOnly(['collectionIds'])
           && request.resource.data.collectionIds is list
           && request.resource.data.collectionIds.size() <= 100;
+        allow update: if isMe(uid) && changedOnly(['note'])
+          && validText(request.resource.data.note, 0, 500);
       }
       match /savedCollections/{collectionId} {
         function validCollectionName(data) {

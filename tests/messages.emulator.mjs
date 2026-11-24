@@ -394,6 +394,15 @@ await request(recipient,'PATCH',savedMembership,200,{savedAt:{integerValue:'10'}
 await request(sender,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionIds',403,{collectionIds:{arrayValue:{values:[str('collection')]}}});
 await request(recipient,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionIds',200,{collectionIds:{arrayValue:{values:[str('collection'),str('another')]}}});
 assert.equal((await request(recipient,'GET',savedMembership,200)).fields.savedAt.integerValue,'10');
+const savedNotePath=savedMembership+'?updateMask.fieldPaths=note';
+await request(sender,'PATCH',savedNotePath,403,{note:str('Outra conta')});
+await request(recipient,'PATCH',savedNotePath,403,{note:str('a'.repeat(501))});
+await request(recipient,'PATCH',savedNotePath,200,{note:str('Nota privada da publicação')});
+await request(sender,'GET',savedMembership,403);
+const savedWithNote=(await request(recipient,'GET',savedMembership,200)).fields;
+assert.equal(savedWithNote.note.stringValue,'Nota privada da publicação');
+assert.equal(savedWithNote.collectionIds.arrayValue.values.length,2);
+await request(recipient,'PATCH',savedNotePath,200,{note:str('')});
 const renameCollection=privateCollection+'?updateMask.fieldPaths=name';
 await request(sender,'PATCH',renameCollection,403,{name:str('Outra conta')});
 await request(recipient,'PATCH',renameCollection,403,{name:str('  ')});

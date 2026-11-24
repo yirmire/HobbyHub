@@ -63,6 +63,7 @@ const state = {
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
+  savedNotes:new Map(), savedNotePostId:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -247,6 +248,7 @@ function startSession() {
       const ids=doc.data().collectionIds;
       return [doc.id,Array.isArray(ids)?ids:[]];
     }));
+    state.savedNotes=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().note]).filter(([,note])=>typeof note==='string'&&note));
   },'itens salvos');
   subscribe(col('members',me(),'savedCollections'),snapshot=>{
     state.savedCollections=docs(snapshot).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
@@ -315,6 +317,7 @@ async function init() {
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.editingSavedCollectionId=null;
       state.savedSelection=null;
+      state.savedNotes.clear();state.savedNotePostId=null;
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
@@ -1356,12 +1359,13 @@ function unreadFollowedComments(postId){
  return watch.entries.filter(comment=>comment.userId!==me()&&!state.blockedIds.includes(comment.userId)&&
    !state.notificationReads.has(followedCommentReadKey(postId,comment.id))&&!directReads.has(comment.id));
 }
-function savedPostMatches(post,query){
+function savedPostMatches(post,query,includeNote=false){
  if(!query)return true;
  if(!post)return false;
  const community=state.groups.find(group=>group.id===post.groupId);
  const text=norm(post.content),author=norm(authorName(post)),group=norm(community?.name);
- return query.split(' ').every(term=>text.includes(term)||author.includes(term)||group.includes(term));
+ const note=includeNote?norm(state.savedNotes.get(post.id)):'';
+ return query.split(' ').every(term=>text.includes(term)||author.includes(term)||group.includes(term)||note.includes(term));
 }
 function renderFollowedPosts(query){
  const posts=new Map(state.posts.map(post=>[post.id,post]));
@@ -1392,7 +1396,7 @@ function renderSaved() {
  const query=norm(state.savedSearch);
  const filters=`<div class="filters" role="group" aria-label="Tipo de publicação">${[['saved','Salvos'],['following','Acompanhando']].map(([view,label])=>
    `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
- const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="Texto, autor ou comunidade" value="${esc(state.savedSearch)}"></label>
+ const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="${state.savedView==='saved'?'Texto, autor, comunidade ou nota':'Texto, autor ou comunidade'}" value="${esc(state.savedSearch)}"></label>
  ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
  if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
  const selected=state.selectedSavedCollection;
@@ -1404,7 +1408,7 @@ function renderSaved() {
  ${collection?`<button class="text-action" data-action="rename-saved-collection" data-id="${esc(collection.id)}">Renomear</button>
  <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}</div>`;
  const posts=state.posts.filter(post=>state.savedIds.includes(post.id)&&(!collection||state.savedMemberships.get(post.id)?.includes(collection.id)));
- const results=posts.filter(post=>savedPostMatches(post,query));
+ const results=posts.filter(post=>savedPostMatches(post,query,true));
  const selectionControls=selection?`<div class="toggle-row" style="flex-wrap:wrap;margin-bottom:16px">
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
  <button class="btn btn-primary btn-small" data-action="choose-bulk-collection" ${!selection.size||state.busy?'disabled':''}>Adicionar à coleção</button>
@@ -1412,7 +1416,13 @@ function renderSaved() {
  return filters+search+collections+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
  ${posts.length||selection?`<button class="text-action" data-action="toggle-saved-selection" ${state.busy?'disabled':''}>${selection?'Cancelar seleção':'Selecionar'}</button>`:''}</div></div>${selectionControls}
  ${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${selection?`<button class="btn btn-outline btn-small" data-action="select-saved-post" data-id="${esc(post.id)}" aria-pressed="${selection.has(post.id)}" ${state.busy?'disabled':''}>${selection.has(post.id)?'Selecionada ✓':'Selecionar publicação'}</button>`:''}${postCard(post)}
- ${selection?'':`<button class="text-action" data-action="manage-saved-collections" data-id="${esc(post.id)}">Organizar em coleções</button>`}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+}
+function renderSavedPostActions(post){
+ const note=state.savedNotes.get(post.id),id=esc(post.id);
+ return `${note?`<aside class="card" style="padding:12px"><strong>Nota privada</strong><p class="post-copy" style="margin:4px 0 0">${esc(note)}</p></aside>`:''}
+ <div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="manage-saved-collections" data-id="${id}">Organizar em coleções</button>
+ <button class="text-action" data-action="edit-saved-note" data-id="${id}">${note?'Editar nota privada':'Adicionar nota privada'}</button></div>`;
 }
 async function updateSavedSelection(collectionId,remove){
  await attempt(async()=>{
@@ -2002,6 +2012,16 @@ function renderCommentThreads(belongsToGroup,canModerate){
  }).join('');
 }
 function renderModal() {
+ if(state.modal==='edit-saved-note'){
+   const id=state.savedNotePostId;
+   if(!state.savedIds.includes(id))return modalWrap('Nota privada','<p>Esta publicação não está mais em Salvos.</p>');
+   const note=state.savedNotes.get(id)||'';
+   return modalWrap('Nota privada',`<form id="saved-note-form" data-draft="true" data-draft-key="saved-note:${esc(id)}" class="form-stack">
+   <label class="field">Sua nota<textarea class="textarea" name="note" rows="4" maxlength="500">${esc(note)}</textarea></label>
+   <p class="tip">Só você pode ver esta nota.${note?' Para apagar, deixe o campo vazio e salve.':''}</p>
+   <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="close">Cancelar</button>
+   <button type="submit" class="btn btn-primary" ${state.busy?'disabled':''}>Salvar nota</button></div></form>`);
+ }
  if(state.modal==='bulk-saved-collection')return modalWrap('Adicionar à coleção',`<div class="form-stack">
  <p>${state.savedSelection?.size||0} selecionadas</p>
  ${state.savedCollections.map(item=>`<button class="btn btn-outline" data-action="add-selected-to-collection" data-id="${esc(item.id)}" ${state.busy?'disabled':''}>${esc(item.name)}</button>`).join('')}
@@ -2435,6 +2455,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.savedNotePostId=null;
  state.editingSavedCollectionId=null;
  state.collectionPostId=null;
  state.commentEditor=null;
@@ -3412,6 +3433,11 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'edit-saved-note':
+    if(me()&&state.tab==='saved'&&state.savedView==='saved'&&state.savedIds.includes(id)){
+      state.savedNotePostId=id;openModal('edit-saved-note');
+    }
+    return;
   case 'toggle-saved-selection':
     if(state.tab==='saved'&&state.savedView==='saved'&&!state.busy){
       state.savedSelection=state.savedSelection?null:new Set();render();
@@ -3653,6 +3679,16 @@ document.addEventListener('submit',async(event)=>{
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
+  });return;
+  case 'saved-note-form':await attempt(async()=>{
+    const uid=me(),id=state.savedNotePostId,note=val('note');
+    if(!uid||state.modal!=='edit-saved-note'||!state.savedIds.includes(id)||note.length>500)return;
+    if(note!==(state.savedNotes.get(id)||'')){
+      await firebase.updateDoc(ref('members',uid,'saved',id),{note});
+      if(me()!==uid)return;
+      showToast(note?'Nota salva.':'Nota apagada.');
+    }
+    if(state.savedNotePostId===id&&state.modal==='edit-saved-note')closeModal();
   });return;
   case 'rename-saved-collection-form':await attempt(async()=>{
     const uid=me(),id=state.editingSavedCollectionId,name=val('name');
