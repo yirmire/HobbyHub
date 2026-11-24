@@ -1100,6 +1100,27 @@ test('saved search matches text, author and community and combines with unread f
   assert.equal(vm.runInContext('state.followedPostsFilter',context),'unread');
 });
 
+test('saved collections filter the existing library and allow a post in multiple collections', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';
+    state.savedCollections=[{id:'photo',name:'Fotografia'},{id:'weekend',name:'Fim de semana'}];
+    state.posts=[{id:'p',content:'Câmera analógica'},{id:'older',content:'Salvo antigo'}];
+    state.savedIds=['p','older'];state.savedMemberships.set('p',['photo']);
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),arrayUnion:id=>[id],updateDoc:async(path,data)=>{state.update={path,data};}};
+  `,context);
+  assert.match(vm.runInContext('renderSaved()',context),/Todos os salvos[\s\S]*Salvo antigo/);
+  vm.runInContext("state.selectedSavedCollection='photo';state.savedSearch='camera'",context);
+  assert.match(vm.runInContext('renderSaved()',context),/Câmera analógica/);
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/Salvo antigo/);
+  await vm.runInContext("onAction({dataset:{action:'manage-saved-collections',id:'p'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/aria-pressed="true"[^>]*>Fotografia/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-saved-collection',id:'weekend'}})",context);
+  assert.match(vm.runInContext('state.update.path',context),/\/reader\/saved\/p$/);
+  assert.equal(vm.runInContext('state.update.data.collectionIds[0]',context),'weekend');
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};

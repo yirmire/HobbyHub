@@ -61,6 +61,7 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
+  savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -236,7 +237,17 @@ function startSession() {
   subscribe(col('members',me(),'privateReads'),snapshot=>{
     for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
   },'estado de leitura de mensagens');
-  subscribe(col('members',me(),'saved'),(s)=>{state.savedIds=s.docs.map((d)=>d.id);},'itens salvos');
+  subscribe(col('members',me(),'saved'),snapshot=>{
+    state.savedIds=snapshot.docs.map(doc=>doc.id);
+    state.savedMemberships=new Map(snapshot.docs.map(doc=>{
+      const ids=doc.data().collectionIds;
+      return [doc.id,Array.isArray(ids)?ids:[]];
+    }));
+  },'itens salvos');
+  subscribe(col('members',me(),'savedCollections'),snapshot=>{
+    state.savedCollections=docs(snapshot).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+    if(!state.savedCollections.some(item=>item.id===state.selectedSavedCollection))state.selectedSavedCollection='';
+  },'coleções salvas');
   subscribe(col('members',me(),'followedPosts'),snapshot=>{
     state.followedPosts=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().followedAt?.toMillis?.()]));
     watchFollowedPosts();
@@ -297,6 +308,7 @@ async function init() {
       state.expandedCommentReplies.clear();
       state.savedView='saved';
       state.savedSearch='';
+      state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
@@ -1377,9 +1389,15 @@ function renderSaved() {
  const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="Texto, autor ou comunidade" value="${esc(state.savedSearch)}"></label>
  ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
  if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
- const posts=state.posts.filter(p=>state.savedIds.includes(p.id));
+ const selected=state.selectedSavedCollection;
+ const collection=state.savedCollections.find(item=>item.id===selected);
+ const collections=`<div class="toggle-row" style="flex-wrap:wrap"><label class="field">Coleção<select class="select" id="saved-collection-filter">
+ <option value="">Todos os salvos</option>${state.savedCollections.map(item=>`<option value="${esc(item.id)}" ${item.id===selected?'selected':''}>${esc(item.name)}</option>`).join('')}
+ </select></label><button class="btn btn-outline btn-small" data-action="create-saved-collection">Nova coleção</button></div>`;
+ const posts=state.posts.filter(post=>state.savedIds.includes(post.id)&&(!collection||state.savedMemberships.get(post.id)?.includes(collection.id)));
  const results=posts.filter(post=>savedPostMatches(post,query));
- return filters+search+`<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${results.length?results.map(postCard).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ return filters+search+collections+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><span class="pill">${posts.length} salvas</span></div>${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${postCard(post)}
+ <button class="text-action" data-action="manage-saved-collections" data-id="${esc(post.id)}">Organizar em coleções</button></div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
 function mediaUrl(value) {
  try {
@@ -1948,6 +1966,18 @@ function renderCommentThreads(belongsToGroup,canModerate){
  }).join('');
 }
 function renderModal() {
+ if(state.modal==='create-saved-collection')return modalWrap('Nova coleção',`<form id="saved-collection-form" data-draft="true" class="form-stack">
+ <label class="field">Nome da coleção<input class="input" name="name" required maxlength="60"></label>
+ <button type="submit" class="btn btn-primary" ${state.busy?'disabled':''}>Criar coleção</button></form>`);
+ if(state.modal==='manage-saved-collections'){
+   const post=state.posts.find(item=>item.id===state.collectionPostId&&state.savedIds.includes(item.id));
+   const selected=state.savedMemberships.get(state.collectionPostId)||[];
+   return modalWrap('Organizar em coleções',post?`<div class="form-stack"><p>${esc(short(post.content,120))}</p>
+   ${state.savedCollections.map(item=>`<button class="btn btn-outline" data-action="toggle-saved-collection" data-id="${esc(item.id)}"
+    aria-pressed="${selected.includes(item.id)}" ${state.busy?'disabled':''}>${esc(item.name)}${selected.includes(item.id)?' ✓':''}</button>`).join('')}
+   ${state.savedCollections.length?'':'<p>Crie sua primeira coleção para organizar esta publicação.</p>'}
+   <button class="text-action" data-action="create-saved-collection">Nova coleção</button></div>`:'<p>Esta publicação não está disponível em Salvos.</p>');
+ }
  if(state.modal==='post-options'||state.modal==='edit-post'){
    const post=state.posts.find(item=>item.id===state.postEditor?.id);
    if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está mais disponível.</p>');
@@ -2352,6 +2382,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.collectionPostId=null;
  state.commentEditor=null;
  state.commentReplyId=null;
  state.expandedCommentReplies.clear();
@@ -3325,6 +3356,27 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'manage-saved-collections':
+    if(state.tab==='saved'&&state.savedView==='saved'&&state.savedIds.includes(id)){
+      state.collectionPostId=id;openModal('manage-saved-collections');
+    }
+    return;
+  case 'create-saved-collection':
+    if(state.tab==='saved'&&state.savedView==='saved'){
+      if(state.modal!=='manage-saved-collections')state.collectionPostId=null;
+      openModal('create-saved-collection');
+    }
+    return;
+  case 'toggle-saved-collection':await attempt(async()=>{
+    const uid=me(),postId=state.collectionPostId;
+    if(!uid||state.modal!=='manage-saved-collections'||!state.savedIds.includes(postId)||
+       !state.savedCollections.some(item=>item.id===id))return;
+    const selected=state.savedMemberships.get(postId)?.includes(id);
+    await firebase.updateDoc(ref('members',uid,'saved',postId),{
+      collectionIds:selected?firebase.arrayRemove(id):firebase.arrayUnion(id)
+    });
+    if(me()===uid)showToast(selected?'Publicação retirada da coleção.':'Publicação adicionada à coleção.');
+  });return;
   case 'clear-saved-search':
     if(state.tab==='saved'){
       state.savedSearch='';render();document.getElementById('saved-search')?.focus();
@@ -3433,6 +3485,7 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
+ else if(event.target.id==='saved-collection-filter')state.selectedSavedCollection=event.target.value;
  else if(event.target.id==='group-hobby')state.groupHobby=event.target.value;
  else if(event.target.id==='group-city')state.groupCity=event.target.value;
  else return;
@@ -3509,6 +3562,16 @@ document.addEventListener('submit',async(event)=>{
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
+  });return;
+  case 'saved-collection-form':await attempt(async()=>{
+    const uid=me(),name=val('name'),postId=state.collectionPostId;
+    if(!uid||state.modal!=='create-saved-collection'||!name||name.length>60)return;
+    await firebase.addDoc(col('members',uid,'savedCollections'),{name,createdAt:firebase.serverTimestamp()});
+    if(me()===uid&&state.modal==='create-saved-collection'){
+      if(postId&&state.savedIds.includes(postId))openModal('manage-saved-collections');
+      else closeModal();
+      showToast('Coleção criada.');
+    }
   });return;
   case 'group-form':await attempt(async()=>{
     const name=val('name');if(name.length<3)return;
