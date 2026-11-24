@@ -493,7 +493,7 @@ function notificationItems(){
  }
  for(const event of state.events){
    if(isConfirmedEventOn(event,reminderDay))items.push({
-     type:'event-reminder',eventId:event.id,eventTitle:event.title,eventTime:event.time,
+     type:'event-reminder',eventId:event.id,eventTitle:event.title,eventTime:viewerEventSchedule(event).time,
      key:'event-reminder:'+event.id,createdAt:reminderTime
    });
    const savedAt=state.savedEventDates.get(event.id)?.toMillis?.();
@@ -639,16 +639,20 @@ function eventChangeDescriptions(event) {
  if(previous?.revision!==event.revision)return ['Confira as informações atualizadas do evento.'];
  const formatDate=value=>String(value||'').split('-').reverse().join('/');
  const changes=[];
- if(previous.date!==event.date)changes.push(`Data alterada de ${formatDate(previous.date)} para ${formatDate(event.date)}.`);
- if(previous.time!==event.time)changes.push(`Horário alterado de ${previous.time} para ${event.time}.`);
- const previousEnd=previous.endTime??event.endTime??'',endTime=event.endTime||'';
- if(previousEnd!==endTime)changes.push(endTime?`Novo horário de término: ${endTime}.`:'Horário de término removido.');
+ const oldSchedule=viewerEventSchedule({...previous,timeZone:previous.timeZone??event.timeZone,endTime:previous.endTime??event.endTime});
+ const schedule=viewerEventSchedule(event);
+ if(oldSchedule.date!==schedule.date)changes.push(`Data alterada de ${formatDate(oldSchedule.date)} para ${formatDate(schedule.date)}.`);
+ if(oldSchedule.time!==schedule.time)changes.push(`Horário alterado de ${oldSchedule.time} para ${schedule.time}.`);
+ if((previous.timeZone??event.timeZone??'')!==(event.timeZone||''))changes.push('Fuso horário do encontro atualizado.');
+ if(oldSchedule.endTime!==schedule.endTime||oldSchedule.endDate!==schedule.endDate&&schedule.endTime){
+   changes.push(schedule.endTime?`Novo horário de término: ${schedule.endTime}.`:'Horário de término removido.');
+ }
  if(previous.location!==event.location)changes.push(`Local alterado de ${previous.location} para ${event.location}.`);
  return changes.length?changes:['Confira as informações atualizadas do evento.'];
 }
 function renderEventNotices() {
  if(!state.eventReadsLoaded)return '';
- const notices=state.events.filter(event=>event.date>=today()&&event.attendees?.includes(me())&&event.revision>(state.eventReads.get(event.id)||0));
+ const notices=state.events.filter(event=>viewerEventSchedule(event).date>=today()&&event.attendees?.includes(me())&&event.revision>(state.eventReads.get(event.id)||0));
  if(!notices.length)return '';
  return `<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Avisos dos seus eventos"><h2 style="font-size:16px;margin:0 0 8px">Avisos dos seus eventos</h2>
  <div class="form-stack">${notices.slice(0,3).map(event=>`<div><strong>${event.cancelled===true?'Evento cancelado':'O evento mudou'} · ${esc(event.title)}</strong><p class="mini">${esc(eventChangeDescriptions(event)[0])}</p><button class="text-action" data-action="view-event-notice" data-id="${esc(event.id)}">Ver aviso</button></div>`).join('')}</div></section>`;
@@ -695,14 +699,16 @@ function filteredPosts(posts=state.posts) {
  return found.slice(0,120);
 }
 function isConfirmedEventOn(event,day){
- return Boolean(me()&&event.date===day&&event.cancelled!==true&&event.attendees?.includes(me()));
+ return Boolean(me()&&event.cancelled!==true&&event.attendees?.includes(me())&&viewerEventSchedule(event).date===day);
 }
 function conflictingEvents(event){
- return hasCalendarSchedule(event)?state.events.filter(other=>other.id!==event.id&&
-   isConfirmedEventOn(other,event.date)&&hasCalendarSchedule(other)&&
-   (other.time===event.time||
-    (other.time>event.time&&other.time<eventEndTime(event))||
-    (event.time>other.time&&event.time<eventEndTime(other)))):[];
+ if(!hasCalendarSchedule(event)||!me())return [];
+ const start=eventTimeInstant(event),end=eventTimeInstant(event,eventEndTime(event));
+ return state.events.filter(other=>{
+   if(other.id===event.id||other.cancelled===true||!other.attendees?.includes(me())||!hasCalendarSchedule(other))return false;
+   const otherStart=eventTimeInstant(other),otherEnd=eventTimeInstant(other,eventEndTime(other));
+   return start===otherStart||(otherStart>start&&otherStart<end)||(start>otherStart&&start<otherEnd);
+ });
 }
 function leaveEventConflict(){
  const conflict=state.eventConflict;
@@ -712,13 +718,13 @@ function leaveEventConflict(){
 }
 function renderEventReminders(day=tomorrow()) {
  const events=state.events.filter(event=>isConfirmedEventOn(event,day))
-  .sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
+  .sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)));
  if(!events.length)return '';
  return `<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Lembretes dos seus eventos">
    <h2 style="font-size:16px;margin:0 0 8px">Seus eventos de amanhã</h2>
    <div class="form-stack">${events.map(event=>`<div>
      <strong>${esc(event.title)}</strong>
-     <p class="mini">${event.time?`Às ${esc(event.time)} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
+     <p class="mini">${eventTimeLabel(event)?`Às ${esc(eventTimeLabel(event))} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
      <button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Abrir evento</button>
    </div>`).join('')}</div>
  </section>`;
@@ -726,18 +732,18 @@ function renderEventReminders(day=tomorrow()) {
 function confirmedEventsToday(date=new Date()){
  const day=localDateKey(date);
  return state.events.filter(event=>isConfirmedEventOn(event,day))
-   .sort((a,b)=>(a.time||'24:00').localeCompare(b.time||'24:00'));
+   .sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)));
 }
 function renderTodayEvents(date=new Date()){
  const events=confirmedEventsToday(date);
  if(!events.length)return '';
  const time=date.toTimeString().slice(0,5);
- const next=events.find(event=>isEventTime(event.time)&&event.time>=time);
+ const next=events.find(event=>viewerEventSchedule(event).time>=time);
  return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Seus eventos de hoje">
  <h2 style="font-size:16px;margin:0">Seus eventos de hoje</h2>
  ${events.map(event=>`<article class="card form-stack" style="padding:12px">
  <div class="toggle-row" style="flex-wrap:wrap"><strong>${esc(event.title)}</strong>${event===next?'<span class="pill">Próximo encontro</span>':''}</div>
- <p class="mini">${event.time?`Às ${esc(event.time)}${eventEndTime(event)?`–${esc(eventEndTime(event))}`:''} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
+ <p class="mini">${eventTimeLabel(event)?`Às ${esc(eventTimeLabel(event))} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
  <div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Ver evento</button>
  ${eventDirectionsLink(event)}${renderHomeEventRoom(event)}</div>
  </article>`).join('')}</section>`;
@@ -850,13 +856,13 @@ function renderGroups(){
 const EVENT_OFFER_MS=3600000;
 function eventSeatOffer(event,uid=me()){
  const start=event.offerAt?.toMillis?.();
- return event.cancelled!==true&&event.date>=today()&&event.waitlist?.[0]===uid
+ return event.cancelled!==true&&viewerEventSchedule(event).date>=today()&&event.waitlist?.[0]===uid
    && Number.isFinite(start)&&now()<start+EVENT_OFFER_MS?start+EVENT_OFFER_MS:null;
 }
 function scheduleEventOffers(){
  clearTimeout(state.eventOfferTimer);
  const uid=me();
- const offers=state.events.filter(event=>event.cancelled!==true&&event.date>=today()&&event.waitlist?.includes(uid)&&event.offerAt);
+ const offers=state.events.filter(event=>event.cancelled!==true&&viewerEventSchedule(event).date>=today()&&event.waitlist?.includes(uid)&&event.offerAt);
  if(!offers.length)return;
  const deadline=Math.min(...offers.map(event=>event.offerAt.toMillis()+EVENT_OFFER_MS));
  state.eventOfferTimer=setTimeout(async()=>{
@@ -870,7 +876,7 @@ async function changeEventSeat(id,intent,uid,confirmedConflict=false){
  const target=ref('events',id);
  return firebase.runTransaction(db,async transaction=>{
    const current=(await transaction.get(target)).data();
-   if(!current||current.cancelled===true||current.date<today()||me()!==uid)return '';
+   if(!current||current.cancelled===true||viewerEventSchedule(current).date<today()||me()!==uid)return '';
    let {attendees,waitlist,capacity,offerAt}=current;
    const head=waitlist[0];
    const expired=offerAt&&offerAt.toMillis()+EVENT_OFFER_MS<=now();
@@ -912,17 +918,35 @@ function eventFormatOptions(format){
  return [['in-person','Presencial'],['online','Online']].map(([value,label])=>
    `<option value="${value}" ${format===value?'selected':''}>${label}</option>`).join('');
 }
-function eventFormatFields(format,location,roomUrl=''){
+const eventTimeZones={
+ 'America/Sao_Paulo':'Brasília',
+ 'America/Manaus':'Manaus',
+ 'America/Rio_Branco':'Rio Branco',
+ 'America/Noronha':'Fernando de Noronha',
+ UTC:'UTC'
+};
+const eventZoneFormatters=new Map();
+function defaultEventTimeZone(){
+ const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+ return Object.hasOwn(eventTimeZones,zone)?zone:'America/Sao_Paulo';
+}
+function eventZoneToday(zone){
+ return Object.hasOwn(eventTimeZones,zone)?new Intl.DateTimeFormat('sv-SE',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format():today();
+}
+function eventFormatFields(format,location,roomUrl='',timeZone=''){
  const online=format==='online';
  return `<label class="field">Formato<select class="select" name="format" required>${eventFormatOptions(format)}</select></label>
  <div data-format-field="in-person" ${online?'hidden':''}><label class="field">Local presencial<input class="input" name="location" maxlength="120" value="${esc(location)}" placeholder="Ex.: Praça central, Nova Friburgo" ${online?'disabled':'required'}></label></div>
- <div data-format-field="online" ${online?'':'hidden'}><label class="field">Link da sala online<input class="input" type="url" name="roomUrl" maxlength="2048" placeholder="https://" value="${esc(roomUrl)}" ${online?'required':'disabled'}></label><p class="tip">O link da sala fica disponível para quem confirmar presença.</p></div>`;
+ <div data-format-field="online" ${online?'':'hidden'}><label class="field">Fuso horário do evento<select class="select" name="timeZone" ${online?'required':'disabled'}>${Object.entries(eventTimeZones).map(([zone,label])=>`<option value="${zone}" ${(timeZone||defaultEventTimeZone())===zone?'selected':''}>${label}</option>`).join('')}</select></label><label class="field">Link da sala online<input class="input" type="url" name="roomUrl" maxlength="2048" placeholder="https://" value="${esc(roomUrl)}" ${online?'required':'disabled'}></label><p class="tip">O link da sala fica disponível para quem confirmar presença.</p></div>`;
 }
 function syncEventFormatFields(form){
  form.querySelectorAll('[data-format-field]').forEach(section=>{
-   const input=section.querySelector('input'),active=section.dataset.formatField===form.elements.format.value;
-   section.hidden=!active;input.disabled=!active;input.required=active;
+   const active=section.dataset.formatField===form.elements.format.value;
+   section.hidden=!active;
+   section.querySelectorAll('input,select').forEach(input=>{input.disabled=!active;input.required=active;});
  });
+ const zone=form.elements.format.value==='online'?form.elements.timeZone.value:'';
+ form.elements.date.min=eventZoneToday(zone);
 }
 function validEventRoomUrl(value){
  if(!/^https:\/\/[^\s]+$/.test(value)||value.length>2048)return false;
@@ -1008,13 +1032,13 @@ function eventDirectionsLink(event){
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
  const saved=state.savedEventDates.has(event.id);
- const future=event.date>=today();
+ const schedule=viewerEventSchedule(event),future=schedule.date>=today();
  const limited=Number.isInteger(event.capacity),position=limited?event.waitlist.indexOf(me()):-1;
  const offer=limited?eventSeatOffer(event):null;
  const waiting=limited&&((event.attendees||[]).length>=event.capacity||event.waitlist.length>0);
  const group=state.groups.find(item=>item.id===event.groupId);
  const canJoin=!event.groupId||group?.members?.includes(me());
- return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}${eventEndTime(event)?`–${esc(eventEndTime(event))}`:''}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
+ return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span class="event-day">${dateLabel(schedule.date)} ${esc(eventTimeLabel(event,schedule))}${event.timeZone?' (seu horário)':''}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')} ${eventDirectionsLink(event)}</div>
@@ -1154,13 +1178,14 @@ function eventWeek(date,offset){
 }
 function exportableWeekEvents(days){
  const first=localDateKey(days[0]),last=localDateKey(days[6]);
- return state.events.filter(event=>event.cancelled!==true&&event.attendees?.includes(me())
-   && event.date>=first&&event.date<=last&&hasCalendarSchedule(event))
-   .sort((a,b)=>(a.date+' '+a.time).localeCompare(b.date+' '+b.time));
+ return state.events.filter(event=>{
+   const {date}=viewerEventSchedule(event);
+   return event.cancelled!==true&&event.attendees?.includes(me())&&date>=first&&date<=last&&hasCalendarSchedule(event);
+ }).sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)));
 }
 function renderEventWeek(days,events){
  const sections=days.map(day=>{
-   const entries=events.filter(event=>event.date===localDateKey(day));
+   const entries=events.filter(event=>viewerEventSchedule(event).date===localDateKey(day));
    return entries.length?`<section class="form-stack"><h3>${day.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</h3>
    <div class="grid-two">${entries.map(event=>{
      const conflict=isConfirmedEventOn(event,localDateKey(day))&&conflictingEvents(event).length;
@@ -1191,23 +1216,24 @@ function renderEvents(now=new Date()) {
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
  const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat);
  const events=state.events.filter(event=>{
+   const schedule=viewerEventSchedule(event);
    const group=communities.get(event.groupId);
    if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
    if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
    if(state.eventFormat&&eventFormat(event)!==state.eventFormat)return false;
    if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
-   if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(event.date>=localDateKey(days[0])&&event.date<=localDateKey(days[6])));
+   if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(schedule.date>=localDateKey(days[0])&&schedule.date<=localDateKey(days[6])));
    if(eventFilter==='saved')return state.savedEventDates.has(event.id);
    if(eventFilter==='history')return feedbackAvailable(event)&&canReviewEvent(event);
-   if(eventFilter==='waitlist')return event.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
-   if(eventFilter==='past')return event.date&&event.date<day;
+   if(eventFilter==='waitlist')return schedule.date>=day&&event.cancelled!==true&&event.waitlist?.includes(me());
+   if(eventFilter==='past')return schedule.date&&schedule.date<day;
    if(eventFilter==='recommended')return event.cancelled!==true
-     && (event.date>day||(event.date===day&&(!event.time||event.time>=time)))
+     && (schedule.date>day||(schedule.date===day&&(!schedule.time||schedule.time>=time)))
      && (interests.has(norm(event.hobby).trim())||group?.members?.includes(me()));
-   return event.date>=day;
+   return schedule.date>=day;
  }).sort((a,b)=>{
-   const order=`${a.date||''} ${a.time||''}`.localeCompare(`${b.date||''} ${b.time||''}`);
+   const order=eventScheduleKey(a).localeCompare(eventScheduleKey(b));
    return eventFilter==='past'||eventFilter==='history'?-order:order;
  });
  const emptyAgenda=filtering?empty('🗓️','Nenhum evento encontrado','Mude a busca ou ajuste os filtros.')
@@ -1766,7 +1792,7 @@ function renderModal() {
  if(state.modal==='event-conflict'){
    const event=state.events.find(item=>item.id===state.eventConflict?.id);
    const conflicts=event?conflictingEvents(event):[];
-   const available=event&&event.cancelled!==true&&event.date>=today()&&!event.attendees?.includes(me());
+   const available=event&&event.cancelled!==true&&viewerEventSchedule(event).date>=today()&&!event.attendees?.includes(me());
    return modalWrap('Conflito de horário',`<div class="form-stack">
    ${conflicts.length?`<p>Você já confirmou presença em outro encontro no mesmo horário.</p>
    <ul>${conflicts.map(other=>`<li><button class="text-action" data-action="view-event" data-id="${esc(other.id)}">${esc(other.title)}</button></li>`).join('')}</ul>`:'<p>O horário ou a disponibilidade do encontro mudou.</p>'}
@@ -1865,7 +1891,7 @@ function renderModal() {
      <label class="field">Data<input class="input" type="date" name="date" required min="${today()}" value="${esc(event.date)}"></label>
      <label class="field">Horário de início<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
      <label class="field">Horário de término (opcional)<input class="input" type="time" name="endTime" value="${esc(event.endTime||'')}"></label>
-     ${eventFormatFields(eventFormat(event),eventFormat(event)==='in-person'?event.location:'',state.eventRoom?.id===event.id?state.eventRoom.url:'')}
+     ${eventFormatFields(eventFormat(event),eventFormat(event)==='in-person'?event.location:'',state.eventRoom?.id===event.id?state.eventRoom.url:'',event.timeZone)}
      ${state.eventRoom?.id===event.id&&state.eventRoom.error?'<p class="tip">Não foi possível carregar o link da sala. <button type="button" class="text-action" data-action="retry-event-room">Tentar novamente</button></p>':''}
      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy||state.eventRoom?.loading?'disabled':''}>Salvar alterações</button></div>
    </form>`);
@@ -1920,7 +1946,7 @@ function renderModal() {
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><label class="field">Horário de início<input class="input" name="time" type="time" required></label></div>
  <label class="field">Horário de término (opcional)<input class="input" name="endTime" type="time"></label>
  <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div>
- ${eventFormatFields(template?eventFormat(template):'in-person',template&&eventFormat(template)==='in-person'?template.location:'')}
+ ${eventFormatFields(template?eventFormat(template):'in-person',template&&eventFormat(template)==='in-person'?template.location:'','',template?.timeZone)}
  <label class="field">Número de vagas (opcional)<input class="input" type="number" name="capacity" min="2" max="200" step="1" value="${esc(template?.capacity)}" placeholder="Em branco para vagas ilimitadas"></label>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
@@ -1988,7 +2014,7 @@ function scheduleEventReminderRefresh(){
  const date=new Date();
  const midnight=new Date(date.getFullYear(),date.getMonth(),date.getDate()+1);
  const time=date.toTimeString().slice(0,5);
- const next=confirmedEventsToday(date).find(event=>isEventTime(event.time)&&event.time>=time);
+ const next=confirmedEventsToday(date).map(viewerEventSchedule).find(schedule=>schedule.time>=time);
  let refresh=midnight.getTime();
  if(next){
    const [hour,minute]=next.time.split(':').map(Number);
@@ -2258,7 +2284,7 @@ async function shareEvent(event){
  const url=contentLink('event',event.id);
  if(navigator.share){
    const date=/^\d{4}-\d{2}-\d{2}$/.test(event.date)?event.date.split('-').reverse().join('/'):'';
-   const schedule=date?date+(event.time?' às '+event.time:''):'';
+   const schedule=date?date+(event.time?' às '+event.time:'')+(eventTimeZones[event.timeZone]?' ('+eventTimeZones[event.timeZone]+')':''):'';
    const text=[event.title,schedule].filter(Boolean).join(' · ');
    try{await navigator.share({title:event.title,text,url});return;}
    catch(error){if(error?.name==='AbortError')return;}
@@ -2276,8 +2302,8 @@ function calendarEventsFile(events, stamp=new Date()) {
    `UID:${escapeText(event.id)}@${window.location.hostname}`,
    `DTSTAMP:${stamp.toISOString().replace(/[-:]|\.\d{3}/g,'')}`,
    `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
-   `DTSTART:${event.date.replace(/-/g,'')}T${event.time.replace(':','')}00`,
-   ...(eventEndTime(event)?[`DTEND:${event.date.replace(/-/g,'')}T${event.endTime.replace(':','')}00`]:[]),
+   `DTSTART:${eventCalendarDateTime(event,event.time)}`,
+   ...(eventEndTime(event)?[`DTEND:${eventCalendarDateTime(event,event.endTime)}`]:[]),
    `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(eventFormat(event)==='online'?'Online':event.location)}`,
    `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT'];
  }),'END:VCALENDAR'];
@@ -2297,6 +2323,45 @@ function isEventTime(time){
 }
 function eventEndTime(event){
  return isEventTime(event.time)&&isEventTime(event.endTime)&&event.endTime>event.time?event.endTime:'';
+}
+function eventTimeInstant(event,time=event.time){
+ if(!isEventTime(time))return NaN;
+ const input=`${event.date}T${time}:00`;
+ if(!Object.hasOwn(eventTimeZones,event.timeZone))return Date.parse(input);
+ const wallTime=Date.parse(input+'Z');
+ if(!Number.isFinite(wallTime))return NaN;
+ if(!eventZoneFormatters.has(event.timeZone)){
+   eventZoneFormatters.set(event.timeZone,new Intl.DateTimeFormat('en-US',{timeZone:event.timeZone,timeZoneName:'longOffset'}));
+ }
+ const parts=eventZoneFormatters.get(event.timeZone);
+ const offsetAt=instant=>{
+   const name=parts.formatToParts(instant).find(part=>part.type==='timeZoneName')?.value;
+   const offset=/^GMT([+-])(\d\d):(\d\d)$/.exec(name);
+   return offset?(offset[1]==='-'?-1:1)*(Number(offset[2])*60+Number(offset[3]))*60000:0;
+ };
+ return wallTime-offsetAt(wallTime-offsetAt(wallTime));
+}
+function viewerEventSchedule(event){
+ const finish=eventEndTime(event);
+ const original={date:event.date,time:event.time||'',endTime:finish,endDate:event.date};
+ if(!Object.hasOwn(eventTimeZones,event.timeZone)||!hasCalendarSchedule(event))return original;
+ const start=new Date(eventTimeInstant(event));
+ if(!Number.isFinite(start.getTime()))return original;
+ const end=finish?new Date(eventTimeInstant(event,finish)):null;
+ return {date:localDateKey(start),time:start.toTimeString().slice(0,5),endTime:end?end.toTimeString().slice(0,5):'',endDate:end?localDateKey(end):localDateKey(start)};
+}
+function eventScheduleKey(event){
+ const {date,time}=viewerEventSchedule(event);
+ return `${date||''} ${time||'24:00'}`;
+}
+function eventTimeLabel(event,schedule=viewerEventSchedule(event)){
+ if(!schedule.endTime)return schedule.time;
+ return `${schedule.time}–${schedule.endTime}${schedule.endDate!==schedule.date?` (${dateLabel(schedule.endDate)})`:''}`;
+}
+function eventCalendarDateTime(event,time){
+ const instant=Object.hasOwn(eventTimeZones,event.timeZone)?eventTimeInstant(event,time):NaN;
+ if(Number.isFinite(instant))return new Date(instant).toISOString().replace(/[-:]|\.\d{3}/g,'');
+ return `${event.date.replace(/-/g,'')}T${time.replace(':','')}00`;
 }
 function validateEventEndTime(time,endTime){
  if(endTime&&!eventEndTime({time,endTime}))throw new Error('O término deve ser depois do início, no mesmo dia.');
@@ -2940,7 +3005,7 @@ async function onAction(btn) {
     if(event.cancelled===true)return;
     const attending=(event.attendees||[]).includes(me());
     if(override&&attending){leaveEventConflict();return;}
-    if(!attending&&(event.date<today()||(event.groupId&&!pollMember(event.groupId)&&!event.waitlist?.includes(me()))))return;
+    if(!attending&&(viewerEventSchedule(event).date<today()||(event.groupId&&!pollMember(event.groupId)&&!event.waitlist?.includes(me()))))return;
     const uid=me(),limited=Number.isInteger(event.capacity),queued=event.waitlist?.includes(uid),offered=eventSeatOffer(event);
     if(!uid)return;
     const eligible=!event.groupId||pollMember(event.groupId);
@@ -2993,7 +3058,7 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
- if(event.target.name==='format'&&['event-form','event-edit-form'].includes(event.target.form?.id)){
+ if(['format','timeZone'].includes(event.target.name)&&['event-form','event-edit-form'].includes(event.target.form?.id)){
    syncEventFormatFields(event.target.form);return;
  }
  if(event.target.dataset?.feedbackStatus){
@@ -3073,7 +3138,6 @@ document.addEventListener('submit',async(event)=>{
     closeModal();state.groupView='mine';setTab('groups');showToast('Comunidade criada com sucesso!');
   });return;
   case 'event-form':await attempt(async()=>{
-    if(val('date')<today())throw new Error('A data deve ser hoje ou no futuro.');
     const groupId=state.eventGroupId;
     const fromPoll=state.eventTemplate?.source==='poll';
     if(fromPoll&&(!canDraftPollEvent(state.pollDetail)||state.pollDetail.groupId!==groupId))throw new Error('A criação por enquete exige permissão de moderação na comunidade.');
@@ -3081,11 +3145,14 @@ document.addEventListener('submit',async(event)=>{
     const limit=val('capacity'),capacity=Number(limit);
     if(limit&&(!Number.isInteger(capacity)||capacity<2||capacity>200))throw new Error('Escolha entre 2 e 200 vagas.');
     const time=val('time'),endTime=val('endTime'),format=val('format')||'in-person',roomUrl=val('roomUrl');
+    const timeZone=format==='online'?(val('timeZone')||defaultEventTimeZone()):'';
+    if(timeZone&&!Object.hasOwn(eventTimeZones,timeZone))throw new Error('Escolha um fuso horário válido.');
+    if(val('date')<eventZoneToday(timeZone))throw new Error('A data deve ser hoje ou no futuro.');
     const location=format==='online'?'Online':val('location');
     if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
     if(!location)throw new Error('Informe o local do encontro.');
     validateEventEndTime(time,endTime);
-    const fields={...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),hobby:val('hobby'),format,location,description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})};
+    const fields={...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),...(timeZone?{timeZone}:{}),hobby:val('hobby'),format,location,description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})};
     let created;
     if(format==='online'){
       if(fields.description.includes(roomUrl))throw new Error('Use apenas o campo privado para o link da sala.');
@@ -3108,8 +3175,10 @@ document.addEventListener('submit',async(event)=>{
     const event=state.events.find(item=>item.id===state.selectedEvent);
     if(!event||event.createdBy!==me()||event.cancelled===true)return;
     const date=val('date'),time=val('time'),endTime=val('endTime'),format=val('format')||eventFormat(event),roomUrl=val('roomUrl');
+    const timeZone=format==='online'?(val('timeZone')||defaultEventTimeZone()):'';
+    if(timeZone&&!Object.hasOwn(eventTimeZones,timeZone))throw new Error('Escolha um fuso horário válido.');
     const location=format==='online'?'Online':val('location');
-    if(date<today()||!time||!location)throw new Error('Informe data, horário e local válidos.');
+    if(date<eventZoneToday(timeZone)||!time||!location)throw new Error('Informe data, horário e local válidos.');
     if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
     validateEventEndTime(time,endTime);
     const target=ref('events',event.id);
@@ -3119,12 +3188,12 @@ document.addEventListener('submit',async(event)=>{
       const roomRef=ref('events',event.id,'private','room');
       const previousRoom=latest.format==='online'?(await transaction.get(roomRef)).data()?.url:'';
       if(format==='online'&&latest.description?.includes(roomUrl))throw new Error('Escolha um link que não esteja na descrição pública do evento.');
-      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&location===latest.location&&format===latest.format&&
+      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&timeZone===(latest.timeZone||'')&&location===latest.location&&format===latest.format&&
          (format!=='online'||previousRoom===roomUrl))return false;
       const revision=(latest.revision||0)+1;
       const previousLocation=format==='online'&&/https?:\/\/|www\./i.test(latest.location)?'Online':latest.location;
-      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',location:previousLocation,revision};
-      transaction.update(target,{date,time,endTime,format,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
+      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',timeZone:latest.timeZone||'',location:previousLocation,revision};
+      transaction.update(target,{date,time,endTime,timeZone,format,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
       if(format==='online')transaction.set(roomRef,{url:roomUrl,ownerId:latest.createdBy});
       else if(latest.format==='online')transaction.delete(roomRef);
       return true;
