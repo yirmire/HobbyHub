@@ -446,7 +446,21 @@ await moderate(sender,[{...resolutionChoice('helped'),updateMask:{fieldPaths:['r
 await moderate(sender,[resolutionChoice('needs-help')],200);
 await moderate(sender,[resolutionChoice('helped')],403);
 assert.equal((await request(reviewer,'GET',productFeedback,200)).fields.resolutionChoice.stringValue,'needs-help');
+async function listFeedbackNeedingAttention(actor,expected){
+  const filters=[['status','resolved'],['resolutionChoice','needs-help']].map(([fieldPath,value])=>({
+    fieldFilter:{field:{fieldPath},op:'EQUAL',value:str(value)}
+  }));
+  const result=await fetch(base+':runQuery',{method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${actor.idToken}`},
+    body:JSON.stringify({structuredQuery:{from:[{collectionId:'productFeedback'}],
+      where:{compositeFilter:{op:'AND',filters}},limit:40}})});
+  assert.equal(result.status,expected);
+  return result.json();
+}
+assert.equal((await listFeedbackNeedingAttention(reviewer,200)).find(row=>row.document).document.name,documents+productFeedback);
+await listFeedbackNeedingAttention(sender,403);
 await moderate(reviewer,[triage(reviewer,'in-review')],200);
+assert.ok(!(await listFeedbackNeedingAttention(reviewer,200)).some(row=>row.document));
 assert.equal((await request(sender,'GET',productFeedback,200)).fields.resolution.stringValue,'Corrigimos o envio.');
 await moderate(reviewer,[triage(reviewer,'resolved','Novo retorno.')],403);
 const followup=triage(reviewer,'resolved','Novo retorno.');

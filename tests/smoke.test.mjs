@@ -683,6 +683,39 @@ test('the feedback panel is restricted, filters categories and changes triage st
   assert.match(vm.runInContext('renderProductFeedbackAdmin()',context),/value="in-review" selected/);
 });
 
+test('the attention queue queries pending feedback and resumes only open follow-ups', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reviewer'};state.modal='product-feedback-admin';state.feedbackAdmin=true;
+    showToast=()=>{};
+    resetProductFeedbackQueue();
+    const pending={id:'pending',status:'resolved',resolutionChoice:'needs-help',message:'Mensagem original',resolution:'Resposta anterior'};
+    const stale={...pending,id:'stale',message:'Já retomado em outra sessão'};
+    firebase={
+      collection:()=>null,where:(...args)=>args,limit:value=>value,
+      query:(_collection,...filters)=>filters,
+      getDocs:async filters=>{
+        state.attentionFilters=filters;
+        return {docs:[pending,stale].map(item=>({id:item.id,data:()=>item}))};
+      },
+      doc:(_db,...path)=>path.at(-1),serverTimestamp:()=>123,
+      runTransaction:async(_db,callback)=>callback({
+        get:async id=>({data:()=>id==='pending'?pending:{...stale,status:'in-review'}}),
+        update:(_target,data)=>{(state.attentionWrites??=[]).push(data);}
+      })
+    };
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'product-feedback-category',value:'attention'}})",context);
+  assert.equal(vm.runInContext('JSON.stringify(state.attentionFilters)',context),'[["status","==","resolved"],["resolutionChoice","==","needs-help"],40]');
+  assert.match(vm.runInContext('renderModal()',context),/Mensagem original[\s\S]*Resposta anterior[\s\S]*Retomar análise/);
+  await vm.runInContext("onAction({dataset:{action:'resume-feedback-review',id:'pending'}})",context);
+  assert.equal(vm.runInContext('JSON.stringify(state.attentionWrites)',context),'[{"status":"in-review","reviewedAt":123,"reviewedBy":"reviewer"}]');
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Mensagem original/);
+  await vm.runInContext("onAction({dataset:{action:'resume-feedback-review',id:'stale'}})",context);
+  assert.equal(vm.runInContext('state.attentionWrites.length',context),1);
+  assert.match(vm.runInContext('renderModal()',context),/Nenhum feedback precisa de atenção/);
+});
+
 test('the bell shows only the latest product update and marks it read when opened', async () => {
   const context=appContext();
   vm.runInContext("state.user={uid:'reader'};state.notificationFilter='unread'",context);
