@@ -17,6 +17,28 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('private chat search finds accented text outside the recent window and opens its message', () => {
+  const context = appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=Array.from({length:220},(_,i)=>({
+      id:'message-'+i,senderId:'owner',createdAt:i,text:i===12?'Endereço <principal>':'Outro assunto'
+    }));
+    state.messages=[{id:'public',text:'Endereço público',scope:'global'}];
+  `,context);
+  assert.ok(!vm.runInContext('renderMessages()',context).includes('id="direct-message-message-12"'));
+  const results=vm.runInContext("state.directSearch={query:' ENDERECO ',limit:20};renderMessages()",context);
+  assert.match(results,/1 mensagem encontrada/);
+  assert.match(results,/data-id="message-12"/);
+  assert.match(results,/Endereço &lt;principal&gt;/);
+  assert.doesNotMatch(results,/Endereço público/);
+  const opened=vm.runInContext("showDirectMessage('message-12');renderMessages()",context);
+  assert.match(opened,/id="direct-message-message-12" tabindex="-1"/);
+  assert.match(opened,/Ir para as mais recentes/);
+  assert.doesNotMatch(vm.runInContext("state.chatMode='global';renderMessages()",context),/Buscar na conversa/);
+});
+
 test('notifications count unread items and only show reports to current moderators', () => {
   const context = appContext();
   vm.runInContext(`
