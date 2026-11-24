@@ -932,6 +932,26 @@ test('event invitations wait for login and display participation before the cale
   assert.match(vm.runInContext('eventCard(state.events[0])',context),/Adicionar ao calendário/);
 });
 
+test('event cards and details link only to an in-person destination', () => {
+  const context=appContext();
+  const location='Praça São José, 12 & 14';
+  context.event={id:'e',title:'Caminhada',date:'2099-01-01',location,attendees:[]};
+  const card=vm.runInContext('eventCard(event)',context);
+  assert.match(card,/target="_blank" rel="noopener noreferrer">Como chegar/);
+  const href=card.match(/href="([^"]+)"/)[1].replaceAll('&amp;','&');
+  const directions=new URL(href);
+  assert.equal(directions.origin,'https://www.google.com');
+  assert.equal(directions.pathname,'/maps/dir/');
+  assert.equal(directions.searchParams.get('api'),'1');
+  assert.equal(directions.searchParams.get('destination'),location);
+  assert.match(vm.runInContext("state.events=[event];state.selectedEvent='e';state.modal='event-detail';renderModal()",context),/Como chegar/);
+  for(const location of ['', 'Evento on-line', 'Local a combinar', 'Endereço a confirmar', 'Google Meet', 'https://meet.example.test/sala']){
+    context.event={...context.event,location};
+    assert.doesNotMatch(vm.runInContext('eventCard(event)',context),/Como chegar/);
+  }
+  assert.equal(vm.runInContext("eventDirectionsLink({location:'Praça da Sé',cancelled:true})",context),'');
+});
+
 test('calendar data includes the clean event link and escapes user text', () => {
   const context = appContext();
   context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};

@@ -853,6 +853,18 @@ async function changeEventSeat(id,intent,uid){
    return status;
  });
 }
+function eventDirectionsLink(event){
+ const location=String(event.location??'').trim();
+ const label=norm(location);
+ if(event.cancelled===true||!/[\p{L}\d]/u.test(location)||
+   /^(?:(?:evento|encontro|local|endereco) )?(?:on[- ]?line|virtual|remot[oa]|a distancia|a combinar|a definir|a confirmar|nao informado|indefinido|em breve)\b/.test(label)||
+   /^(?:zoom|google meet|microsoft teams|discord)(?:$|\s*[:–—-])/.test(label)||
+   /https?:\/\/|^www\./i.test(location))return '';
+ const url=new URL('https://www.google.com/maps/dir/');
+ url.searchParams.set('api','1');
+ url.searchParams.set('destination',location);
+ return `<a class="text-action" href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">Como chegar</a>`;
+}
 function eventCard(event, inGroup=false, detail=false) {
  const attending=(event.attendees||[]).includes(me());
  const saved=state.savedEventDates.has(event.id);
@@ -865,7 +877,7 @@ function eventCard(event, inGroup=false, detail=false) {
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px"><span class="event-day">${dateLabel(event.date)} ${esc(event.time||'')}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
- <div class="card-meta">${icon('map')} ${esc(event.location||'Online')}</div>
+ <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${esc(event.location||'Online')} ${eventDirectionsLink(event)}</div>
  <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
  ${detail?'':eventCalendarButton(event)}
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
