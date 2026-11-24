@@ -154,6 +154,13 @@ service cloud.firestore {
         allow read, create, delete: if isMe(uid);
         allow update: if false;
       }
+      match /followedPosts/{postId} {
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && exists(publicPostPath(appId, postId))
+          && request.resource.data.keys().hasOnly(['followedAt'])
+          && request.resource.data.followedAt == request.time;
+        allow update: if false;
+      }
       match /savedEvents/{eventId} {
         allow read, delete: if isMe(uid);
         allow create: if isMe(uid)
