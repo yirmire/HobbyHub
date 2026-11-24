@@ -384,6 +384,14 @@ const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
 const editable='public/data/posts/editable-post';
 await request(sender,'POST','public/data/posts?documentId=editable-post',200,welcome);
+const followedPath='public/data/members/'+recipient.localId+'/followedPosts/editable-post';
+const followPostWrite={update:{name:documents+followedPath,fields:{}},updateTransforms:stamp('followedAt'),currentDocument:{exists:false}};
+await moderate(sender,[followPostWrite],403);
+await moderate(recipient,[{...followPostWrite,update:{name:documents+followedPath.replace('editable-post','missing'),fields:{}}}],403);
+await moderate(recipient,[followPostWrite],200);
+await request(recipient,'GET',followedPath,200);
+await request(sender,'GET',followedPath,403);
+await request(recipient,'DELETE',followedPath,200);
 const editableLikes={arrayValue:{values:[str(recipient.localId)]}};
 await request(recipient,'PATCH',editable+'?updateMask.fieldPaths=likes',200,{likes:editableLikes});
 await request(recipient,'POST',editable+'/comments?documentId=original',200,{
