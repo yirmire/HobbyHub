@@ -1402,12 +1402,14 @@ function renderSaved() {
  const selected=state.selectedSavedCollection;
  const collection=state.savedCollections.find(item=>item.id===selected);
  const selection=state.savedSelection;
+ const collectionIds=savedPostIdsForCollection(collection?.id);
  const collections=`<div class="toggle-row" style="flex-wrap:wrap"><label class="field">Coleção<select class="select" id="saved-collection-filter">
  <option value="">Todos os salvos</option>${state.savedCollections.map(item=>`<option value="${esc(item.id)}" ${item.id===selected?'selected':''}>${esc(item.name)}</option>`).join('')}
  </select></label><button class="btn btn-outline btn-small" data-action="create-saved-collection">Nova coleção</button>
  ${collection?`<button class="text-action" data-action="rename-saved-collection" data-id="${esc(collection.id)}">Renomear</button>
- <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}</div>`;
- const posts=state.posts.filter(post=>state.savedIds.includes(post.id)&&(!collection||state.savedMemberships.get(post.id)?.includes(collection.id)));
+ <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}
+ ${collectionIds.size&&!selection?`<button class="text-action" data-action="export-saved-posts">${collection?'Exportar coleção e notas':'Exportar salvos e notas'}</button>`:''}</div>`;
+ const posts=state.posts.filter(post=>collectionIds.has(post.id));
  const results=posts.filter(post=>savedPostMatches(post,query,true));
  const selectionControls=selection?`<div class="toggle-row" style="flex-wrap:wrap;margin-bottom:16px">
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
@@ -1417,6 +1419,22 @@ function renderSaved() {
  ${posts.length||selection?`<button class="text-action" data-action="toggle-saved-selection" ${state.busy?'disabled':''}>${selection?'Cancelar seleção':'Selecionar'}</button>`:''}</div></div>${selectionControls}
  ${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${selection?`<button class="btn btn-outline btn-small" data-action="select-saved-post" data-id="${esc(post.id)}" aria-pressed="${selection.has(post.id)}" ${state.busy?'disabled':''}>${selection.has(post.id)?'Selecionada ✓':'Selecionar publicação'}</button>`:''}${postCard(post)}
  ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+}
+function savedPostIdsForCollection(collectionId){
+ return new Set(state.savedIds.filter(id=>!collectionId||state.savedMemberships.get(id)?.includes(collectionId)));
+}
+function savedPostsExport(collection){
+ const ids=savedPostIdsForCollection(collection?.id);
+ const posts=new Map(state.posts.map(post=>[post.id,post]));
+ const orderedIds=[...state.posts.filter(post=>ids.has(post.id)).map(post=>post.id),
+   ...[...ids].filter(id=>!posts.has(id))];
+ const lines=[collection?collection.name:'Todos os salvos','HobbyHub · Exportação de salvos e notas'];
+ for(const id of orderedIds){
+   const post=posts.get(id),note=state.savedNotes.get(id);
+   lines.push('',`Publicação: ${contentLink('post',id)}`,`Autor: ${post?authorName(post):'Publicação indisponível'}`);
+   if(note)lines.push('Nota privada:',note);
+ }
+ return lines.join('\n')+'\n';
 }
 function renderSavedPostActions(post){
  const note=state.savedNotes.get(post.id),id=esc(post.id);
@@ -2717,7 +2735,10 @@ function downloadEventCalendar(event) {
  downloadCalendar(calendarFile(event),'evento-hobbyhub.ics');
 }
 function downloadCalendar(file,name){
- const url=URL.createObjectURL(new Blob([file],{type:'text/calendar;charset=utf-8'}));
+ downloadFile(file,name,'text/calendar;charset=utf-8');
+}
+function downloadFile(content,name,type){
+ const url=URL.createObjectURL(new Blob([content],{type}));
  const link=document.createElement('a');
  link.href=url;link.download=name;
  document.body.appendChild(link);link.click();link.remove();
@@ -3433,6 +3454,13 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'export-saved-posts':{
+    if(!me()||state.tab!=='saved'||state.savedView!=='saved'||state.savedSelection)return;
+    const collection=state.savedCollections.find(item=>item.id===state.selectedSavedCollection);
+    if(!savedPostIdsForCollection(collection?.id).size)return;
+    downloadFile(savedPostsExport(collection),collection?'hobbyhub-colecao.txt':'hobbyhub-salvos.txt','text/plain;charset=utf-8');
+    return;
+  }
   case 'edit-saved-note':
     if(me()&&state.tab==='saved'&&state.savedView==='saved'&&state.savedIds.includes(id)){
       state.savedNotePostId=id;openModal('edit-saved-note');
