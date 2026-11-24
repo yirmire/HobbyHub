@@ -469,9 +469,11 @@ const notificationCategoryByType=new Map([
  ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['testimonial','interactions']
 ]);
 const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
+const eventReminderOptions={eve:'Na véspera',day:'No dia',both:'Na véspera e no dia',off:'Desligados'};
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
- const date=new Date(),reminderDay=tomorrow(date);
+ const date=new Date(),day=localDateKey(date),nextDay=tomorrow(date);
+ const reminders=state.notificationSettings.eventReminders||'eve';
  const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
  const latestNews=productNews[0];
  if(me()&&latestNews)items.push({
@@ -492,9 +494,11 @@ function notificationItems(){
    });
  }
  for(const event of state.events){
-   if(isConfirmedEventOn(event,reminderDay))items.push({
+   const onDay=(reminders==='day'||reminders==='both')&&isConfirmedEventOn(event,day);
+   const onEve=(reminders==='eve'||reminders==='both')&&isConfirmedEventOn(event,nextDay);
+   if(onDay||onEve)items.push({
      type:'event-reminder',eventId:event.id,eventTitle:event.title,eventTime:viewerEventSchedule(event).time,
-     key:'event-reminder:'+event.id,createdAt:reminderTime
+     onDay,key:(onDay?'event-reminder-today:':'event-reminder:')+event.id,createdAt:reminderTime
    });
    const savedAt=state.savedEventDates.get(event.id)?.toMillis?.();
    const changedAt=event.scheduleChangedAt?.toMillis?.();
@@ -564,7 +568,7 @@ function renderNotifications(){
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
-     'event-reminder':'Amanhã: '+item.eventTitle+(item.eventTime?' · às '+item.eventTime:''),
+     'event-reminder':(item.onDay?'Hoje: ':'Amanhã: ')+item.eventTitle+(item.eventTime?' · às '+item.eventTime:''),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
      'feedback-resolved':'Seu feedback foi resolvido',
@@ -600,6 +604,11 @@ function renderNotificationSettings(){
    return `<button class="btn btn-outline" role="switch" aria-checked="${enabled}" aria-label="${esc(label)}"
    data-action="toggle-notification-setting" data-id="${id}" ${state.notificationSettingsLoaded?'':'disabled'}>${esc(label)} · ${enabled?'Ligado':'Desligado'}</button>`;
  }).join('')}
+ <section class="form-stack" aria-label="Lembretes de eventos"><h3>Lembretes de eventos</h3>
+ <div class="filters" role="group" aria-label="Quando receber lembretes de eventos">${Object.entries(eventReminderOptions).map(([value,label])=>{
+   const selected=(state.notificationSettings.eventReminders||'eve')===value;
+   return `<button class="filter ${selected?'active':''}" aria-pressed="${selected}" data-action="set-event-reminders" data-value="${value}" ${!state.notificationSettingsLoaded||state.busy?'disabled':''}>${label}</button>`;
+ }).join('')}</div></section>
  <p class="tip">Reservas de vaga e cancelamentos de eventos com presença confirmada sempre aparecem no sino.</p>
  <section class="form-stack" aria-label="Comunidades silenciadas"><h3>Comunidades silenciadas</h3>
  ${!state.mutedCommunitiesLoaded?'<p class="tip">Carregando comunidades…</p>':communities||'<p class="tip">Você ainda não silenciou nenhuma comunidade.</p>'}</section>
@@ -2768,6 +2777,13 @@ async function onAction(btn) {
   }
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
+  case 'set-event-reminders':await attempt(async()=>{
+    const uid=me(),value=btn.dataset.value;
+    if(!uid||!state.notificationSettingsLoaded||state.modal!=='notification-settings'||
+       !Object.hasOwn(eventReminderOptions,value)||(state.notificationSettings.eventReminders||'eve')===value)return;
+    await firebase.setDoc(ref('members',uid,'notificationSettings','main'),{eventReminders:value},{merge:true});
+    if(me()===uid)showToast('Preferência salva.');
+  });return;
   case 'toggle-notification-setting':await attempt(async()=>{
     const uid=me();
     if(!uid||!state.notificationSettingsLoaded||state.modal!=='notification-settings'||!Object.hasOwn(notificationCategories,id))return;

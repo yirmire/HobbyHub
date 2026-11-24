@@ -888,6 +888,35 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('event reminder preferences retain the default and can independently enable each day', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};state.notificationSettingsLoaded=true;state.modal='notification-settings';
+    state.events=[
+      {id:'same-day',title:'Encontro hoje',date:today(),time:'14:00',attendees:['guest']},
+      {id:'next-day',title:'Encontro amanhã',date:tomorrow(),time:'15:00',attendees:['guest']},
+      {id:'cancelled',title:'Cancelado',date:today(),attendees:['guest'],cancelled:true,createdBy:'host',scheduleChangedAt:{toMillis:()=>50}}
+    ];
+    firebase={doc:(_db,...path)=>path.join('/'),setDoc:async(ref,patch,options)=>{state.preferenceWrite={ref,patch,options};}};
+    showToast=()=>{};
+  `,context);
+  const notices=()=>vm.runInContext("notificationItems().filter(item=>item.type==='event-reminder').map(item=>item.readKey).sort().join(',')",context);
+  assert.equal(notices(),'event-reminder:next-day');
+  assert.match(vm.runInContext('renderNotificationSettings()',context),/aria-pressed="true" data-action="set-event-reminders" data-value="eve"/);
+  await vm.runInContext("onAction({dataset:{action:'set-event-reminders',value:'both'}})",context);
+  assert.equal(vm.runInContext('state.preferenceWrite.ref.endsWith("/guest/notificationSettings/main")&&state.preferenceWrite.options.merge',context),true);
+  assert.equal(vm.runInContext('state.preferenceWrite.patch.eventReminders',context),'both');
+  vm.runInContext("state.notificationSettings.eventReminders='both'",context);
+  assert.equal(notices(),'event-reminder-today:same-day,event-reminder:next-day');
+  assert.match(vm.runInContext('renderNotifications()',context),/Hoje: Encontro hoje · às 14:00/);
+  vm.runInContext("state.notificationSettings.eventReminders='day'",context);
+  assert.equal(notices(),'event-reminder-today:same-day');
+  vm.runInContext("state.notificationSettings.eventReminders='off'",context);
+  assert.equal(notices(),'');
+  assert.match(vm.runInContext('renderNotifications()',context),/Evento confirmado cancelado/);
+  assert.match(vm.runInContext('renderTodayEvents()',context),/Encontro hoje/);
+});
+
 test('today on the home page orders confirmed events and shows their relevant shortcuts', () => {
   const context=appContext();
   const html=vm.runInContext(`
