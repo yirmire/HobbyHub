@@ -889,6 +889,7 @@ function eventCard(event, inGroup=false, detail=false) {
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
  <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${esc(event.location||'Online')} ${eventDirectionsLink(event)}</div>
  <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
+ ${!detail&&event.cancelled!==true?`<button class="text-action" data-action="share-event" data-id="${esc(event.id)}">Compartilhar evento</button>`:''}
  ${detail?'':eventCalendarButton(event)}
  ${group&&!inGroup?`<button class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>`:''}
  ${hasPersonalCheckin(event)?'<p class="pill">Presença registrada</p>':''}
@@ -2096,6 +2097,17 @@ async function copyContentLink(link, confirmation, promptLabel) {
  }
  window.prompt(promptLabel,link);
 }
+async function shareEvent(event){
+ const url=contentLink('event',event.id);
+ if(navigator.share){
+   const date=/^\d{4}-\d{2}-\d{2}$/.test(event.date)?event.date.split('-').reverse().join('/'):'';
+   const schedule=date?date+(event.time?' às '+event.time:''):'';
+   const text=[event.title,schedule].filter(Boolean).join(' · ');
+   try{await navigator.share({title:event.title,text,url});return;}
+   catch(error){if(error?.name==='AbortError')return;}
+ }
+ await copyContentLink(url,'Link do evento copiado!','Copie o link do evento:');
+}
 function calendarFile(event,stamp=new Date()){
  return calendarEventsFile([event],stamp);
 }
@@ -2324,6 +2336,11 @@ async function onAction(btn) {
   case 'copy-event-link':
     if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
     return;
+  case 'share-event':{
+    const event=state.events.find(item=>item.id===id);
+    if(event&&event.cancelled!==true)await shareEvent(event);
+    return;
+  }
   case 'event-calendar':{
     const event=state.events.find(item=>item.id===id);
     if(canExportEventCalendar(event))downloadEventCalendar(event);
