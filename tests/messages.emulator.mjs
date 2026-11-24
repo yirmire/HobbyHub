@@ -459,7 +459,23 @@ async function listFeedbackNeedingAttention(actor,expected){
 }
 assert.equal((await listFeedbackNeedingAttention(reviewer,200)).find(row=>row.document).document.name,documents+productFeedback);
 await listFeedbackNeedingAttention(sender,403);
+const supplementPath=productFeedback+'/supplements/first';
+const addSupplement=message=>({
+  update:{name:documents+supplementPath,fields:{message:str(message)}},
+  updateTransforms:stamp('createdAt'),currentDocument:{exists:false}
+});
+await moderate(sender,[addSupplement('Detalhes adicionais')],403);
 await moderate(reviewer,[triage(reviewer,'in-review')],200);
+await moderate(other,[addSupplement('Tentativa de outra conta')],403);
+await moderate(reviewer,[addSupplement('Tentativa da equipe')],403);
+await moderate(sender,[addSupplement('ab')],403);
+await moderate(sender,[addSupplement('Detalhes adicionais')],200);
+assert.equal((await request(reviewer,'GET',supplementPath,200)).fields.message.stringValue,'Detalhes adicionais');
+await request(sender,'GET',productFeedback+'/supplements',200);
+await request(reviewer,'GET',productFeedback+'/supplements',200);
+await request(other,'GET',productFeedback+'/supplements',403);
+await request(sender,'PATCH',supplementPath,403,{message:str('Tentativa de edição')});
+await request(sender,'DELETE',supplementPath,403);
 assert.ok(!(await listFeedbackNeedingAttention(reviewer,200)).some(row=>row.document));
 assert.equal((await request(sender,'GET',productFeedback,200)).fields.resolution.stringValue,'Corrigimos o envio.');
 await moderate(reviewer,[triage(reviewer,'resolved','Novo retorno.')],403);
@@ -467,6 +483,7 @@ const followup=triage(reviewer,'resolved','Novo retorno.');
 followup.update.fields.resolutionChoice=str('');
 followup.updateMask.fieldPaths.push('resolutionChoice');
 await moderate(reviewer,[followup],200);
+assert.equal((await request(sender,'GET',supplementPath,200)).fields.message.stringValue,'Detalhes adicionais');
 await moderate(sender,[resolutionChoice('helped')],200);
 await request(other,'GET',productFeedback,403);
 await request({idToken:'owner'},'PATCH',adminRole,200,{active:{booleanValue:false}});

@@ -79,7 +79,7 @@ const state = {
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
-  myProductFeedback:null, selectedFeedbackId:null,
+  myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
@@ -300,7 +300,7 @@ async function init() {
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
       state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
-      state.myProductFeedback=null;state.selectedFeedbackId=null;
+      state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
@@ -1404,7 +1404,46 @@ function renderMyProductFeedback(){
 }
 function openMyProductFeedback(id){
  if(!state.myProductFeedback?.some(item=>item.id===id))return;
- state.selectedFeedbackId=id;openModal('my-feedback-detail');
+ state.selectedFeedbackId=id;
+ openFeedbackSupplements(id,'my-feedback-detail');
+}
+function feedbackSupplementsRef(id){
+ return firebase.collection(db,'artifacts',PROJECT,'productFeedback',id,'supplements');
+}
+function openFeedbackSupplements(id,modal){
+ state.feedbackSupplements={id,modal,entries:[],last:null,more:true,loading:false,error:''};
+ openModal(modal);
+ if(firebase?.getDocs)void loadFeedbackSupplements();
+}
+async function loadFeedbackSupplements(){
+ const detail=state.feedbackSupplements,uid=me();
+ if(!detail||detail.loading||!detail.more||!uid||state.modal!==detail.modal)return;
+ if(detail.modal==='feedback-admin-detail'&&!state.feedbackAdmin)return;
+ detail.loading=true;detail.error='';render();
+ try{
+   const filters=[firebase.orderBy('createdAt','desc'),firebase.limit(20)];
+   if(detail.last)filters.push(firebase.startAfter(detail.last));
+   const result=await firebase.getDocs(firebase.query(feedbackSupplementsRef(detail.id),...filters));
+   if(me()!==uid||state.feedbackSupplements!==detail)return;
+   for(const doc of result.docs){
+     if(!detail.entries.some(item=>item.id===doc.id))detail.entries.push({...doc.data(),id:doc.id});
+   }
+   detail.last=result.docs.at(-1)||detail.last;
+   detail.more=result.docs.length===20;
+ }catch(error){detail.error=friendlyError(error);}
+ finally{
+   detail.loading=false;
+   if(state.feedbackSupplements===detail&&state.modal===detail.modal)render();
+ }
+}
+function renderFeedbackSupplements(){
+ const detail=state.feedbackSupplements;
+ if(!detail)return '';
+ return `<section class="form-stack" aria-label="Complementos"><strong>Complementos</strong>
+ ${detail.entries.map(item=>`<article class="card" style="padding:12px"><small>${item.createdAt?esc(new Date(item.createdAt.toMillis()).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})):'Aguardando data de envio'}</small>
+ <p class="post-copy" style="margin:4px 0 0">${esc(item.message)}</p></article>`).join('')}
+ ${detail.error?`<p class="tip">${esc(detail.error)}</p>`:detail.loading?'<p class="tip">Carregando complementos…</p>':detail.entries.length?'':'<p class="tip">Nenhum complemento ainda.</p>'}
+ ${detail.more&&!detail.loading?`<button class="text-action" data-action="load-feedback-supplements">${detail.error?'Tentar novamente':'Ver mais complementos'}</button>`:''}</section>`;
 }
 function hasFeedbackAdminRole(){
  return Boolean(state.feedbackAdminRole?.active===true&&state.user?.email&&state.user.email===state.feedbackAdminRole.email);
@@ -1479,6 +1518,7 @@ function renderProductFeedbackAdmin(){
  <p class="post-copy" style="margin:0">${esc(item.message)}</p>
  ${renderFeedbackResolution(item)}
  ${renderFeedbackResolutionChoice(item)}
+ <button class="text-action" data-action="view-admin-feedback-detail" data-id="${esc(item.id)}">Ver complementos</button>
  ${attention?`<button class="btn btn-primary btn-small" data-action="resume-feedback-review" data-id="${esc(item.id)}" ${state.busy?'disabled':''}>Retomar análise</button>`:queue.resolutionId===item.id&&item.status!=='resolved'?`<form id="product-feedback-resolution-form" data-draft="true" data-draft-key="feedback-resolution-${esc(item.id)}" class="form-stack">
  <label class="field">Resposta da equipe (opcional)<textarea class="input" id="feedback-resolution-text" name="resolution" maxlength="600" rows="3"></textarea></label>
  <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Marcar como resolvido</button>
@@ -1549,12 +1589,24 @@ function renderModal() {
  if(!state.modal)return '';
  if(state.modal==='product-news')return renderProductNews();
  if(state.modal==='my-product-feedback')return renderMyProductFeedback();
+ if(state.modal==='feedback-admin-detail'){
+   const item=state.feedbackAdmin&&state.productFeedbackQueue?.entries.find(entry=>entry.id===state.feedbackSupplements?.id);
+   return modalWrap('Detalhes do feedback',item?`<div class="form-stack">
+   <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span>
+   <p class="post-copy" style="margin:0">${esc(item.message)}</p>
+   ${renderFeedbackResolution(item)}${renderFeedbackResolutionChoice(item)}${renderFeedbackSupplements()}
+   <button class="text-action" data-action="back-feedback-admin">Voltar ao painel</button></div>`:'<p>Este feedback está indisponível.</p>');
+ }
  if(state.modal==='my-feedback-detail'){
    const item=state.myProductFeedback?.find(entry=>entry.id===state.selectedFeedbackId);
    return modalWrap('Meu feedback',item?`<div class="form-stack"><div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong>
    <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span></div><p class="post-copy" style="margin:0">${esc(item.message)}</p>
    ${renderFeedbackResolution(item)}
    ${renderFeedbackResolutionChoice(item)}
+   ${renderFeedbackSupplements()}
+   ${item.status==='in-review'?`<form class="form-stack" id="feedback-supplement-form" data-draft="true" data-draft-key="feedback-supplement-${esc(item.id)}">
+   <label class="field">Complementar feedback<textarea class="input" name="message" rows="3" required minlength="3" maxlength="600"></textarea></label>
+   <button class="btn btn-primary btn-small" type="submit" ${state.busy?'disabled':''}>Enviar complemento</button></form>`:''}
    ${item.status==='resolved'&&item.resolution&&!item.resolutionChoice?`<div class="form-stack"><strong>Isso resolveu?</strong>
    <div class="toggle-row" style="flex-wrap:wrap">${Object.entries(feedbackResolutionChoices).map(([choice,label])=>`<button class="btn btn-outline btn-small" data-action="answer-feedback-resolution" data-id="${esc(item.id)}" data-value="${choice}" ${state.busy?'disabled':''}>${label}</button>`).join('')}</div></div>`:''}
    <button class="text-action" data-action="my-product-feedback">Voltar aos meus feedbacks</button></div>`:'<p>Este feedback está indisponível.</p>');
@@ -2462,6 +2514,15 @@ async function onAction(btn) {
   case 'product-news':if(me())openModal('product-news');return;
   case 'my-product-feedback':if(me())openModal('my-product-feedback');return;
   case 'view-my-feedback':openMyProductFeedback(id);return;
+  case 'view-admin-feedback-detail':
+    if(state.feedbackAdmin&&state.modal==='product-feedback-admin'&&state.productFeedbackQueue?.entries.some(item=>item.id===id)){
+      openFeedbackSupplements(id,'feedback-admin-detail');
+    }
+    return;
+  case 'back-feedback-admin':
+    if(state.feedbackAdmin&&state.modal==='feedback-admin-detail')openModal('product-feedback-admin');
+    return;
+  case 'load-feedback-supplements':await loadFeedbackSupplements();return;
   case 'answer-feedback-resolution':await answerFeedbackResolution(id,btn.dataset.value);return;
   case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
   case 'send-feedback-verification':await attempt(async()=>{
@@ -2899,6 +2960,19 @@ document.addEventListener('submit',async(event)=>{
     clearSubmittedDraft(form.id,key,'message',data.message);
     if(me()===payload.senderId)showToast('Mensagem enviada.');
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
+  case 'feedback-supplement-form':await attempt(async()=>{
+    const detail=state.feedbackSupplements,uid=me(),message=val('message');
+    if(!uid||state.modal!=='my-feedback-detail'||detail?.id!==state.selectedFeedbackId||
+       !state.myProductFeedback?.some(item=>item.id===detail.id&&item.status==='in-review'))return;
+    if(message.length<3||message.length>600)throw new Error('Escreva um complemento de 3 a 600 caracteres.');
+    const saved=await firebase.addDoc(feedbackSupplementsRef(detail.id),{message,createdAt:firebase.serverTimestamp()});
+    if(me()!==uid||state.feedbackSupplements!==detail||state.modal!==detail.modal)return;
+    if(!detail.entries.some(item=>item.id===saved.id)){
+      detail.entries.unshift({id:saved.id,message,createdAt:{toMillis:()=>Date.now()}});
+    }
+    clearSubmittedDraft(form.id,form.dataset.draftKey,'message',data.message);
+    showToast('Complemento enviado.');
+  });return;
   case 'product-feedback-resolution-form':
     await updateProductFeedbackStatus(state.productFeedbackQueue?.resolutionId,'resolved',val('resolution'));return;
   case 'product-feedback-form':await attempt(async()=>{
