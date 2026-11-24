@@ -2093,34 +2093,60 @@ async function loadMyCommentActivity(){
  const uid=me(),activity=state.myCommentActivity;
  if(!uid||!activity||state.modal!=='my-comment-activity'||activity.loading||!activity.more)return;
  activity.loading=true;activity.error='';render();
+ const filtered=activity.type!=='all'||Boolean(activity.groupId);
+ const previousMatches=filtered?matchingMyComments(activity).length:0;
  try{
-   const filters=[firebase.where('userId','==',uid),firebase.orderBy('createdAt','desc'),firebase.limit(30)];
-   if(activity.last)filters.push(firebase.startAfter(activity.last));
-   const result=await firebase.getDocs(firebase.query(firebase.collectionGroup(db,'comments'),...filters));
-   if(me()!==uid||state.myCommentActivity!==activity)return;
-   for(const doc of result.docs){
-     const post=doc.ref.parent.parent;
-     if(post?.path!==[...BASE,'posts',post?.id].join('/'))continue;
-     activity.entries.push({...doc.data(),postId:post.id,commentId:doc.id,key:doc.ref.path});
+   for(let page=0;page<5&&activity.more;page++){
+     const filters=[firebase.where('userId','==',uid),firebase.orderBy('createdAt','desc'),firebase.limit(30)];
+     if(activity.last)filters.push(firebase.startAfter(activity.last));
+     const result=await firebase.getDocs(firebase.query(firebase.collectionGroup(db,'comments'),...filters));
+     if(me()!==uid||state.myCommentActivity!==activity||state.modal!=='my-comment-activity')return;
+     for(const doc of result.docs){
+       const post=doc.ref.parent.parent;
+       if(post?.path!==[...BASE,'posts',post?.id].join('/'))continue;
+       activity.entries.push({...doc.data(),postId:post.id,commentId:doc.id,key:doc.ref.path});
+     }
+     activity.last=result.docs.at(-1)||activity.last;
+     activity.more=result.docs.length===30;
+     if(!filtered||matchingMyComments(activity).length>previousMatches)break;
    }
-   activity.last=result.docs.at(-1)||activity.last;
-   activity.more=result.docs.length===30;
  }catch(error){activity.error=friendlyError(error);}
  finally{
    activity.loading=false;
    if(state.myCommentActivity===activity&&state.modal==='my-comment-activity')render();
  }
 }
+function matchingMyComments(activity,posts=new Map(state.posts.map(post=>[post.id,post]))){
+ return activity?.entries.filter(item=>{
+   const post=posts.get(item.postId);
+   return post&&(!activity.groupId||post.groupId===activity.groupId)&&
+     (activity.type==='all'||(activity.type==='replies'?Boolean(item.parentId):!item.parentId));
+ })||[];
+}
+async function filterMyComments(type,groupId){
+ const activity=state.myCommentActivity;
+ if(state.modal!=='my-comment-activity'||!activity||activity.loading)return;
+ activity.type=type;activity.groupId=groupId;
+ if(activity.more&&!matchingMyComments(activity).length)await loadMyCommentActivity();
+ else render();
+}
 function renderMyCommentActivity(){
  const activity=state.myCommentActivity,posts=new Map(state.posts.map(post=>[post.id,post]));
- const entries=activity?.entries.filter(item=>posts.has(item.postId))||[];
+ const entries=matchingMyComments(activity,posts);
+ const communities=[...state.groups].sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
+ const filtered=activity&&(activity.type!=='all'||activity.groupId);
  return modalWrap('Meus comentários',`<div class="form-stack">
+ <div class="filters" role="group" aria-label="Tipo de comentário">${[['all','Todos'],['comments','Comentários'],['replies','Respostas']].map(([type,label])=>
+   `<button class="filter ${activity?.type===type?'active':''}" data-action="my-comment-type" data-value="${type}" aria-pressed="${activity?.type===type}" ${activity?.loading?'disabled':''}>${label}</button>`).join('')}</div>
+ <label class="field">Comunidade<select class="select" id="my-comment-community" ${activity?.loading?'disabled':''}><option value="">Todas as comunidades</option>
+ ${communities.map(group=>`<option value="${esc(group.id)}" ${activity?.groupId===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label>
  ${entries.map(item=>`<article class="card form-stack" style="padding:14px">
  <div class="toggle-row" style="flex-wrap:wrap"><strong>${item.parentId?'Resposta':'Comentário'}</strong><small>${when(item.createdAt)}</small></div>
  <p class="post-copy" style="margin:0">${esc(short(item.text,240))}</p>
  <small>Em uma publicação de ${esc(authorName(posts.get(item.postId)))}</small>
  <button class="text-action" data-action="open-my-comment" data-id="${esc(item.key)}">Abrir comentário</button></article>`).join('')}
- ${activity?.error?`<p class="tip" role="status">${esc(activity.error)}</p>`:activity?.loading?'<p class="tip" role="status">Carregando comentários…</p>':!entries.length?'<p class="tip">Nenhum comentário para exibir.</p>':''}
+ ${activity?.error?`<p class="tip" role="status">${esc(activity.error)}</p>`:activity?.loading?'<p class="tip" role="status">Carregando comentários…</p>':!entries.length?
+   `<p class="tip">${filtered?(activity.more?'Nenhum resultado nas páginas carregadas.':'Nenhum comentário com esses filtros.'):'Nenhum comentário para exibir.'}</p>`:''}
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
@@ -3427,11 +3453,14 @@ async function onAction(btn) {
   case 'comments':openComments(id);return;
   case 'my-comment-activity':
     if(me()){
-      state.myCommentActivity={entries:[],last:null,more:true,loading:false,error:''};
+      state.myCommentActivity={entries:[],last:null,more:true,loading:false,error:'',type:'all',groupId:''};
       openModal('my-comment-activity');await loadMyCommentActivity();
     }
     return;
   case 'load-my-comments':await loadMyCommentActivity();return;
+  case 'my-comment-type':
+    if(['all','comments','replies'].includes(btn.dataset.value))await filterMyComments(btn.dataset.value,state.myCommentActivity?.groupId||'');
+    return;
   case 'open-my-comment':{
     if(!me()||state.modal!=='my-comment-activity')return;
     const item=state.myCommentActivity?.entries.find(entry=>entry.key===id&&entry.userId===me());
@@ -3742,6 +3771,9 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
+ if(event.target.id==='my-comment-community'){
+   void filterMyComments(state.myCommentActivity?.type||'all',event.target.value);return;
+ }
  if(event.target.form?.id==='post-form')savePostDraft(event.target.form);
  if(['format','timeZone'].includes(event.target.name)&&['event-form','event-edit-form'].includes(event.target.form?.id)){
    syncEventFormatFields(event.target.form);return;
