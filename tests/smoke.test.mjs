@@ -683,6 +683,20 @@ test('the feedback panel is restricted, filters categories and changes triage st
   assert.match(vm.runInContext('renderProductFeedbackAdmin()',context),/value="in-review" selected/);
 });
 
+test('product news shows dated public updates and links to the private feedback list', async () => {
+  const context=appContext();
+  vm.runInContext("state.user={uid:'reader'};state.profile={name:'Leitora'};state.myProductFeedback=[{id:'private',message:'Mensagem privada'}]",context);
+  assert.match(vm.runInContext('renderProfile()',context),/Ajuda e feedback[\s\S]*data-action="product-news">Novidades/);
+  await vm.runInContext("onAction({dataset:{action:'product-news'}})",context);
+  const news=vm.runInContext('renderModal()',context);
+  assert.match(news,/<time[^>]*datetime="2026-11-23">23 de novembro de 2026/);
+  assert.match(news,/Respostas da equipe aos feedbacks/);
+  assert.match(news,/data-action="my-product-feedback">Abrir meus feedbacks/);
+  assert.doesNotMatch(news,/Mensagem privada/);
+  await vm.runInContext("onAction({dataset:{action:'my-product-feedback'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Mensagem privada/);
+});
+
 test('my feedback shows each state and the resolution notice opens the exact submission', async () => {
   const context=appContext();
   vm.runInContext(`
