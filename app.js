@@ -67,7 +67,7 @@ const state = {
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
-  eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false,
+  eventGroupId:null, eventTemplate:null, selectedEvent:null, eventsLoaded:false, eventConflict:null,
   eventReads:new Map(), eventReadsLoaded:false,
   personalHistory:{records:new Map(),loading:false,error:false},
   eventOfferTimer:null, eventReminderTimer:null, eventBulletins:new Map(), eventCheckins:null,
@@ -287,7 +287,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
-      state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;
+      state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
@@ -693,6 +693,16 @@ function filteredPosts(posts=state.posts) {
 function isConfirmedEventOn(event,day){
  return Boolean(me()&&event.date===day&&event.cancelled!==true&&event.attendees?.includes(me()));
 }
+function conflictingEvents(event){
+ return hasCalendarSchedule(event)?state.events.filter(other=>other.id!==event.id&&
+   other.time===event.time&&isConfirmedEventOn(other,event.date)):[];
+}
+function leaveEventConflict(){
+ const conflict=state.eventConflict;
+ state.eventConflict=null;
+ if(conflict?.fromDetail)openModal('event-detail');
+ else closeModal();
+}
 function renderEventReminders(day=tomorrow()) {
  const events=state.events.filter(event=>isConfirmedEventOn(event,day))
   .sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
@@ -830,7 +840,7 @@ function scheduleEventOffers(){
    if(me()===uid)render();
  },Math.max(2000,deadline-now()+1200));
 }
-async function changeEventSeat(id,intent,uid){
+async function changeEventSeat(id,intent,uid,confirmedConflict=false){
  const target=ref('events',id);
  return firebase.runTransaction(db,async transaction=>{
    const current=(await transaction.get(target)).data();
@@ -849,7 +859,10 @@ async function changeEventSeat(id,intent,uid){
      waitlist=waitlist.filter(person=>person!==uid);status='left-queue';
    }else if(intent==='join'&&!attendees.includes(uid)){
      if(attendees.length<capacity&&(!head||head===uid)){
+       if(!confirmedConflict&&conflictingEvents({...current,id}).length)return 'conflict';
        attendees=[...attendees,uid];waitlist=waitlist.filter(person=>person!==uid);status='confirmed';
+     }else if(confirmedConflict){
+       return 'unavailable';
      }else if(!waitlist.includes(uid)){
        if(waitlist.length>=100)throw new Error('A lista de espera está cheia.');
        waitlist=[...waitlist,uid];status='queued';
@@ -1637,6 +1650,16 @@ function renderProductNews(){
  </article>`).join('')}</div>`);
 }
 function renderModal() {
+ if(state.modal==='event-conflict'){
+   const event=state.events.find(item=>item.id===state.eventConflict?.id);
+   const conflicts=event?conflictingEvents(event):[];
+   const available=event&&event.cancelled!==true&&event.date>=today()&&!event.attendees?.includes(me());
+   return modalWrap('Conflito de horário',`<div class="form-stack">
+   ${conflicts.length?`<p>Você já confirmou presença em outro encontro no mesmo horário.</p>
+   <ul>${conflicts.map(other=>`<li><button class="text-action" data-action="view-event" data-id="${esc(other.id)}">${esc(other.title)}</button></li>`).join('')}</ul>`:'<p>O horário ou a disponibilidade do encontro mudou.</p>'}
+   <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-outline" data-action="cancel-event-conflict">Voltar</button>
+   ${available?`<button class="btn btn-primary" data-action="confirm-event-conflict" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>${conflicts.length?'Confirmar mesmo assim':'Continuar confirmação'}</button>`:''}</div></div>`);
+ }
  if(!state.modal)return '';
  if(state.modal==='product-news')return renderProductNews();
  if(state.modal==='my-product-feedback')return renderMyProductFeedback();
@@ -1958,6 +1981,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.eventConflict=null;
  state.composingRecapId=null;
  clearContentLink();
  state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
@@ -2020,6 +2044,7 @@ async function loadEventFeedback(event) {
  }
 }
 function openEventDetail(id,questionId='') {
+ state.eventConflict=null;
  state.selectedEvent=id;state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;openModal('event-detail');
  if(me()&&state.events.some(event=>event.id===id&&event.createdBy===me()))void loadEventCheckins(id);
  if(state.events.some(event=>event.id===id))void loadEventQuestions(id,questionId);
@@ -2761,19 +2786,43 @@ async function onAction(btn) {
     const status=await changeEventSeat(id,'leave-queue',uid);
     if(me()===uid&&status==='left-queue')showToast('Vaga liberada. Você saiu da lista de espera.');
   });return;
+  case 'cancel-event-conflict':
+    if(state.modal==='event-conflict')leaveEventConflict();
+    return;
+  case 'confirm-event-conflict':
   case 'rsvp':await attempt(async()=>{
+    const override=btn.dataset.action==='confirm-event-conflict';
+    if(override&&(state.modal!=='event-conflict'||state.eventConflict?.id!==id))return;
     const event=state.events.find(e=>e.id===id);if(!event)return;
     if(event.cancelled===true)return;
     const attending=(event.attendees||[]).includes(me());
+    if(override&&attending){leaveEventConflict();return;}
     if(!attending&&(event.date<today()||(event.groupId&&!pollMember(event.groupId)&&!event.waitlist?.includes(me()))))return;
-    if(Number.isInteger(event.capacity)){
-      const uid=me(),queued=event.waitlist.includes(uid),offered=eventSeatOffer(event);
-      const eligible=!event.groupId||pollMember(event.groupId);
-      const intent=attending?'leave':queued&&(!offered||!eligible)?'leave-queue':'join';
-      const status=await changeEventSeat(id,intent,uid);
+    const uid=me(),limited=Number.isInteger(event.capacity),queued=event.waitlist?.includes(uid),offered=eventSeatOffer(event);
+    if(!uid)return;
+    const eligible=!event.groupId||pollMember(event.groupId);
+    const intent=attending?'leave':queued&&(!offered||!eligible)?'leave-queue':'join';
+    const willConfirm=intent==='join'&&(!limited||
+      ((event.attendees||[]).length<event.capacity&&(!event.waitlist.length||offered)));
+    if(!override&&willConfirm&&conflictingEvents(event).length){
+      state.eventConflict={id,fromDetail:state.modal==='event-detail'};
+      openModal('event-conflict');return;
+    }
+    if(override){
+      leaveEventConflict();
+      if(!willConfirm){showToast('A vaga não está mais disponível. Confira a lista de espera.');return;}
+    }
+    if(limited){
+      const status=await changeEventSeat(id,intent,uid,override);
+      if(me()!==uid)return;
+      if(status==='conflict'){
+        state.eventConflict={id,fromDetail:state.modal==='event-detail'};
+        openModal('event-conflict');return;
+      }
       const messages={left:'Participação removida.',confirmed:'Presença confirmada!',queued:'Você entrou na lista de espera.',
-        'left-queue':'Você saiu da lista de espera.',expired:'A lista de espera foi atualizada. Confira a disponibilidade.'};
-      if(me()===uid&&messages[status]){watchEventBulletins();showToast(messages[status]);}
+        'left-queue':'Você saiu da lista de espera.',expired:'A lista de espera foi atualizada. Confira a disponibilidade.',
+        unavailable:'A vaga não está mais disponível. Confira a lista de espera.'};
+      if(messages[status]){watchEventBulletins();showToast(messages[status]);}
       return;
     }
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});

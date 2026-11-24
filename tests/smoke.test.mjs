@@ -820,6 +820,39 @@ test('a resumed feedback notice opens the correct case and is marked read', asyn
   assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise/);
 });
 
+test('event RSVP warns about a confirmed conflict and writes only after explicit confirmation', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'guest'};state.modal='event-detail';state.selectedEvent='new';
+    const schedule={date:'2099-01-01',time:'10:30'};
+    state.events=[
+      {...schedule,id:'new',title:'Evento novo',attendees:[]},
+      {...schedule,id:'old',title:'Encontro <confirmado>',attendees:['guest']},
+      {...schedule,id:'cancelled',title:'Cancelado',attendees:['guest'],cancelled:true},
+      {...schedule,id:'later',title:'Horário diferente',time:'11:30',attendees:['guest']},
+      {...schedule,id:'full',title:'Sem vaga',capacity:1,waitlist:[],attendees:['other']}
+    ];
+    state.writes=[];
+    showToast=()=>{};watchEventBulletins=()=>{};
+    firebase={doc:(_db,...path)=>path.at(-1),arrayUnion:uid=>uid,updateDoc:async(path,data)=>state.writes.push({path,data})};
+    changeEventSeat=async(id,intent)=>{state.queued={id,intent};return 'queued';};
+  `,context);
+  const action=(name,id)=>vm.runInContext(`onAction({dataset:{action:${JSON.stringify(name)},id:${JSON.stringify(id)}}})`,context);
+  await action('rsvp','new');
+  assert.equal(vm.runInContext('state.writes.length',context),0);
+  const modal=vm.runInContext('renderModal()',context);
+  assert.match(modal,/Conflito de horário[\s\S]*data-id="old">Encontro &lt;confirmado&gt;/);
+  assert.doesNotMatch(modal,/Cancelado|Horário diferente/);
+  await action('cancel-event-conflict','');
+  assert.equal(vm.runInContext('state.modal',context),'event-detail');
+  await action('rsvp','new');
+  await action('confirm-event-conflict','new');
+  assert.equal(vm.runInContext('JSON.stringify(state.writes)',context),'[{"path":"new","data":{"attendees":"guest"}}]');
+  await action('rsvp','full');
+  assert.equal(vm.runInContext('state.queued.intent',context),'join');
+  assert.equal(vm.runInContext('state.modal',context),'event-detail');
+});
+
 test('the bell reminds confirmed attendees once per event and opens its details', async () => {
   const context=appContext();
   vm.runInContext(`
