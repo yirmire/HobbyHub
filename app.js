@@ -80,7 +80,7 @@ const state = {
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
-  invitedGroupId:null, composingIntroduction:false, composingRecapId:null, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
   latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -305,7 +305,7 @@ async function init() {
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
-      state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
+      state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -1907,12 +1907,20 @@ function renderModal() {
  }
  if(state.modal==='compose'){
  const recap=state.events.find(event=>event.id===state.composingRecapId);
- return modalWrap(recap?'Relato do encontro':state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação',`<form id="post-form" data-draft="true" class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
+ const title=recap?'Relato do encontro':state.composingIntroduction?'Apresente-se à comunidade':state.composingGroup?'Publicar na comunidade':'Criar publicação';
+ const key=postDraftKey();
+ if(key&&state.pendingPostDraft===key)return modalWrap(title,`<div class="form-stack">
+ <p>Você tem um rascunho salvo neste aparelho.</p>
+ <button class="btn btn-primary" data-action="continue-post-draft">Continuar escrevendo</button>
+ <button class="btn btn-outline" data-action="discard-post-draft">Descartar rascunho</button>
+ </div>`);
+ return modalWrap(title,`<form id="post-form" data-draft="true" ${key?`data-draft-key="${esc(key)}"`:''} class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
  ${recap?'<p class="tip">Conte como foi o encontro, compartilhe dicas ou sugira uma próxima edição.</p>':''}
  <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
  <div class="field-grid"><div class="field"><label>Seu interesse</label>${topicSelect(state.composingGroup?state.groups.find(g=>g.id===state.composingGroup)?.hobby:(state.topic==='Todos'?'Arte':state.topic))}</div><div class="field"><label>Formato</label><select class="select" name="format"><option value="text">Post simples</option><option value="highlight">Post em destaque</option></select></div></div>
  <div class="tip">A publicação pode ser vista por outras pessoas cadastradas. Não compartilhe dados pessoais sensíveis.</div>
+ ${key?'<p class="mini muted">Seu rascunho é salvo neste aparelho.</p>':''}
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
  if(state.modal==='group-detail'){
@@ -2043,6 +2051,37 @@ function captureDrafts(){
    state.drafts.set(f.dataset.draftKey||f.id,values);
  });
 }
+function postDraftKey(){
+ const uid=me();
+ if(!uid||state.composingIntroduction||state.composingRecapId)return '';
+ const scope=state.composingGroup?'group:'+encodeURIComponent(state.composingGroup):'feed';
+ return 'hobbyhub-post-draft:'+encodeURIComponent(uid)+':'+scope;
+}
+function readPostDraft(key){
+ if(!key)return null;
+ try{
+   const draft=JSON.parse(localStorage.getItem(key)||'null');
+   if(typeof draft?.content!=='string'||!draft.content.trim())return null;
+   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text'};
+ }catch{return null;}
+}
+function removePostDraft(key){
+ try{localStorage.removeItem(key);}catch{}
+}
+function savePostDraft(form){
+ const key=form.dataset.draftKey;
+ if(state.modal!=='compose'||!key||key!==postDraftKey())return;
+ const {content,hobby,format}=form.elements;
+ try{
+   if(!content.value.trim())removePostDraft(key);
+   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value}));
+ }catch{}
+}
+function openPostComposer(){
+ const key=postDraftKey();
+ state.pendingPostDraft=readPostDraft(key)?key:null;
+ openModal('compose');
+}
 function restoreDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
    const values=state.drafts.get(f.dataset.draftKey||f.id);
@@ -2144,6 +2183,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.pendingPostDraft=null;
  state.eventRoom=null;
  state.eventConflict=null;
  state.composingRecapId=null;
@@ -2532,7 +2572,21 @@ async function onAction(btn) {
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';render();return;
   case 'retry-event-room':await loadEventRoom(true);return;
-  case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openModal('compose');return;
+  case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openPostComposer();return;
+  case 'continue-post-draft':
+  case 'discard-post-draft':{
+    const key=postDraftKey();
+    if(!key||state.modal!=='compose'||state.pendingPostDraft!==key)return;
+    const discard=btn.dataset.action==='discard-post-draft';
+    if(discard)removePostDraft(key);
+    else{
+      const draft=readPostDraft(key);
+      if(draft)state.drafts.set(key,draft);
+    }
+    state.pendingPostDraft=null;render();
+    document.getElementById('post-content')?.focus();
+    return;
+  }
   case 'compose-event-recap':{
     const event=state.events.find(item=>item.id===id);
     if(state.modal!=='event-detail'||state.selectedEvent!==id||!canComposeEventRecap(event))return;
@@ -2773,7 +2827,7 @@ async function onAction(btn) {
   case 'introduce-group':{
     const group=state.groups.find(g=>g.id===(id||state.selectedGroup));
     if(!group||!(group.members||[]).includes(me()))return;
-    state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';state.composingRecapId=null;openModal('compose');return;
+    state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';state.composingRecapId=null;openPostComposer();return;
   }
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
@@ -3074,6 +3128,7 @@ document.addEventListener('visibilitychange',()=>{
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
+ if(event.target.form?.id==='post-form')savePostDraft(event.target.form);
  if(['format','timeZone'].includes(event.target.name)&&['event-form','event-edit-form'].includes(event.target.form?.id)){
    syncEventFormatFields(event.target.form);return;
  }
@@ -3109,6 +3164,7 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.form?.id==='post-form')savePostDraft(event.target.form);
  if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;state.postSearchLimit=20;render();}
 });
@@ -3137,12 +3193,16 @@ document.addEventListener('submit',async(event)=>{
   });return;
   case 'post-form':await attempt(async()=>{
     const content=val('content');if(!content||content.length>2000)return;
+    const uid=me(),key=postDraftKey(),originalDraft=readPostDraft(key);
     const groupId=state.composingGroup,eventRecapId=state.composingRecapId;
     if(eventRecapId){
       const event=state.events.find(item=>item.id===eventRecapId);
       if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
     }
     await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
+    const saved=readPostDraft(key);
+    if(key&&originalDraft?.content===data.content&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
+    if(me()!==uid)return;
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
