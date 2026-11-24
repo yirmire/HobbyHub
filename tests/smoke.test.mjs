@@ -1121,6 +1121,34 @@ test('saved collections filter the existing library and allow a post in multiple
   assert.equal(vm.runInContext('state.update.data.collectionIds[0]',context),'weekend');
 });
 
+test('renaming and deleting a collection preserve the saved posts and other collections', async () => {
+  const handlers={},context=appContext(handlers);
+  context.window.location={hash:''};
+  context.FormData=function(){return [['name',' Fotografia nova ']];};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';state.selectedSavedCollection='photo';
+    state.savedCollections=[{id:'photo',name:'Fotografia'},{id:'weekend',name:'Fim de semana'}];
+    state.posts=[{id:'p',content:'Publicação salva'}];state.savedIds=['p'];
+    state.savedMemberships.set('p',['photo','weekend']);
+    showToast=()=>{};state.collectionWrites=[];
+    firebase={doc:(_db,...path)=>path.join('/'),
+      updateDoc:async(path,data)=>state.collectionWrites.push({path,data}),
+      deleteDoc:async path=>state.collectionWrites.push({path})};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'rename-saved-collection',id:'photo'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/value="Fotografia"/);
+  await handlers.submit({target:{id:'rename-saved-collection-form'},preventDefault(){}});
+  assert.equal(vm.runInContext('state.collectionWrites[0].data.name',context),'Fotografia nova');
+  assert.equal(vm.runInContext('state.selectedSavedCollection',context),'photo');
+  await vm.runInContext("onAction({dataset:{action:'delete-saved-collection',id:'photo'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/As publicações continuam em Todos os salvos/);
+  assert.equal(vm.runInContext('state.collectionWrites.length',context),1);
+  await vm.runInContext("onAction({dataset:{action:'confirm-delete-saved-collection',id:'photo'}})",context);
+  assert.match(vm.runInContext('state.collectionWrites[1].path',context),/\/reader\/savedCollections\/photo$/);
+  assert.equal(vm.runInContext('state.selectedSavedCollection',context),'');
+  assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};
