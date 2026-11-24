@@ -888,6 +888,36 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('comment replies sit under their parent and open from the privacy-aware bell', async () => {
+  const handlers={},context=appContext(handlers);
+  context.FormData=function(){return [['text',' Uma resposta nova ']];};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='comments';state.selectedPost='post';
+    state.posts=[{id:'post',userId:'owner',content:'Publicação'}];
+    state.comments=[{id:'parent',userId:'author',userName:'Ana',text:'Comentário original'},
+      {id:'later',userId:'other',text:'Outro comentário'},
+      {id:'child',parentId:'parent',userId:'reader',text:'Resposta anterior'}];
+    showToast=()=>{};state.writes=[];
+    firebase={doc:(_db,...path)=>path.length?path.join('/'):{id:'new'},collection:()=>null,serverTimestamp:()=>123,
+      writeBatch:()=>({set:(path,data)=>state.writes.push({path,data}),commit:async()=>{}})};
+  `,context);
+  const list=vm.runInContext('renderModal()',context);
+  assert.match(list,/Comentário original[\s\S]*Resposta anterior[\s\S]*Outro comentário/);
+  assert.doesNotMatch(list,/data-action="reply-to-comment" data-id="child"/);
+  await vm.runInContext("onAction({dataset:{action:'reply-to-comment',id:'parent'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Respondendo a Ana/);
+  await handlers.submit({target:{id:'comment-form',dataset:{draftKey:'comment:reader:post:parent'}},preventDefault(){}});
+  assert.equal(vm.runInContext('state.writes[0].data.parentId',context),'parent');
+  assert.match(vm.runInContext('state.writes[1].path',context),/\/author\/notifications\/comment-reply-post:new$/);
+  vm.runInContext(`
+    state.notifications=[{id:'notice',type:'comment-reply',actorId:'author',postId:'post',commentId:'child',createdAt:10}];
+    openComments=(...args)=>{state.openedReply=args.join(':');};
+  `,context);
+  assert.match(vm.runInContext('renderNotifications()',context),/respondeu ao seu comentário/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'notice:10'}})",context);
+  assert.equal(vm.runInContext('state.openedReply',context),'post:child');
+});
+
 test('the comment author can edit in place without changing the conversation order', async () => {
   const handlers={},context=appContext(handlers);
   context.FormData=function(){return [['text',' Corrigido ']];};
