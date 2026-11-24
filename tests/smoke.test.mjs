@@ -888,6 +888,29 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
+  const context=appContext(),stored=new Map();
+  context.window.location={hash:''};
+  context.localStorage={
+    getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)
+  };
+  await vm.runInContext("state.user={uid:'reader'};state.profile={name:'Leitora'};onAction({dataset:{action:'compose'}})",context);
+  const feed=vm.runInContext('postDraftKey()',context);
+  vm.runInContext(`savePostDraft({dataset:{draftKey:postDraftKey()},elements:{content:{value:'Texto <privado>'},hobby:{value:'Arte'},format:{value:'highlight'}}});closeModal();`,context);
+  await vm.runInContext("onAction({dataset:{action:'compose'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Continuar escrevendo[\s\S]*Descartar rascunho/);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Texto privado|id="post-form"/);
+  await vm.runInContext("onAction({dataset:{action:'continue-post-draft'}})",context);
+  assert.equal(vm.runInContext('state.drafts.get(postDraftKey()).content',context),'Texto <privado>');
+  assert.equal(vm.runInContext('state.drafts.get(postDraftKey()).format',context),'highlight');
+  assert.equal(vm.runInContext("state.composingGroup='group';readPostDraft(postDraftKey())",context),null);
+  assert.equal(vm.runInContext("state.user={uid:'other'};state.composingGroup=null;readPostDraft(postDraftKey())",context),null);
+  await vm.runInContext("state.user={uid:'reader'};onAction({dataset:{action:'compose'}})",context);
+  await vm.runInContext("onAction({dataset:{action:'discard-post-draft'}})",context);
+  assert.equal(stored.has(feed),false);
+  assert.match(vm.runInContext('renderModal()',context),/id="post-form"/);
+});
+
 test('event reminder preferences retain the default and can independently enable each day', async () => {
   const context=appContext();
   vm.runInContext(`
