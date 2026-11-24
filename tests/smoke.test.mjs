@@ -888,6 +888,27 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('today on the home page orders confirmed events and shows their relevant shortcuts', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'guest'};
+    const todayEvent={date:'2099-01-01',attendees:['guest']};
+    state.events=[
+      {...todayEvent,id:'remote',title:'Estudo online',time:'16:00',format:'online',revision:1},
+      {...todayEvent,id:'park',title:'Encontro na praça',time:'13:00',location:'Praça Central'},
+      {...todayEvent,id:'early',title:'Caminhada cedo',time:'07:00'},
+      {...todayEvent,id:'cancelled',title:'Encontro cancelado',time:'12:00',cancelled:true},
+      {...todayEvent,id:'waiting',title:'Sem confirmação',time:'12:00',attendees:[]},
+      {...todayEvent,id:'tomorrow',title:'Outro dia',date:'2099-01-02'}
+    ];
+    state.homeEventRooms.set('remote',{revision:1,url:'https://meet.example.test/today'});
+    renderTodayEvents(new Date(2099,0,1,9))
+  `,context);
+  assert.match(html,/Caminhada cedo[\s\S]*Encontro na praça<\/strong><span class="pill">Próximo encontro[\s\S]*Como chegar[\s\S]*Estudo online[\s\S]*https:\/\/meet\.example\.test\/today[^>]*>Entrar no encontro/);
+  assert.doesNotMatch(html,/Encontro cancelado|Sem confirmação|Outro dia/);
+  assert.doesNotMatch(vm.runInContext("state.events[0].revision=2;renderTodayEvents(new Date(2099,0,1,9))",context),/meet\.example/);
+});
+
 test('the feed reminds confirmed attendees about active events tomorrow using the current details', () => {
   const context = appContext();
   const markup = vm.runInContext(`
