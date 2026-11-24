@@ -283,6 +283,18 @@ await request(recipient, 'PATCH', updateDetails, 403, changedDetails);
 const editedEvent = await request(sender, 'PATCH', updateDetails, 200, changedDetails);
 assert.equal(editedEvent.fields.attendees.arrayValue.values.length, 2);
 assert.equal(editedEvent.fields.time.stringValue, '14:30');
+const durationEvent=events+'/duration-event';
+await request(sender,'POST',events+'?documentId=invalid-duration',403,{...standalone,time:str('09:00'),endTime:str('08:30')});
+await request(sender,'POST',events+'?documentId=duration-event',200,{...standalone,time:str('09:00'),endTime:str('10:30')});
+const endEdit=durationEvent+'?updateMask.fieldPaths=endTime&updateMask.fieldPaths=revision&updateMask.fieldPaths=previousSchedule';
+const endFields={
+  endTime:str('11:00'),revision:{integerValue:'1'},
+  previousSchedule:{mapValue:{fields:{date:standalone.date,time:str('09:00'),endTime:str('10:30'),location:standalone.location,revision:{integerValue:'1'}}}}
+};
+await request(recipient,'PATCH',endEdit,403,endFields);
+await request(sender,'PATCH',endEdit,403,{...endFields,endTime:str('09:00')});
+await request(sender,'PATCH',endEdit,200,endFields);
+assert.equal((await request(recipient,'GET',durationEvent,200)).fields.endTime.stringValue,'11:00');
 const seen = `public/data/members/${recipient.localId}/eventReads/standalone`;
 const revision = value => ({revision:{integerValue:String(value)}});
 await request(recipient, 'PATCH', seen, 200, revision(1));
