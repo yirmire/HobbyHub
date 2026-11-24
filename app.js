@@ -63,7 +63,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, selectedPost:null, postEditor:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -285,7 +285,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
@@ -682,6 +682,12 @@ function eventRecapButton(event){
  const post=state.posts.find(item=>item.eventRecapId===event.id&&item.groupId===event.groupId);
  return post?`<button class="btn btn-outline btn-small" data-action="comments" data-id="${esc(post.id)}">Ler relato</button>`:'';
 }
+function postOptionsButton(post){
+ return me()&&post.userId===me()?`<button class="post-action" data-action="post-options" data-id="${esc(post.id)}" aria-label="Opções da publicação" aria-haspopup="dialog">⋯</button>`:'';
+}
+function editedPostLabel(post){
+ return post.editedAt?'<small class="muted">Editado</small>':'';
+}
 function postCard(post) {
  const liked=Array.isArray(post.likes)&&post.likes.includes(me()),saved=state.savedIds.includes(post.id);
  const owner=post.userId===me(),author=authorName(post);
@@ -689,7 +695,7 @@ function postCard(post) {
  <div class="author"><button data-action="person" data-id="${esc(post.userId)}">${esc(author)}</button><small>${icon('map')} ${esc(post.location||'Comunidade')} · ${when(post.createdAt)}</small></div>
  <span class="post-category">${emoji(post.hobby)} ${esc(post.hobby||'Interesses')}</span></div>
  ${post.groupId?`<button class="pill" style="margin-top:14px" data-action="view-group" data-id="${esc(post.groupId)}">${icon('users')} ${esc(short(state.groups.find(g=>g.id===post.groupId)?.name||'Comunidade',34))}</button>`:''}
- <div class="post-copy">${esc(post.content)}</div>
+ <div class="post-copy">${esc(post.content)}</div>${editedPostLabel(post)}
  ${recapEventButton(post)}
  ${post.format==='highlight'?`<div class="post-visual"><span class="emoji">${emoji(post.hobby)}</span><div><small>Uma paixão, mil possibilidades</small><br><strong>Compartilhe o que faz você feliz.</strong></div></div>`:''}
  <div class="post-stats"><span>${Array.isArray(post.likes)?post.likes.length:0} curtidas</span><span>${esc(post.location||'HobbyHub')}</span></div>
@@ -697,7 +703,7 @@ function postCard(post) {
  <button class="post-action" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} ${state.tab==='explore'?'Abrir publicação':'Comentar'}</button>
  <button class="post-action ${saved?'bookmarked':''}" data-action="save" data-id="${esc(post.id)}">${icon('bookmark')} ${saved?'Salvo':'Salvar'}</button>
  <button class="post-action" data-action="share-post" data-id="${esc(post.id)}" aria-label="Compartilhar publicação">${icon('send')} Compartilhar</button>
- ${owner?`<button class="post-action" data-action="delete-post" data-id="${esc(post.id)}" aria-label="Excluir publicação">${icon('trash')}</button>`:`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
+ ${owner?postOptionsButton(post):`<button class="post-action" data-action="report-post" data-id="${esc(post.id)}" aria-label="Denunciar publicação" title="Denunciar">${icon('info')}</button>`}</div></article>`;
 }
 function filteredPosts(posts=state.posts) {
  let found=[...posts];
@@ -1798,6 +1804,18 @@ function renderProductNews(){
  </article>`).join('')}</div>`);
 }
 function renderModal() {
+ if(state.modal==='post-options'||state.modal==='edit-post'){
+   const post=state.posts.find(item=>item.id===state.postEditor?.id&&item.userId===me());
+   if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está mais disponível.</p>');
+   if(state.modal==='post-options')return modalWrap('Opções da publicação',`<div class="form-stack">
+   <button class="btn btn-primary" data-action="edit-post" data-id="${esc(post.id)}">Editar publicação</button>
+   <button class="btn btn-outline" data-action="delete-post" data-id="${esc(post.id)}">Excluir publicação</button>
+   <button class="text-action" data-action="return-to-post">Voltar</button></div>`);
+   return modalWrap('Editar publicação',`<form id="edit-post-form" data-draft="true" data-draft-key="edit-post:${esc(post.id)}" class="form-stack">
+   <label class="field">Texto da publicação<textarea class="textarea" id="edit-post-content" name="content" required maxlength="2000">${esc(post.content)}</textarea></label>
+   <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="return-to-post">Cancelar</button>
+   <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`);
+ }
  if(state.modal==='event-conflict'){
    const event=state.events.find(item=>item.id===state.eventConflict?.id);
    const conflicts=event?conflictingEvents(event):[];
@@ -1933,9 +1951,9 @@ function renderModal() {
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
- <strong class="mini">${esc(authorName(post))}</strong><p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
+ <strong class="mini">${esc(authorName(post))}</strong> ${editedPostLabel(post)}<p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
  ${recapEventButton(post)}
- <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
+ <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${postOptionsButton(post)}${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
  ${welcoming?`<section class="card" style="padding:16px;margin:14px 0"><h3>${joined?'Faça sua primeira contribuição':'Participe desta comunidade'}</h3>
@@ -1983,7 +2001,7 @@ function renderModal() {
  if(!post)return modalWrap('Publicação indisponível','<p>Esta publicação não está disponível no momento.</p>');
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
- return modalWrap('Conversas sobre a publicação',`${post?`<div class="card" style="padding:15px;margin-bottom:19px"><strong style="font-size:12px">${esc(authorName(post))}</strong><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${recapEventButton(post)}</div>`:''}
+ return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${recapEventButton(post)}</div>
  <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small>${belongsToGroup&&c.userId!==me()?` <button class="text-action" data-action="report-group-comment" data-id="${esc(c.id)}">Denunciar comentário</button>`:''}</div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
@@ -2183,6 +2201,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.postEditor=null;
  state.pendingPostDraft=null;
  state.eventRoom=null;
  state.eventConflict=null;
@@ -2196,6 +2215,12 @@ function setTab(tab){
  if(tab==='events')void loadPersonalHistory();
  if(tab==='home')loadHomeEventRooms();
  window.scrollTo({top:0,behavior:'instant'});
+}
+function returnFromPostEditor(){
+ const previous=state.postEditor?.previous;
+ state.postEditor=null;
+ if(previous){state.modal=previous;render();}
+ else closeModal();
 }
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
 async function startDirect(uid){
@@ -3107,8 +3132,26 @@ async function onAction(btn) {
     watchEventBulletins();
     showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
-  case 'delete-post':if(!confirm('Excluir esta publicação definitivamente?'))return;
-    await attempt(async()=>{await firebase.deleteDoc(ref('posts',id));showToast('Publicação excluída.');});return;
+  case 'post-options':{
+    if(!me()||!state.posts.some(post=>post.id===id&&post.userId===me()))return;
+    state.postEditor={id,previous:['comments','group-detail'].includes(state.modal)?state.modal:null};
+    state.modal='post-options';render();return;
+  }
+  case 'edit-post':
+    if(state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id&&post.userId===me()))return;
+    state.drafts.delete('edit-post:'+id);
+    state.modal='edit-post';render();document.getElementById('edit-post-content')?.focus();return;
+  case 'return-to-post':
+    if(['post-options','edit-post'].includes(state.modal))returnFromPostEditor();
+    return;
+  case 'delete-post':if(!state.posts.some(post=>post.id===id&&post.userId===me())||!confirm('Excluir esta publicação definitivamente?'))return;
+    await attempt(async()=>{
+      await firebase.deleteDoc(ref('posts',id));
+      if(state.modal==='post-options'&&state.postEditor?.id===id){
+        if(state.postEditor.previous==='comments')closeModal();else returnFromPostEditor();
+      }
+      showToast('Publicação excluída.');
+    });return;
   case 'delete-comment':if(!confirm('Excluir este comentário?'))return;
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',state.selectedPost,'comments',id));showToast('Comentário excluído.');});return;
   case 'report-post':openReport('post',id);return;
@@ -3190,6 +3233,17 @@ document.addEventListener('submit',async(event)=>{
       catch(error){state.pendingSignup=null;throw error;}
       showToast('Conta criada! Seja bem-vindo ao HobbyHub.');
     }
+  });return;
+  case 'edit-post-form':await attempt(async()=>{
+    const editor=state.postEditor,uid=me(),content=val('content');
+    const post=state.posts.find(item=>item.id===editor?.id&&item.userId===uid);
+    if(!uid||!post||state.modal!=='edit-post'||!content||content.length>2000)return;
+    if(content!==post.content){
+      await firebase.updateDoc(ref('posts',post.id),{content,editedAt:firebase.serverTimestamp()});
+      if(me()!==uid)return;
+      showToast('Publicação atualizada.');
+    }
+    if(state.postEditor===editor&&state.modal==='edit-post')returnFromPostEditor();
   });return;
   case 'post-form':await attempt(async()=>{
     const content=val('content');if(!content||content.length>2000)return;
