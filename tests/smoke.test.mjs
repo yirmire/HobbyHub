@@ -1121,6 +1121,28 @@ test('saved collections filter the existing library and allow a post in multiple
   assert.equal(vm.runInContext('state.update.data.collectionIds[0]',context),'weekend');
 });
 
+test('a saved note is searchable inside its collections and saves only on the private record', async () => {
+  const handlers={},context=appContext(handlers);
+  context.window.location={hash:''};
+  context.FormData=function(){return [['note',' Testar no domingo ']];};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';
+    const savedPost={id:'p',content:'Receita antiga'};
+    state.posts=[savedPost];state.savedIds=['p'];
+    state.savedCollections=[{id:'recipes',name:'Receitas'}];state.selectedSavedCollection='recipes';
+    state.savedMemberships.set('p',['recipes']);state.savedNotes.set('p','Café <especial>');state.savedSearch='cafe';
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),updateDoc:async(path,data)=>{state.noteWrite={path,data};}};
+  `,context);
+  assert.match(vm.runInContext('renderSaved()',context),/Receita antiga[\s\S]*Nota privada[\s\S]*Café &lt;especial&gt;/);
+  assert.doesNotMatch(vm.runInContext('postCard(savedPost)',context),/especial/);
+  await vm.runInContext("onAction({dataset:{action:'edit-saved-note',id:'p'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Café &lt;especial&gt;/);
+  await handlers.submit({target:{id:'saved-note-form'},preventDefault(){}});
+  assert.match(vm.runInContext('state.noteWrite.path',context),/\/reader\/saved\/p$/);
+  assert.equal(vm.runInContext('JSON.stringify(state.noteWrite.data)',context),'{"note":"Testar no domingo"}');
+});
+
 test('bulk saved actions add or remove only the selected collection membership', async () => {
   const context=appContext();
   context.window.location={hash:''};
