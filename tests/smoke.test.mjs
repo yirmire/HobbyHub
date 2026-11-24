@@ -1227,6 +1227,25 @@ test('renaming and deleting a collection preserve the saved posts and other coll
   assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
 });
 
+test('my comments queries only the signed-in author and opens the exact reply', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.profile={name:'Leitora'};state.posts=[{id:'post',userName:'Outra pessoa'}];
+    const parent={id:'post',path:[...BASE,'posts','post'].join('/')};
+    const item={id:'item',ref:{parent:{parent},path:parent.path+'/comments/item'},
+      data:()=>({userId:'reader',text:'Minha resposta <teste>',parentId:'root',createdAt:20})};
+    firebase={collectionGroup:()=>null,where:(...args)=>args,orderBy:(...args)=>args,limit:size=>size,
+      query:(_ref,...parts)=>{state.activityQuery=parts;return parts;},getDocs:async()=>({docs:[item]})};
+    openComments=(...args)=>{state.openedActivity=args.join(':');};
+  `,context);
+  assert.match(vm.runInContext('renderProfile()',context),/Meus comentários/);
+  await vm.runInContext("onAction({dataset:{action:'my-comment-activity'}})",context);
+  assert.equal(vm.runInContext('JSON.stringify(state.activityQuery)',context),'[["userId","==","reader"],["createdAt","desc"],30]');
+  assert.match(vm.runInContext('renderModal()',context),/Minha resposta &lt;teste&gt;[\s\S]*Outra pessoa/);
+  await vm.runInContext("onAction({dataset:{action:'open-my-comment',id:state.myCommentActivity.entries[0].key}})",context);
+  assert.equal(vm.runInContext('state.openedActivity',context),'post:item');
+});
+
 test('a copied comment link waits for login and opens the exact reply', async () => {
   const context=appContext();
   const copied=[];
