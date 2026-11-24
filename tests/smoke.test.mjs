@@ -827,7 +827,7 @@ test('event RSVP warns about a confirmed conflict and writes only after explicit
     const schedule={date:'2099-01-01',time:'10:30'};
     state.events=[
       {...schedule,id:'new',title:'Evento novo',attendees:[]},
-      {...schedule,id:'old',title:'Encontro <confirmado>',attendees:['guest']},
+      {...schedule,id:'old',title:'Encontro <confirmado>',time:'09:30',endTime:'11:00',attendees:['guest']},
       {...schedule,id:'cancelled',title:'Cancelado',attendees:['guest'],cancelled:true},
       {...schedule,id:'later',title:'Horário diferente',time:'11:30',attendees:['guest']},
       {...schedule,id:'full',title:'Sem vaga',capacity:1,waitlist:[],attendees:['other']}
@@ -851,6 +851,24 @@ test('event RSVP warns about a confirmed conflict and writes only after explicit
   await action('rsvp','full');
   assert.equal(vm.runInContext('state.queued.intent',context),'join');
   assert.equal(vm.runInContext('state.modal',context),'event-detail');
+});
+
+test('event end times are optional and mark overlaps without including the end boundary', () => {
+  const context=appContext();
+  const matches=vm.runInContext(`
+    state.user={uid:'guest'};
+    const start={date:'2099-01-01',attendees:['guest']};
+    state.events=[
+      {...start,id:'during',time:'15:00'},
+      {...start,id:'touching',time:'16:00'},
+      {...start,id:'earlier',time:'13:00',endTime:'14:30'},
+      {...start,id:'unknown-end',time:'13:30'}
+    ];
+    conflictingEvents({...start,id:'new',time:'14:00',endTime:'16:00'}).map(item=>item.id).join(',')
+  `,context);
+  assert.equal(matches,'during,earlier');
+  assert.throws(()=>vm.runInContext("validateEventEndTime('14:00','13:00')",context),/depois do início/);
+  assert.doesNotThrow(()=>vm.runInContext("validateEventEndTime('14:00','')",context));
 });
 
 test('the bell reminds confirmed attendees once per event and opens its details', async () => {
@@ -1005,10 +1023,12 @@ test('event cards and details link only to an in-person destination', () => {
 test('calendar data includes the clean event link and escapes user text', () => {
   const context = appContext();
   context.window.location = {pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test',search:'?utm_source=test'};
-  const event = {id:'e',title:'Foto, vídeo; encontro',description:'Linha 1\n'+ 'ç'.repeat(80),location:'Praça',date:'2099-05-07',time:'10:30',revision:2};
+  const event = {id:'e',title:'Foto, vídeo; encontro',description:'Linha 1\n'+ 'ç'.repeat(80),location:'Praça',date:'2099-05-07',time:'10:30',endTime:'11:30',revision:2};
   context.event = event;
   const file = vm.runInContext(`calendarFile(event,new Date('2026-11-21T10:00:00Z'))`, context);
   assert.match(file, /DTSTART:20990507T103000/);
+  assert.match(file, /DTEND:20990507T113000/);
+  assert.doesNotMatch(vm.runInContext("calendarFile({...event,endTime:''})",context),/DTEND/);
   assert.match(file, /DTSTAMP:20261121T100000Z/);
   assert.match(file, /UID:e@example.test\r\n/);
   assert.match(file, /SEQUENCE:2\r\n/);
