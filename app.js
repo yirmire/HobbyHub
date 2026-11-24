@@ -1114,7 +1114,7 @@ function renderProfile() {
  ${renderProfileMedia(p)}
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
- <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button><button class="text-action" data-action="my-product-feedback">Meus feedbacks</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
+ <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button><button class="text-action" data-action="my-product-feedback">Meus feedbacks</button><button class="text-action" data-action="product-news">Novidades</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
@@ -1469,8 +1469,22 @@ async function updateProductFeedbackStatus(id,status,resolution=''){
    showToast('Estado do feedback atualizado.');
  });
 }
+const productNews=[
+ {date:'2026-11-23',title:'Respostas da equipe aos feedbacks',
+  summary:'Ao resolver um feedback, a equipe pode deixar uma resposta privada. Se houver uma resposta, você pode abri-la pelo aviso no sino.',
+  action:'my-product-feedback',label:'Abrir meus feedbacks'}
+];
+const productNewsDate=new Intl.DateTimeFormat('pt-BR',{dateStyle:'long',timeZone:'UTC'});
+function renderProductNews(){
+ return modalWrap('Novidades',`<div class="form-stack">${productNews.map(item=>`<article class="card form-stack" style="padding:14px">
+ <time class="muted" datetime="${esc(item.date)}">${productNewsDate.format(new Date(item.date))}</time>
+ <strong>${esc(item.title)}</strong><p class="post-copy" style="margin:0">${esc(item.summary)}</p>
+ <button class="text-action" data-action="${esc(item.action)}">${esc(item.label)}</button>
+ </article>`).join('')}</div>`);
+}
 function renderModal() {
  if(!state.modal)return '';
+ if(state.modal==='product-news')return renderProductNews();
  if(state.modal==='my-product-feedback')return renderMyProductFeedback();
  if(state.modal==='my-feedback-detail'){
    const item=state.myProductFeedback?.find(entry=>entry.id===state.selectedFeedbackId);
@@ -2378,6 +2392,7 @@ async function onAction(btn) {
     state.productFeedbackQueue={entries:[],category:'',last:null,more:true,loading:false,error:''};
     openModal('product-feedback-admin');await loadProductFeedback();return;
   }
+  case 'product-news':if(me())openModal('product-news');return;
   case 'my-product-feedback':if(me())openModal('my-product-feedback');return;
   case 'view-my-feedback':openMyProductFeedback(id);return;
   case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
