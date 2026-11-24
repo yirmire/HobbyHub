@@ -1227,6 +1227,27 @@ test('renaming and deleting a collection preserve the saved posts and other coll
   assert.match(vm.runInContext("state.selectedSavedCollection='weekend';renderSaved()",context),/Publicação salva/);
 });
 
+test('saved comment search matches its text, author and community without accents', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.tab='saved';state.savedView='comments';
+    state.groups=[{id:'coffee',name:'Café artesanal'}];
+    state.posts=[{id:'post',groupId:'coffee'},{id:'other'}];
+    state.savedComments.set('post:a',{postId:'post',commentId:'a'});
+    state.savedComments.set('other:b',{postId:'other',commentId:'b'});
+    state.savedCommentWatches.set('post:a',{comment:{text:'Moagem média',userName:'João'}});
+    state.savedCommentWatches.set('other:b',{comment:{text:'Outra dica',userName:'Ana'}});
+  `,context);
+  handlers.input({target:{id:'saved-search',value:'CAFE joao media'}});
+  const render=()=>vm.runInContext('renderSaved()',context);
+  assert.match(render(),/Moagem média[\s\S]*Abrir comentário/);
+  assert.doesNotMatch(render(),/Outra dica/);
+  handlers.input({target:{id:'saved-search',value:'sem correspondência'}});
+  assert.match(render(),/Nenhum comentário encontrado/);
+  await vm.runInContext("onAction({dataset:{action:'clear-saved-search'}})",context);
+  assert.match(render(),/Outra dica/);
+});
+
 test('saved comments can be kept privately and opened at their original position', async () => {
   const context=appContext();
   vm.runInContext(`
