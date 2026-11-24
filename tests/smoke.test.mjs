@@ -1121,6 +1121,35 @@ test('saved collections filter the existing library and allow a post in multiple
   assert.equal(vm.runInContext('state.update.data.collectionIds[0]',context),'weekend');
 });
 
+test('bulk saved actions add or remove only the selected collection membership', async () => {
+  const context=appContext();
+  context.window.location={hash:''};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';
+    state.savedCollections=[{id:'photo',name:'Fotografia'},{id:'other',name:'Outra coleção'}];
+    state.posts=[{id:'p',content:'Publicação um'},{id:'q',content:'Publicação dois'}];
+    state.savedIds=['p','q'];state.savedMemberships.set('p',['other']);state.savedMemberships.set('q',[]);
+    showToast=()=>{};state.batches=[];
+    firebase={doc:(_db,...path)=>path.at(-1),arrayUnion:id=>({add:id}),arrayRemove:id=>({remove:id}),
+      writeBatch:()=>{const writes=[];return {update:(path,data)=>writes.push({path,data}),commit:async()=>{state.batches.push(writes);}}}};
+  `,context);
+  const action=(name,id='')=>vm.runInContext(`onAction({dataset:{action:${JSON.stringify(name)},id:${JSON.stringify(id)}}})`,context);
+  await action('toggle-saved-selection');
+  await action('select-saved-post','p');
+  await action('select-saved-post','q');
+  assert.match(vm.runInContext('renderSaved()',context),/2 selecionadas/);
+  await action('choose-bulk-collection');
+  assert.match(vm.runInContext('renderModal()',context),/Fotografia/);
+  await action('add-selected-to-collection','photo');
+  assert.equal(vm.runInContext('JSON.stringify(state.batches[0])',context),'[{"path":"p","data":{"collectionIds":{"add":"photo"}}},{"path":"q","data":{"collectionIds":{"add":"photo"}}}]');
+  vm.runInContext("state.selectedSavedCollection='photo';state.savedMemberships.set('p',['photo','other']);state.savedMemberships.set('q',['photo'])",context);
+  await action('toggle-saved-selection');
+  await action('select-saved-post','p');
+  await action('remove-selected-from-collection','photo');
+  assert.equal(vm.runInContext('JSON.stringify(state.batches[1])',context),'[{"path":"p","data":{"collectionIds":{"remove":"photo"}}}]');
+  assert.equal(vm.runInContext('state.savedIds.length',context),2);
+});
+
 test('renaming and deleting a collection preserve the saved posts and other collections', async () => {
   const handlers={},context=appContext(handlers);
   context.window.location={hash:''};
