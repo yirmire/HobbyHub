@@ -421,6 +421,21 @@ const editedComment=(await request(other,'GET',editableComment,200)).fields;
 assert.equal(editedComment.text.stringValue,'Comentário corrigido');
 assert.equal(editedComment.createdAt.integerValue,'100');
 assert.ok(editedComment.editedAt.timestampValue);
+const replyPath=editable+'/comments/reply';
+const replyWrite={update:{name:documents+replyPath,fields:{
+  userId:str(sender.localId),text:str('Resposta de teste'),createdAt:{integerValue:'200'},parentId:str('original')
+}}};
+const commentReplyNotice=(target)=>({
+  update:{name:documents+'public/data/members/'+target.localId+'/notifications/comment-reply-editable-post:reply',fields:{
+    type:str('comment-reply'),actorId:str(sender.localId),postId:str('editable-post'),commentId:str('reply')
+  }},updateTransforms:stamp('createdAt')
+});
+await moderate(sender,[replyWrite,commentReplyNotice(other)],403);
+await moderate(sender,[replyWrite,commentReplyNotice(recipient)],200);
+await request(recipient,'GET','public/data/members/'+recipient.localId+'/notifications/comment-reply-editable-post:reply',200);
+await request(other,'GET','public/data/members/'+recipient.localId+'/notifications/comment-reply-editable-post:reply',403);
+await moderate(sender,[{update:{name:documents+editable+'/comments/nested',fields:{...replyWrite.update.fields,parentId:str('reply')}}}],403);
+await moderate(sender,[{update:{name:documents+editable+'/comments/orphan',fields:{...replyWrite.update.fields,parentId:str('missing')}}}],403);
 const onlineEvent=events+'/online-test',roomPath=onlineEvent+'/private/room';
 const online={...standalone,format:str('online'),location:str('Online'),timeZone:str('America/Manaus')};
 const roomFields={url:str('https://meet.example.test/sala'),ownerId:str(sender.localId)};
