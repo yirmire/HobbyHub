@@ -60,6 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
+  savedView:'saved',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -294,6 +295,7 @@ async function init() {
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
+      state.savedView='saved';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
@@ -1325,9 +1327,37 @@ function renderEvents(now=new Date()) {
  ${weekly?renderEventWeek(days,events):events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:eventFilter==='history'&&state.personalHistory.loading?'':emptyAgenda}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
+function unreadFollowedComments(postId){
+ const watch=state.followedPostWatches.get(postId);
+ if(!watch)return [];
+ const directReads=new Set(state.notifications.filter(item=>item.postId===postId&&
+   ['comment','comment-reply'].includes(item.type)&&state.notificationReads.has(item.id+':'+
+     (typeof item.createdAt==='number'?item.createdAt:item.createdAt?.toMillis?.()))).map(item=>item.commentId));
+ return watch.entries.filter(comment=>comment.userId!==me()&&!state.blockedIds.includes(comment.userId)&&
+   !state.notificationReads.has(followedCommentReadKey(postId,comment.id))&&!directReads.has(comment.id));
+}
+function renderFollowedPosts(){
+ const posts=new Map(state.posts.map(post=>[post.id,post]));
+ const entries=[...state.followedPosts].sort((a,b)=>(b[1]||0)-(a[1]||0));
+ if(!entries.length)return empty('🔔','Você ainda não acompanha publicações','Use o menu de uma publicação para acompanhar novos comentários.','Explorar publicações','explore');
+ return `<div class="form-stack">${entries.map(([id])=>{
+   const post=posts.get(id),unread=post?unreadFollowedComments(id).length:0;
+   return `<article class="card form-stack" style="padding:16px">
+   <div class="toggle-row" style="flex-wrap:wrap"><strong>${post?esc(authorName(post)):'Publicação indisponível'}</strong>
+   ${unread?`<span class="pill">${unread} ${unread===1?'comentário novo':'comentários novos'}</span>`:''}</div>
+   ${post?`<p class="post-copy" style="margin:0">${esc(short(post.content,220))}</p>`:''}
+   <div class="toggle-row" style="flex-wrap:wrap">
+   ${post?`<button class="btn btn-outline btn-small" data-action="open-followed-conversation" data-id="${esc(id)}">Abrir conversa</button>`:''}
+   <button class="text-action" data-action="stop-followed-post" data-id="${esc(id)}" ${state.busy?'disabled':''}>Parar de acompanhar</button></div>
+   </article>`;
+ }).join('')}</div>`;
+}
 function renderSaved() {
+ const filters=`<div class="filters" role="group" aria-label="Tipo de publicação">${[['saved','Salvos'],['following','Acompanhando']].map(([view,label])=>
+   `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
+ if(state.savedView==='following')return filters+renderFollowedPosts();
  const posts=state.posts.filter(p=>state.savedIds.includes(p.id));
- return `<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${posts.length?posts.map(postCard).join(''):empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ return filters+`<div class="section-head"><h2>Publicações para guardar</h2><span class="pill">${posts.length} salvas</span></div>${posts.length?posts.map(postCard).join(''):empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
 function mediaUrl(value) {
  try {
@@ -3268,10 +3298,24 @@ async function onAction(btn) {
     state.postEditor={id,previous:['comments','group-detail'].includes(state.modal)?state.modal:null};
     state.modal='post-options';render();return;
   }
+  case 'saved-view':
+    if(state.tab==='saved'&&['saved','following'].includes(btn.dataset.value)){
+      state.savedView=btn.dataset.value;render();
+    }
+    return;
+  case 'open-followed-conversation':{
+    if(!state.followedPosts.has(id)||!state.posts.some(post=>post.id===id))return;
+    const newest=unreadFollowedComments(id)[0];
+    if(newest)markNotificationsRead([{type:'followed-comment',readKey:followedCommentReadKey(id,newest.id)}]);
+    openComments(id,newest?.id);return;
+  }
+  case 'stop-followed-post':
   case 'toggle-followed-post':await attempt(async()=>{
     const uid=me();
-    if(!uid||state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id))return;
-    const target=ref('members',uid,'followedPosts',id),following=state.followedPosts.has(id);
+    const following=state.followedPosts.has(id),stop=btn.dataset.action==='stop-followed-post';
+    if(!uid||(stop?state.tab!=='saved'||state.savedView!=='following'||!following:
+       state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id)))return;
+    const target=ref('members',uid,'followedPosts',id);
     if(following)await firebase.deleteDoc(target);
     else await firebase.setDoc(target,{followedAt:firebase.serverTimestamp()});
     if(me()===uid)showToast(following?'Você parou de acompanhar a publicação.':'Você está acompanhando a publicação.');
