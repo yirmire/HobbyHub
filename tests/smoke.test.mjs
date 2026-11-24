@@ -1121,6 +1121,33 @@ test('saved collections filter the existing library and allow a post in multiple
   assert.equal(vm.runInContext('state.update.data.collectionIds[0]',context),'weekend');
 });
 
+test('exports contain private notes and clean links for all saved posts or just the selected collection', async () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',search:'?utm_source=test'};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';state.savedSearch='sem correspondência';
+    state.savedCollections=[{id:'recipes',name:'Receitas'}];
+    state.posts=[{id:'first',userName:'João'},{id:'other',userName:'Ana'}];
+    state.savedIds=['first','other','missing'];state.savedMemberships.set('first',['recipes']);
+    state.savedNotes.set('first','Pôr menos açúcar');state.savedNotes.set('missing','Minha nota antiga');
+    state.downloads=[];downloadFile=(file,name,type)=>state.downloads.push({file,name,type});
+  `,context);
+  const download=()=>vm.runInContext("onAction({dataset:{action:'export-saved-posts'}})",context);
+  await download();
+  const all=vm.runInContext('state.downloads[0]',context);
+  assert.equal(all.name,'hobbyhub-salvos.txt');
+  assert.equal(all.type,'text/plain;charset=utf-8');
+  assert.match(all.file,/#post=first\nAutor: João\nNota privada:\nPôr menos açúcar/);
+  assert.match(all.file,/#post=missing[\s\S]*Minha nota antiga/);
+  assert.doesNotMatch(all.file,/utm_source/);
+  vm.runInContext("state.selectedSavedCollection='recipes'",context);
+  await download();
+  const selected=vm.runInContext('state.downloads[1]',context);
+  assert.equal(selected.name,'hobbyhub-colecao.txt');
+  assert.match(selected.file,/^Receitas[\s\S]*Pôr menos açúcar/);
+  assert.doesNotMatch(selected.file,/#post=other|#post=missing/);
+});
+
 test('a saved note is searchable inside its collections and saves only on the private record', async () => {
   const handlers={},context=appContext(handlers);
   context.window.location={hash:''};
