@@ -1421,10 +1421,20 @@ function renderFollowedPosts(query){
    </article>`;
  }).join('')}</div>`;
 }
-function renderSavedComments(){
+function renderSavedComments(query){
  const entries=[...state.savedComments].sort((a,b)=>(b[1].savedAt?.toMillis?.()||0)-(a[1].savedAt?.toMillis?.()||0));
  if(!entries.length)return '<p class="tip">Você ainda não salvou comentários. Use o menu ⋯ de um comentário para guardá-lo.</p>';
- return `<div class="form-stack">${entries.map(([key,{postId}])=>{
+ const posts=new Map(state.posts.map(post=>[post.id,post])),groups=new Map(state.groups.map(group=>[group.id,group.name]));
+ const visible=query?entries.filter(([key,{postId}])=>{
+   const comment=state.savedCommentWatches.get(key)?.comment;
+   if(!comment)return false;
+   const fields=[comment.text,authorName(comment),groups.get(posts.get(postId)?.groupId)].map(norm);
+   return query.split(' ').every(term=>fields.some(field=>field.includes(term)));
+ }):entries;
+ if(!visible.length)return [...state.savedCommentWatches.values()].some(watch=>watch.loading)
+   ?'<p class="tip" role="status">Carregando comentários…</p>'
+   :'<p class="tip" role="status">Nenhum comentário encontrado com esta busca.</p>';
+ return `<div class="form-stack">${visible.map(([key,{postId}])=>{
    const watch=state.savedCommentWatches.get(key),comment=watch?.comment;
    return `<article class="card form-stack" style="padding:16px">
    ${comment?`<strong>${esc(authorName(comment))}</strong><p class="post-copy" style="margin:0">${esc(short(comment.text,240))}</p>`
@@ -1438,10 +1448,10 @@ function renderSaved() {
  const query=norm(state.savedSearch);
  const filters=`<div class="filters" role="group" aria-label="Tipo de item salvo">${[['saved','Salvos'],['following','Acompanhando'],['comments','Comentários']].map(([view,label])=>
    `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
- const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">Buscar publicações<input class="input" id="saved-search" type="search" placeholder="${state.savedView==='saved'?'Texto, autor, comunidade ou nota':'Texto, autor ou comunidade'}" value="${esc(state.savedSearch)}"></label>
+ const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">${state.savedView==='comments'?'Buscar comentários':'Buscar publicações'}<input class="input" id="saved-search" type="search" placeholder="${state.savedView==='saved'?'Texto, autor, comunidade ou nota':'Texto, autor ou comunidade'}" value="${esc(state.savedSearch)}"></label>
  ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
  if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
- if(state.savedView==='comments')return filters+renderSavedComments();
+ if(state.savedView==='comments')return filters+search+renderSavedComments(query);
  const selected=state.selectedSavedCollection;
  const collection=state.savedCollections.find(item=>item.id===selected);
  const selection=state.savedSelection;
