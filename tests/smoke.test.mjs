@@ -888,6 +888,29 @@ test('the bell reminds confirmed attendees once per event and opens its details'
   assert.equal(vm.runInContext("state.events[0].attendees=[];notificationItems().some(item=>item.type==='event-reminder')",context),false);
 });
 
+test('the comment author can edit in place without changing the conversation order', async () => {
+  const handlers={},context=appContext(handlers);
+  context.FormData=function(){return [['text',' Corrigido ']];};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='comments';state.selectedPost='post';
+    state.posts=[{id:'post',content:'Publicação'}];
+    state.comments=[{id:'own',userId:'reader',text:'Original <texto>',createdAt:10},
+      {id:'other',userId:'someone',text:'Outro comentário',createdAt:20}];
+    showToast=()=>{};
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,updateDoc:async(path,data)=>{state.written={path,data};}};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'comment-options',id:'other'}})",context);
+  assert.equal(vm.runInContext('state.commentEditor',context),null);
+  await vm.runInContext("onAction({dataset:{action:'comment-options',id:'own'}})",context);
+  await vm.runInContext("onAction({dataset:{action:'edit-comment',id:'own'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Original &lt;texto&gt;[\s\S]*Outro comentário/);
+  await handlers.submit({target:{id:'edit-comment-form'},preventDefault(){}});
+  assert.equal(vm.runInContext('JSON.stringify(state.written.data)',context),'{"text":"Corrigido","editedAt":123}');
+  assert.match(vm.runInContext('state.written.path',context),/\/posts\/post\/comments\/own$/);
+  assert.equal(vm.runInContext('state.commentEditor',context),null);
+  assert.match(vm.runInContext('Object.assign(state.comments[0],state.written.data);renderModal()',context),/Corrigido[\s\S]*Editado[\s\S]*Outro comentário/);
+});
+
 test('only the author can open the edit menu and the form updates just the post text', async () => {
   const handlers={},context=appContext(handlers);
   context.FormData=function(){return [['content',' Texto atualizado ']];};
