@@ -1390,6 +1390,7 @@ function renderCommunityMute(groupId){
 }
 const productFeedbackKinds={problem:'Problema',suggestion:'Sugestão'};
 const productFeedbackStatuses={new:'Novo','in-review':'Em análise',resolved:'Resolvido'};
+const feedbackResolutionChoices={helped:'Sim', 'needs-help':'Ainda preciso de ajuda'};
 function renderMyProductFeedback(){
  const entries=state.myProductFeedback;
  return modalWrap('Meus feedbacks',`<div class="form-stack">${!entries?'<p class="tip">Carregando seus feedbacks…</p>':entries.length?entries.map(item=>`<article class="card" style="padding:12px">
@@ -1427,8 +1428,30 @@ async function loadProductFeedback(){
  }
 }
 function renderFeedbackResolution(item){
- return item.status==='resolved'&&item.resolution
+ return item.resolution
    ?`<div><strong>Resposta da equipe</strong><p class="post-copy" style="margin:0">${esc(item.resolution)}</p></div>`:'';
+}
+function renderFeedbackResolutionChoice(item){
+ const choice=Object.hasOwn(feedbackResolutionChoices,item.resolutionChoice)&&feedbackResolutionChoices[item.resolutionChoice];
+ return choice?`<p class="tip">Resposta do autor: ${choice}</p>`:'';
+}
+async function answerFeedbackResolution(id,choice){
+ await attempt(async()=>{
+   const uid=me(),item=state.myProductFeedback?.find(entry=>entry.id===id);
+   if(!uid||state.modal!=='my-feedback-detail'||state.selectedFeedbackId!==id||
+      item?.status!=='resolved'||!item.resolution||item.resolutionChoice||
+      !Object.hasOwn(feedbackResolutionChoices,choice))return;
+   const target=firebase.doc(db,'artifacts',PROJECT,'productFeedback',id);
+   await firebase.runTransaction(db,async transaction=>{
+     const current=(await transaction.get(target)).data();
+     if(current?.authorId!==uid||current.status!=='resolved'||current.resolutionChoice||
+        !current.reviewedAt?.isEqual(item.reviewedAt)){
+       throw new Error('O feedback foi atualizado. Confira o estado atual e tente novamente.');
+     }
+     transaction.update(target,{resolutionChoice:choice});
+   });
+   if(me()===uid)showToast('Sua resposta foi registrada.');
+ });
 }
 function renderProductFeedbackAdmin(){
  if(!state.feedbackAdmin)return modalWrap('Painel de feedback','<p>Este painel é restrito à administração.</p>');
@@ -1440,6 +1463,7 @@ function renderProductFeedbackAdmin(){
  <div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong><small>${when(item.createdAt?.toMillis?.())}</small></div>
  <p class="post-copy" style="margin:0">${esc(item.message)}</p>
  ${renderFeedbackResolution(item)}
+ ${renderFeedbackResolutionChoice(item)}
  ${queue.resolutionId===item.id&&item.status!=='resolved'?`<form id="product-feedback-resolution-form" data-draft="true" data-draft-key="feedback-resolution-${esc(item.id)}" class="form-stack">
  <label class="field">Resposta da equipe (opcional)<textarea class="input" id="feedback-resolution-text" name="resolution" maxlength="600" rows="3"></textarea></label>
  <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Marcar como resolvido</button>
@@ -1459,12 +1483,13 @@ async function updateProductFeedbackStatus(id,status,resolution=''){
    if(resolution.length>600)throw new Error('A resposta pode ter até 600 caracteres.');
    await firebase.updateDoc(firebase.doc(db,'artifacts',PROJECT,'productFeedback',id),{
      status,reviewedAt:firebase.serverTimestamp(),reviewedBy:uid,
-     ...(status==='resolved'?{resolution}:{})
+     ...(status==='resolved'?{resolution,resolutionChoice:''}:{})
    });
    if(me()!==uid||state.productFeedbackQueue!==queue)return;
    entry.status=status;
    if(status==='resolved'){
      entry.resolution=resolution;
+     entry.resolutionChoice='';
      if(queue.resolutionId===id){
        const input=document.getElementById('feedback-resolution-text');
        if(input)input.value='';
@@ -1498,6 +1523,9 @@ function renderModal() {
    return modalWrap('Meu feedback',item?`<div class="form-stack"><div class="toggle-row"><strong>${productFeedbackKinds[item.category]||'Feedback'}</strong>
    <span class="pill">${productFeedbackStatuses[item.status]||'Novo'}</span></div><p class="post-copy" style="margin:0">${esc(item.message)}</p>
    ${renderFeedbackResolution(item)}
+   ${renderFeedbackResolutionChoice(item)}
+   ${item.status==='resolved'&&item.resolution&&!item.resolutionChoice?`<div class="form-stack"><strong>Isso resolveu?</strong>
+   <div class="toggle-row" style="flex-wrap:wrap">${Object.entries(feedbackResolutionChoices).map(([choice,label])=>`<button class="btn btn-outline btn-small" data-action="answer-feedback-resolution" data-id="${esc(item.id)}" data-value="${choice}" ${state.busy?'disabled':''}>${label}</button>`).join('')}</div></div>`:''}
    <button class="text-action" data-action="my-product-feedback">Voltar aos meus feedbacks</button></div>`:'<p>Este feedback está indisponível.</p>');
  }
  if(state.modal==='product-feedback-admin')return renderProductFeedbackAdmin();
@@ -2403,6 +2431,7 @@ async function onAction(btn) {
   case 'product-news':if(me())openModal('product-news');return;
   case 'my-product-feedback':if(me())openModal('my-product-feedback');return;
   case 'view-my-feedback':openMyProductFeedback(id);return;
+  case 'answer-feedback-resolution':await answerFeedbackResolution(id,btn.dataset.value);return;
   case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
   case 'send-feedback-verification':await attempt(async()=>{
     if(!hasFeedbackAdminRole()||state.feedbackAdmin)return;
