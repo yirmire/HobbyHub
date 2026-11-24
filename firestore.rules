@@ -198,16 +198,20 @@ service cloud.firestore {
         }
         function newComment(data) {
           let comment = publicCommentPath(appId, data.postId, data.commentId);
-          return noticeId == 'comment-' + data.postId + ':' + data.commentId
-            && !exists(comment) && getAfter(comment).data.userId == data.actorId
-            && get(publicPostPath(appId, data.postId)).data.userId == uid;
+          let reply = getAfter(comment).data;
+          let parent = reply.get('parentId','');
+          return noticeId == data.type + '-' + data.postId + ':' + data.commentId
+            && !exists(comment) && reply.userId == data.actorId
+            && ((data.type == 'comment' && parent == '' && get(publicPostPath(appId, data.postId)).data.userId == uid)
+              || (data.type == 'comment-reply' && validText(parent, 1, 120) && parent.matches('[^/]+')
+                && get(publicCommentPath(appId, data.postId, parent)).data.userId == uid));
         }
         function validNotice(data) {
           return loggedIn() && request.auth.uid != uid
             && data.keys().hasOnly(['type', 'actorId', 'postId', 'commentId', 'createdAt'])
             && data.actorId == request.auth.uid && data.createdAt == request.time
             && ((data.type == 'follow' && newFollow(data))
-              || (data.type == 'comment' && validText(data.postId, 1, 120) && data.postId.matches('[^/]+')
+              || (data.type in ['comment','comment-reply'] && validText(data.postId, 1, 120) && data.postId.matches('[^/]+')
                 && validText(data.commentId, 1, 120) && data.commentId.matches('[^/]+') && newComment(data)));
         }
         allow read: if isMe(uid);
@@ -339,6 +343,13 @@ service cloud.firestore {
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
 
       match /comments/{commentId} {
+        function validReplyParent(data) {
+          let parent = data.get('parentId','');
+          return !data.keys().hasAny(['parentId'])
+            || (validText(parent, 1, 120) && parent.matches('[^/]+')
+              && exists(publicCommentPath(appId, postId, parent))
+              && !get(publicCommentPath(appId, postId, parent)).data.keys().hasAny(['parentId']));
+        }
         function restoresComment() {
           let pointer = get(removedCommentPath(appId, postId, commentId)).data;
           let groupId = get(publicPostPath(appId, postId)).data.get('groupId', '');
@@ -351,6 +362,7 @@ service cloud.firestore {
           (!exists(removedCommentPath(appId, postId, commentId))
           && request.resource.data.userId == request.auth.uid
           && !request.resource.data.keys().hasAny(['editedAt'])
+          && validReplyParent(request.resource.data)
           && validText(request.resource.data.text, 1, 800)
           && request.resource.data.createdAt is number) || restoresComment());
         allow delete: if loggedIn() && exists(publicPostPath(appId, postId)) && (resource.data.userId == request.auth.uid
