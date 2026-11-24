@@ -60,7 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
-  savedView:'saved',
+  savedView:'saved', followedPostsFilter:'all',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
@@ -296,6 +296,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';
+      state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
@@ -1338,16 +1339,24 @@ function unreadFollowedComments(postId){
 }
 function renderFollowedPosts(){
  const posts=new Map(state.posts.map(post=>[post.id,post]));
- const entries=[...state.followedPosts].sort((a,b)=>(b[1]||0)-(a[1]||0));
- if(!entries.length)return empty('🔔','Você ainda não acompanha publicações','Use o menu de uma publicação para acompanhar novos comentários.','Explorar publicações','explore');
- return `<div class="form-stack">${entries.map(([id])=>{
-   const post=posts.get(id),unread=post?unreadFollowedComments(id).length:0;
+ const entries=[...state.followedPosts].sort((a,b)=>(b[1]||0)-(a[1]||0)).map(([id])=>{
+   const post=posts.get(id);
+   return {id,post,unread:post?unreadFollowedComments(id).length:0};
+ });
+ const filter=state.followedPostsFilter;
+ const filters=`<div class="filters" role="group" aria-label="Filtrar publicações acompanhadas">${[['all','Todas'],['unread','Com novidades']].map(([value,label])=>
+   `<button class="filter ${filter===value?'active':''}" data-action="followed-posts-filter" data-value="${value}" aria-pressed="${filter===value}">${label}</button>`).join('')}</div>`;
+ if(!entries.length)return filters+empty('🔔','Você ainda não acompanha publicações','Use o menu de uma publicação para acompanhar novos comentários.','Explorar publicações','explore');
+ const visible=filter==='unread'?entries.filter(entry=>entry.unread>0):entries;
+ if(!visible.length)return filters+'<p class="tip">Nenhuma publicação com comentários novos.</p>';
+ return filters+`<div class="form-stack">${visible.map(({id,post,unread})=>{
    return `<article class="card form-stack" style="padding:16px">
    <div class="toggle-row" style="flex-wrap:wrap"><strong>${post?esc(authorName(post)):'Publicação indisponível'}</strong>
    ${unread?`<span class="pill">${unread} ${unread===1?'comentário novo':'comentários novos'}</span>`:''}</div>
    ${post?`<p class="post-copy" style="margin:0">${esc(short(post.content,220))}</p>`:''}
    <div class="toggle-row" style="flex-wrap:wrap">
    ${post?`<button class="btn btn-outline btn-small" data-action="open-followed-conversation" data-id="${esc(id)}">Abrir conversa</button>`:''}
+   ${unread?`<button class="text-action" data-action="read-followed-comments" data-id="${esc(id)}">Marcar comentários como lidos</button>`:''}
    <button class="text-action" data-action="stop-followed-post" data-id="${esc(id)}" ${state.busy?'disabled':''}>Parar de acompanhar</button></div>
    </article>`;
  }).join('')}</div>`;
@@ -3303,6 +3312,20 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'followed-posts-filter':
+    if(state.tab==='saved'&&state.savedView==='following'&&['all','unread'].includes(btn.dataset.value)){
+      state.followedPostsFilter=btn.dataset.value;render();
+    }
+    return;
+  case 'read-followed-comments':{
+    if(state.tab!=='saved'||state.savedView!=='following'||!state.followedPosts.has(id))return;
+    const unread=unreadFollowedComments(id);
+    if(!unread.length)return;
+    markNotificationsRead(unread.map(comment=>({type:'followed-comment',readKey:followedCommentReadKey(id,comment.id)})));
+    render();
+    document.querySelector('[data-action="followed-posts-filter"][aria-pressed="true"]')?.focus();
+    return;
+  }
   case 'open-followed-conversation':{
     if(!state.followedPosts.has(id)||!state.posts.some(post=>post.id===id))return;
     const newest=unreadFollowedComments(id)[0];

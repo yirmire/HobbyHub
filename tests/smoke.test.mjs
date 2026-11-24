@@ -1051,6 +1051,28 @@ test('the followed tab in Saved shows new comments and lets the user open or unf
   assert.match(vm.runInContext('state.deletedFollow',context),/\/reader\/followedPosts\/missing$/);
 });
 
+test('followed posts can filter updates and mark only that conversation read', async () => {
+  const context=appContext();
+  context.document.querySelector=()=>null;
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';state.savedView='following';
+    state.posts=[{id:'new',content:'Publicação com atividade'},{id:'quiet',content:'Publicação tranquila'},
+      {id:'other',content:'Outra publicação ativa'}];
+    for(const id of ['new','quiet','other'])state.followedPosts.set(id,100);
+    state.followedPostWatches.set('new',{entries:[{id:'one',userId:'owner',createdAt:110},{id:'two',userId:'owner',createdAt:120}]});
+    state.followedPostWatches.set('other',{entries:[{id:'three',userId:'owner',createdAt:130}]});
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'followed-posts-filter',value:'unread'}})",context);
+  assert.match(vm.runInContext('renderSaved()',context),/2 comentários novos/);
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/Publicação tranquila/);
+  await vm.runInContext("onAction({dataset:{action:'read-followed-comments',id:'new'}})",context);
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/Publicação com atividade/);
+  assert.match(vm.runInContext('renderSaved()',context),/Outra publicação ativa/);
+  assert.equal(vm.runInContext("state.notificationReads.has('followed-comment:new:one')&&state.notificationReads.has('followed-comment:new:two')",context),true);
+  assert.equal(vm.runInContext("state.notificationReads.has('followed-comment:other:three')",context),false);
+  assert.equal(vm.runInContext("state.followedPosts.has('new')",context),true);
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};
