@@ -61,7 +61,7 @@ const state = {
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null,
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, selectedPost:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -224,7 +224,7 @@ function startSession() {
   },'comunidades');
   subscribe(col('events'), (s)=>{
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-    state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();void loadEventRoom();queueMicrotask(openLinkedContent);
+    state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();void loadEventRoom();loadHomeEventRooms();queueMicrotask(openLinkedContent);
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
@@ -289,6 +289,7 @@ async function init() {
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
+      state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
@@ -722,9 +723,28 @@ function renderEventReminders(day=tomorrow()) {
    </div>`).join('')}</div>
  </section>`;
 }
+function confirmedEventsToday(date=new Date()){
+ const day=localDateKey(date);
+ return state.events.filter(event=>isConfirmedEventOn(event,day))
+   .sort((a,b)=>(a.time||'24:00').localeCompare(b.time||'24:00'));
+}
+function renderTodayEvents(date=new Date()){
+ const events=confirmedEventsToday(date);
+ if(!events.length)return '';
+ const time=date.toTimeString().slice(0,5);
+ const next=events.find(event=>isEventTime(event.time)&&event.time>=time);
+ return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Seus eventos de hoje">
+ <h2 style="font-size:16px;margin:0">Seus eventos de hoje</h2>
+ ${events.map(event=>`<article class="card form-stack" style="padding:12px">
+ <div class="toggle-row" style="flex-wrap:wrap"><strong>${esc(event.title)}</strong>${event===next?'<span class="pill">Próximo encontro</span>':''}</div>
+ <p class="mini">${event.time?`Às ${esc(event.time)}${eventEndTime(event)?`–${esc(eventEndTime(event))}`:''} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
+ <div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Ver evento</button>
+ ${eventDirectionsLink(event)}${renderHomeEventRoom(event)}</div>
+ </article>`).join('')}</section>`;
+}
 function renderHome() {
  const feed=filteredPosts();
- return `${renderEventReminders()}<section class="hero"><span class="hero-overline">✦ CONECTE-SE PELO QUE VOCÊ AMA</span><h2>O próximo grande encontro começa com um interesse em comum.</h2><p>Encontre pessoas da sua cidade ou de qualquer lugar com as mesmas paixões que você.</p><button class="btn btn-white btn-small" data-action="tab" data-tab="explore">Explorar a comunidade ${icon('arrow')}</button></section>
+ return `${renderTodayEvents()}${renderEventReminders()}<section class="hero"><span class="hero-overline">✦ CONECTE-SE PELO QUE VOCÊ AMA</span><h2>O próximo grande encontro começa com um interesse em comum.</h2><p>Encontre pessoas da sua cidade ou de qualquer lugar com as mesmas paixões que você.</p><button class="btn btn-white btn-small" data-action="tab" data-tab="explore">Explorar a comunidade ${icon('arrow')}</button></section>
  <div class="section-head"><h2>Explore seus interesses</h2><button class="text-action" data-action="quiz">Me surpreenda ${icon('spark')}</button></div>
  ${topicButtons(state.topic)}
  <div class="card composer-bar">${avatar(state.profile)}<button class="composer-prompt" data-action="compose">Qual hobby fez seu dia melhor hoje?</button><button class="circle-btn" data-action="compose" aria-label="Publicar">${icon('plus')}</button></div>
@@ -913,6 +933,33 @@ function canReadEventRoom(event,uid=me()){
  return Boolean(uid&&event?.format==='online'&&event.cancelled!==true&&
    (event.createdBy===uid||event.attendees?.includes(uid)));
 }
+async function getEventRoomUrl(id){
+ const snapshot=await firebase.getDoc(ref('events',id,'private','room'));
+ const url=snapshot.data()?.url||'';
+ return validEventRoomUrl(url)?url:'';
+}
+function loadHomeEventRooms(){
+ if(state.tab!=='home')return;
+ const uid=me(),rooms=state.homeEventRooms;
+ const events=confirmedEventsToday().filter(event=>canReadEventRoom(event,uid));
+ const active=new Set(events.map(event=>event.id));
+ for(const id of rooms.keys())if(!active.has(id))rooms.delete(id);
+ for(const event of events){
+   const current=rooms.get(event.id);
+   if(current&&current.revision===event.revision)continue;
+   const room={revision:event.revision,url:''};
+   rooms.set(event.id,room);
+   void getEventRoomUrl(event.id).then(url=>{
+     if(me()!==uid||rooms.get(event.id)!==room)return;
+     room.url=url;
+     if(state.tab==='home')render();
+   }).catch(()=>{if(rooms.get(event.id)===room)rooms.delete(event.id);});
+ }
+}
+function renderHomeEventRoom(event){
+ const room=state.homeEventRooms.get(event.id);
+ return canReadEventRoom(event)&&room&&room.revision===event.revision?eventRoomLink(room.url):'';
+}
 async function loadEventRoom(force=false){
  const uid=me(),event=state.events.find(item=>item.id===state.selectedEvent);
  if(!['event-detail','event-edit'].includes(state.modal)||!canReadEventRoom(event,uid)){
@@ -922,10 +969,9 @@ async function loadEventRoom(force=false){
  const room={id:event.id,revision:event.revision,url:'',loading:true,error:false};
  state.eventRoom=room;render();
  try{
-   const snapshot=await firebase.getDoc(ref('events',event.id,'private','room'));
+   const url=await getEventRoomUrl(event.id);
    if(state.eventRoom!==room||me()!==uid)return;
-   const url=snapshot.data()?.url||'';
-   room.url=validEventRoomUrl(url)?url:'';
+   room.url=url;
    if(state.modal==='event-edit'&&state.drafts.get('event-edit-form')?.roomUrl===''){
      state.drafts.get('event-edit-form').roomUrl=room.url;
      const input=document.querySelector('#event-edit-form [name="roomUrl"]');
@@ -937,10 +983,13 @@ async function loadEventRoom(force=false){
    if(state.eventRoom===room&&state.selectedEvent===room.id&&['event-detail','event-edit'].includes(state.modal))render();
  }
 }
+function eventRoomLink(url){
+ return url?`<a class="btn btn-primary btn-small" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Entrar no encontro</a>`:'';
+}
 function renderEventRoom(event){
  if(!canReadEventRoom(event)||!event.attendees?.includes(me()))return '';
  const room=state.eventRoom?.id===event.id?state.eventRoom:null;
- if(room?.url)return `<a class="btn btn-primary btn-small" href="${esc(room.url)}" target="_blank" rel="noopener noreferrer">Entrar no encontro</a>`;
+ if(room?.url)return eventRoomLink(room.url);
  if(room?.error)return '<p class="tip">Não foi possível abrir o link da sala. <button class="text-action" data-action="retry-event-room">Tentar novamente</button></p>';
  return room?.loading?'<p class="tip">Carregando link da sala…</p>':'';
 }
@@ -1938,11 +1987,20 @@ function scheduleEventReminderRefresh(){
  if(!uid)return;
  const date=new Date();
  const midnight=new Date(date.getFullYear(),date.getMonth(),date.getDate()+1);
+ const time=date.toTimeString().slice(0,5);
+ const next=confirmedEventsToday(date).find(event=>isEventTime(event.time)&&event.time>=time);
+ let refresh=midnight.getTime();
+ if(next){
+   const [hour,minute]=next.time.split(':').map(Number);
+   const minutesUntilNext=(hour-date.getHours())*60+minute-date.getMinutes();
+   refresh=date.getTime()+(minutesUntilNext+1)*60000-date.getSeconds()*1000-date.getMilliseconds();
+ }
  state.eventReminderTimer=setTimeout(()=>{
    if(me()!==uid)return;
    scheduleEventReminderRefresh();
+   loadHomeEventRooms();
    render();
- },midnight-date);
+ },Math.min(refresh,midnight.getTime())-date.getTime());
 }
 function captureDrafts(){
  document.querySelectorAll('form[data-draft]').forEach(f=>{
@@ -2061,6 +2119,7 @@ function setTab(tab){
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
  if(tab==='events')void loadPersonalHistory();
+ if(tab==='home')loadHomeEventRooms();
  window.scrollTo({top:0,behavior:'instant'});
 }
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
@@ -2930,7 +2989,7 @@ document.addEventListener('click',async(event)=>{
 document.addEventListener('keydown',handleDialogKey);
 document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState==='visible')void syncNotificationReads();
- if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();void loadPersonalHistory();render();}
+ if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();scheduleEventReminderRefresh();loadHomeEventRooms();void loadPersonalHistory();render();}
  void markOpenConversationRead();
 });
 document.addEventListener('change',(event)=>{
