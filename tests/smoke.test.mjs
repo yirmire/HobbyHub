@@ -785,6 +785,12 @@ test('a resumed feedback notice opens the correct case and is marked read', asyn
   assert.match(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise do seu feedback/);
   await vm.runInContext("onAction({dataset:{action:'open-notification',id:'feedback-resumed:reopened:20'}})",context);
   assert.match(vm.runInContext('renderModal()',context),/Em análise[\s\S]*Envio retomado/);
+  assert.match(vm.runInContext('renderModal()',context),/Complementar feedback/);
+  vm.runInContext("state.feedbackSupplements.entries=[{message:'Celular <teste>',createdAt:{toMillis:()=>20}}]",context);
+  assert.match(vm.runInContext('renderModal()',context),/Celular &lt;teste&gt;/);
+  vm.runInContext("state.myProductFeedback[1].status='resolved'",context);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Complementar feedback/);
+  assert.match(vm.runInContext('renderModal()',context),/Celular &lt;teste&gt;/);
   assert.equal(vm.runInContext("state.notificationReads.has('feedback-resumed:reopened:20')",context),true);
   assert.doesNotMatch(vm.runInContext('renderNotifications()',context),/A equipe retomou a análise/);
 });
