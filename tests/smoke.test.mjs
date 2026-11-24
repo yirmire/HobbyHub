@@ -1073,6 +1073,33 @@ test('followed posts can filter updates and mark only that conversation read', a
   assert.equal(vm.runInContext("state.followedPosts.has('new')",context),true);
 });
 
+test('saved search matches text, author and community and combines with unread followed posts', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='saved';
+    state.groups=[{id:'group',name:'Fotografia Analógica'}];
+    state.posts=[{id:'match',content:'Dicas de exposição',userName:'João',groupId:'group'},
+      {id:'quiet',content:'Lentes antigas',userName:'João',groupId:'group'},
+      {id:'other',content:'Trilha de montanha',userName:'Ana'}];
+    state.savedIds=['match','other'];state.followedPosts.set('match',100);state.followedPosts.set('quiet',100);
+    state.followedPostWatches.set('match',{entries:[{id:'reply',userId:'owner',createdAt:101}]});
+  `,context);
+  const search=value=>handlers.input({target:{id:'saved-search',value}});
+  search('  JOAO   fotografia exposicao ');
+  assert.match(vm.runInContext('renderSaved()',context),/Dicas de exposição/);
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/Trilha de montanha/);
+  await vm.runInContext("onAction({dataset:{action:'saved-view',value:'following'}})",context);
+  search('fotografia');
+  assert.match(vm.runInContext('renderSaved()',context),/Lentes antigas/);
+  await vm.runInContext("onAction({dataset:{action:'followed-posts-filter',value:'unread'}})",context);
+  assert.doesNotMatch(vm.runInContext('renderSaved()',context),/Lentes antigas/);
+  search('lentes');
+  assert.match(vm.runInContext('renderSaved()',context),/Nenhuma publicação encontrada/);
+  await vm.runInContext("onAction({dataset:{action:'clear-saved-search'}})",context);
+  assert.match(vm.runInContext('renderSaved()',context),/Dicas de exposição/);
+  assert.equal(vm.runInContext('state.followedPostsFilter',context),'unread');
+});
+
 test('post drafts are scoped by account and destination and require a choice on reopening', async () => {
   const context=appContext(),stored=new Map();
   context.window.location={hash:''};
