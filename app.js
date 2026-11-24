@@ -63,7 +63,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -286,6 +286,7 @@ async function init() {
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.expandedCommentReplies.clear();
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
@@ -1830,8 +1831,14 @@ function renderCommentThreads(belongsToGroup,canModerate){
    if(!byParent.has(comment.parentId))byParent.set(comment.parentId,[]);
    byParent.get(comment.parentId).push(comment);
  }
- const replies=parent=>`<div style="margin-left:16px;border-left:1px solid var(--line);padding-left:10px" aria-label="Respostas">
-   ${byParent.get(parent).map(item=>renderPostComment(item,belongsToGroup,canModerate)).join('')}</div>`;
+ const replies=parent=>{
+   const entries=byParent.get(parent),canCollapse=entries.length>=3;
+   const expanded=!canCollapse||state.expandedCommentReplies.has(parent);
+   const regionId='comment-replies-'+esc(parent);
+   return `${canCollapse?`<button class="text-action" data-action="toggle-comment-replies" data-id="${esc(parent)}" aria-controls="${regionId}" aria-expanded="${expanded}">${expanded?'Recolher respostas':`Ver ${entries.length} respostas`}</button>`:''}
+   <div id="${regionId}" style="margin-left:16px;border-left:1px solid var(--line);padding-left:10px" aria-label="Respostas" ${expanded?'':'hidden'}>
+   ${expanded?entries.map(item=>renderPostComment(item,belongsToGroup,canModerate)).join(''):''}</div>`;
+ };
  return state.comments.map(comment=>{
    if(!comment.parentId)return renderPostComment(comment,belongsToGroup,canModerate)+(byParent.has(comment.id)?replies(comment.id):'');
    if(!roots.has(comment.parentId)&&byParent.get(comment.parentId)[0]===comment)return '<p class="tip">Comentário original indisponível.</p>'+replies(comment.parentId);
@@ -2243,6 +2250,7 @@ function clearContentLink(){
 function closeModal(){
  state.commentEditor=null;
  state.commentReplyId=null;
+ state.expandedCommentReplies.clear();
  state.postEditor=null;
  state.pendingPostDraft=null;
  state.eventRoom=null;
@@ -2508,11 +2516,16 @@ function openComments(postId,focusCommentId=''){
  if(!state.posts.some(p=>p.id===postId))return;
  state.commentEditor=null;
  state.commentReplyId=null;
+ state.expandedCommentReplies.clear();
  if(state.commentUnsub)state.commentUnsub();
  state.selectedPost=postId;state.modal='comments';state.comments=[];
  state.commentUnsub=firebase.onSnapshot(col('posts',postId,'comments'),(snap)=>{
-   state.comments=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
-   if(focusCommentId&&state.selectedPost===postId&&state.modal==='comments'){
+   if(state.selectedPost!==postId)return;
+   state.comments=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+   const focused=focusCommentId&&state.modal==='comments'?state.comments.find(item=>item.id===focusCommentId):null;
+   if(focused?.parentId)state.expandedCommentReplies.add(focused.parentId);
+   render();
+   if(focused){
      const target=document.getElementById('post-comment-'+focusCommentId);
      if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});focusCommentId='';}
    }
@@ -3078,6 +3091,12 @@ async function onAction(btn) {
   },'updatingBlock');return;
   case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
   case 'comments':openComments(id);return;
+  case 'toggle-comment-replies':
+    if(state.modal==='comments'&&state.comments.filter(comment=>comment.parentId===id).length>=3){
+      if(!state.expandedCommentReplies.delete(id))state.expandedCommentReplies.add(id);
+      render();
+    }
+    return;
   case 'reply-to-comment':
     if(state.modal==='comments'&&!state.busy&&me()&&state.comments.some(item=>item.id===id&&!item.parentId)){
       state.commentReplyId=id;render();document.getElementById('comment-text')?.focus();
@@ -3541,7 +3560,10 @@ document.addEventListener('submit',async(event)=>{
     const group=state.groups.find(item=>item.id===state.invitedGroupId);
     if(group?.pinnedPostId===postId)state.invitedGroupId=null;
     clearSubmittedDraft(form.id,form.dataset.draftKey,'text',data.text);
-    if(state.selectedPost===postId&&state.commentReplyId===parentId)state.commentReplyId=null;
+    if(state.selectedPost===postId&&state.modal==='comments'){
+      if(parentId)state.expandedCommentReplies.add(parentId);
+      if(state.commentReplyId===parentId)state.commentReplyId=null;
+    }
     showToast(parent?'Resposta publicada!':'Comentário publicado!');
   });return;
   case 'message-form':await attempt(async()=>{
