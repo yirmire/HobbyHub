@@ -63,7 +63,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, selectedPost:null, postEditor:null, selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, selectedPost:null, postEditor:null, commentEditor:null, selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -285,7 +285,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
+      state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
       state.eventFormat='';state.eventRoom=null;
@@ -1803,6 +1803,24 @@ function renderProductNews(){
  <button class="text-action" data-action="${esc(item.action)}">${esc(item.label)}</button>
  </article>`).join('')}</div>`);
 }
+function renderPostComment(comment,belongsToGroup,canModerate){
+ const id=esc(comment.id),own=Boolean(me()&&comment.userId===me());
+ const editor=own&&state.commentEditor?.id===comment.id?state.commentEditor:null;
+ return `<div class="comment">${avatar({avatar:member(comment.userId)?.avatar||'💬'})}
+ <div class="comment-body"><strong>${esc(member(comment.userId)?.name||comment.userName||'Pessoa')}</strong>
+ ${editor?.editing?`<form id="edit-comment-form" data-draft="true" data-draft-key="edit-comment:${esc(state.selectedPost)}:${id}" class="form-stack">
+ <label class="field">Texto do comentário<textarea id="edit-comment-text" class="textarea" name="text" required maxlength="800">${esc(comment.text)}</textarea></label>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="text-action" data-action="close-comment-options">Cancelar</button>
+ <button type="submit" class="btn btn-primary btn-small" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`:`<p>${esc(comment.text)}</p>`}
+ <small>${when(comment.createdAt)}${comment.editedAt?' · Editado':''}</small>
+ ${belongsToGroup&&!own?` <button class="text-action" data-action="report-group-comment" data-id="${id}">Denunciar comentário</button>`:''}
+ ${editor&&!editor.editing?`<div class="toggle-row" style="flex-wrap:wrap">
+ <button class="text-action" data-action="edit-comment" data-id="${id}">Editar comentário</button>
+ <button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button></div>`:''}</div>
+ ${own?`<button class="post-action" data-action="comment-options" data-id="${id}" aria-label="Opções do comentário" aria-expanded="${Boolean(editor)}">⋯</button>`
+ :canModerate?`<button data-action="moderate-comment" data-id="${id}" aria-label="Remover comentário com motivo">${icon('trash')}</button>`:''}
+ </div>`;
+}
 function renderModal() {
  if(state.modal==='post-options'||state.modal==='edit-post'){
    const post=state.posts.find(item=>item.id===state.postEditor?.id&&item.userId===me());
@@ -2002,7 +2020,7 @@ function renderModal() {
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
  return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${recapEventButton(post)}</div>
- <div class="comment-list">${state.comments.length?state.comments.map(c=>`<div class="comment">${avatar({avatar:member(c.userId)?.avatar||'💬'})}<div class="comment-body"><strong>${esc(member(c.userId)?.name||c.userName||'Pessoa')}</strong><p>${esc(c.text)}</p><small>${when(c.createdAt)}</small>${belongsToGroup&&c.userId!==me()?` <button class="text-action" data-action="report-group-comment" data-id="${esc(c.id)}">Denunciar comentário</button>`:''}</div>${c.userId===me()||canModerate?`<button data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${esc(c.id)}" aria-label="${canModerate?'Remover comentário com motivo':'Excluir comentário'}">${icon('trash')}</button>`:''}</div>`).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
+ <div class="comment-list">${state.comments.length?state.comments.map(comment=>renderPostComment(comment,belongsToGroup,canModerate)).join(''):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}`)}" class="form-stack"><div class="field"><textarea class="textarea" style="min-height:85px" name="text" required maxlength="800" placeholder="Escreva um comentário acolhedor..."></textarea></div><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Enviar comentário</button></form>`);
  }
  if(state.modal==='quiz'){
@@ -2201,6 +2219,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.commentEditor=null;
  state.postEditor=null;
  state.pendingPostDraft=null;
  state.eventRoom=null;
@@ -2464,6 +2483,7 @@ function downloadCalendar(file,name){
 }
 function openComments(postId){
  if(!state.posts.some(p=>p.id===postId))return;
+ state.commentEditor=null;
  if(state.commentUnsub)state.commentUnsub();
  state.selectedPost=postId;state.modal='comments';state.comments=[];
  state.commentUnsub=firebase.onSnapshot(col('posts',postId,'comments'),(snap)=>{
@@ -3152,7 +3172,19 @@ async function onAction(btn) {
       }
       showToast('Publicação excluída.');
     });return;
-  case 'delete-comment':if(!confirm('Excluir este comentário?'))return;
+  case 'comment-options':
+    if(state.modal!=='comments'||state.busy||!me()||!state.comments.some(item=>item.id===id&&item.userId===me()))return;
+    state.commentEditor=state.commentEditor?.id===id?null:{id,editing:false};
+    render();return;
+  case 'edit-comment':
+    if(state.modal!=='comments'||state.busy||state.commentEditor?.id!==id||!state.comments.some(item=>item.id===id&&item.userId===me()))return;
+    state.drafts.delete('edit-comment:'+state.selectedPost+':'+id);
+    state.commentEditor.editing=true;
+    render();document.getElementById('edit-comment-text')?.focus();return;
+  case 'close-comment-options':
+    if(state.modal==='comments'&&!state.busy){state.commentEditor=null;render();}
+    return;
+  case 'delete-comment':if(state.modal!=='comments'||!state.comments.some(item=>item.id===id&&item.userId===me())||!confirm('Excluir este comentário?'))return;
     await attempt(async()=>{await firebase.deleteDoc(ref('posts',state.selectedPost,'comments',id));showToast('Comentário excluído.');});return;
   case 'report-post':openReport('post',id);return;
   case 'report-group-comment':openReport('comment',id);return;
@@ -3233,6 +3265,17 @@ document.addEventListener('submit',async(event)=>{
       catch(error){state.pendingSignup=null;throw error;}
       showToast('Conta criada! Seja bem-vindo ao HobbyHub.');
     }
+  });return;
+  case 'edit-comment-form':await attempt(async()=>{
+    const editor=state.commentEditor,postId=state.selectedPost,uid=me(),text=val('text');
+    const comment=state.comments.find(item=>item.id===editor?.id&&item.userId===uid);
+    if(!uid||!postId||!comment||state.modal!=='comments'||!editor.editing||!text||text.length>800)return;
+    if(text!==comment.text){
+      await firebase.updateDoc(ref('posts',postId,'comments',comment.id),{text,editedAt:firebase.serverTimestamp()});
+      if(me()!==uid)return;
+      showToast('Comentário atualizado.');
+    }
+    if(state.commentEditor===editor&&state.selectedPost===postId)state.commentEditor=null;
   });return;
   case 'edit-post-form':await attempt(async()=>{
     const editor=state.postEditor,uid=me(),content=val('content');
