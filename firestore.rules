@@ -173,9 +173,10 @@ service cloud.firestore {
       }
       match /notificationSettings/main {
         function validSettings(data) {
-          return data.keys().hasOnly(['polls','bulletins','savedEvents','interactions'])
+          return data.keys().hasOnly(['polls','bulletins','savedEvents','interactions','eventReminders'])
             && data.get('polls', true) is bool && data.get('bulletins', true) is bool
-            && data.get('savedEvents', true) is bool && data.get('interactions', true) is bool;
+            && data.get('savedEvents', true) is bool && data.get('interactions', true) is bool
+            && data.get('eventReminders','eve') in ['eve','day','both','off'];
         }
         allow get: if isMe(uid);
         allow create, update: if isMe(uid) && validSettings(request.resource.data);
