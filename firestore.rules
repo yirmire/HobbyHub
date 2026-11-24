@@ -988,6 +988,9 @@ service cloud.firestore {
     }
 
     // Todos os demais caminhos são negados por padrão.
+    match /{parent=**}/comments/{commentId} {
+      allow list: if isMe(resource.data.userId) && request.query.limit <= 30;
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }

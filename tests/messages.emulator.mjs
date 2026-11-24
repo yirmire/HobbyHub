@@ -467,6 +467,18 @@ const editedComment=(await request(other,'GET',editableComment,200)).fields;
 assert.equal(editedComment.text.stringValue,'Comentário corrigido');
 assert.equal(editedComment.createdAt.integerValue,'100');
 assert.ok(editedComment.editedAt.timestampValue);
+async function myCommentQuery(actor,authorId,limit,expected){
+  const response=await fetch(`http://${storeHost}/v1/${databasePath}/documents:runQuery`,{
+    method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${actor.idToken}`},
+    body:JSON.stringify({structuredQuery:{from:[{collectionId:'comments',allDescendants:true}],
+      where:{fieldFilter:{field:{fieldPath:'userId'},op:'EQUAL',value:str(authorId)}},
+      orderBy:[{field:{fieldPath:'createdAt'},direction:'DESCENDING'}],limit}})});
+  assert.equal(response.status,expected);
+  return response.json();
+}
+assert.ok((await myCommentQuery(recipient,recipient.localId,30,200)).some(row=>row.document?.name===documents+editableComment));
+await myCommentQuery(sender,recipient.localId,30,403);
+await myCommentQuery(recipient,recipient.localId,31,403);
 const replyPath=editable+'/comments/reply';
 const replyWrite={update:{name:documents+replyPath,fields:{
   userId:str(sender.localId),text:str('Resposta de teste'),createdAt:{integerValue:'200'},parentId:str('original')
