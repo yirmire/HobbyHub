@@ -383,11 +383,12 @@ const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
 const onlineEvent=events+'/online-test',roomPath=onlineEvent+'/private/room';
-const online={...standalone,format:str('online'),location:str('Online')};
+const online={...standalone,format:str('online'),location:str('Online'),timeZone:str('America/Manaus')};
 const roomFields={url:str('https://meet.example.test/sala'),ownerId:str(sender.localId)};
 const onlineCreate={update:{name:documents+onlineEvent,fields:online},currentDocument:{exists:false}};
 const roomCreate={update:{name:documents+roomPath,fields:roomFields}};
 await moderate(sender,[onlineCreate],403);
+await moderate(sender,[{...onlineCreate,update:{...onlineCreate.update,fields:{...online,timeZone:str('Invalid/Zone')}}},roomCreate],403);
 await moderate(sender,[onlineCreate,{update:{name:documents+roomPath,fields:{...roomFields,url:str('http://meet.example.test/sala')}}}],403);
 await moderate(sender,[onlineCreate,roomCreate],200);
 assert.equal((await request(other,'GET',onlineEvent,200)).fields.roomUrl,undefined);
@@ -398,9 +399,9 @@ await request(recipient,'PATCH',roomPath+'?updateMask.fieldPaths=url',403,{url:s
 await request(recipient,'PATCH',onlineEvent+'?updateMask.fieldPaths=attendees',200,{attendees:organizerOnly});
 await request(recipient,'GET',roomPath,403);
 const switchToPhysical={update:{name:documents+onlineEvent,fields:{
-  format:str('in-person'),location:str('Praça'),revision:{integerValue:'1'},
-  previousSchedule:{mapValue:{fields:{date:online.date,time:online.time,endTime:str(''),location:online.location,revision:{integerValue:'1'}}}}
-}},updateMask:{fieldPaths:['format','location','revision','previousSchedule']}};
+  format:str('in-person'),location:str('Praça'),timeZone:str(''),revision:{integerValue:'1'},
+  previousSchedule:{mapValue:{fields:{date:online.date,time:online.time,endTime:str(''),timeZone:online.timeZone,location:online.location,revision:{integerValue:'1'}}}}
+}},updateMask:{fieldPaths:['format','location','timeZone','revision','previousSchedule']}};
 await moderate(sender,[switchToPhysical],403);
 await moderate(sender,[switchToPhysical,{delete:documents+roomPath}],200);
 await request(sender,'GET',roomPath,403);
