@@ -2048,8 +2048,9 @@ function renderPostComment(comment,belongsToGroup,canModerate){
  ${editor&&!editor.editing?`<div class="toggle-row" style="flex-wrap:wrap">
  <button class="text-action" data-action="toggle-saved-comment" data-id="${id}" ${state.busy?'disabled':''}>${saved?'Remover dos salvos':'Salvar comentário'}</button>
  ${own?`<button class="text-action" data-action="edit-comment" data-id="${id}">Editar comentário</button>`:''}
- ${own||canModerate?`<button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button>`:''}</div>`:''}</div>
+ ${own?`<button class="text-action" data-action="${canModerate?'moderate-comment':'delete-comment'}" data-id="${id}">${canModerate?'Remover comentário com motivo':'Excluir comentário'}</button>`:''}</div>`:''}</div>
  ${me()?`<button class="post-action" data-action="comment-options" data-id="${id}" aria-label="Opções do comentário" aria-expanded="${Boolean(editor)}">⋯</button>`:''}
+ ${!own&&canModerate?`<button data-action="moderate-comment" data-id="${id}" aria-label="Remover comentário com motivo">${icon('trash')}</button>`:''}
  </div>`;
 }
 function renderCommentThreads(belongsToGroup,canModerate){
