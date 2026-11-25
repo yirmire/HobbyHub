@@ -18,6 +18,27 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('saved search alerts match the agenda filters and do not duplicate hobby alerts', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const search={name:'Fotos na praça',query:'praça',hobby:'Fotografia',community:'g',
+      city:'city:petropolis',format:'in-person',alertSince:{toMillis:()=>100}};
+    state.savedEventSearches=new Map([['one',search],['two',search]]);
+    state.eventHobbyAlerts.set('Fotografia',{scope:'city',since:{toMillis:()=>100}});
+    state.profile={location:'Petrópolis'};
+    const event={date:'2099-05-01',time:'10:00',attendees:[],title:'Caminhada',location:'Praça',
+      city:'Petrópolis',hobby:'Fotografia',groupId:'g',createdBy:'other',createdAt:200,format:'in-person'};
+    state.events=[{...event,id:'match'},{...event,id:'older',createdAt:99},
+      {...event,id:'other-city',city:'Santos'},{...event,id:'different-hobby',hobby:'Leitura'}];
+  `,context);
+  const matching="notificationItems().filter(item=>item.type==='event-hobby-alert')";
+  assert.equal(vm.runInContext(matching+".map(item=>item.eventId).join(',')",context),'match');
+  assert.equal(vm.runInContext(matching+'[0].searchName',context),'Fotos na praça');
+  vm.runInContext('state.eventHobbyAlerts.clear();state.savedEventSearches.clear()',context);
+  assert.equal(vm.runInContext(matching+'.length',context),0);
+});
+
 test('named event searches restore all saved filters and can be removed', async () => {
   const context=appContext();
   vm.runInContext(`

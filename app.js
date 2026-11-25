@@ -747,15 +747,20 @@ function notificationItems(){
    }
  }
  const date=new Date(),day=localDateKey(date),nextDay=tomorrow(date);
+ const savedSearchAlerts=[...state.savedEventSearches.values()].filter(search=>search.alertSince)
+   .map(search=>({...search,query:norm(search.query),since:search.alertSince.toMillis()}));
  for(const event of state.events){
    const alert=state.eventHobbyAlerts.get(event.hobby);
    const since=alert?.since?.toMillis?.();
    const created=typeof event.createdAt==='number'?event.createdAt:event.createdAt?.toMillis?.();
-   if(Number.isFinite(since)&&created>=since&&event.cancelled!==true&&event.createdBy!==me()&&
-      !event.attendees?.includes(me())&&viewerEventSchedule(event).date>=day&&matchesHobbyEventAlert(event,alert)){
-     items.push({type:'event-hobby-alert',eventId:event.id,eventTitle:event.title,actorId:event.createdBy,
-       groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id});
-   }
+   if(!Number.isFinite(created)||event.cancelled===true||event.createdBy===me()||event.attendees?.includes(me()))continue;
+   if(!alert&&!savedSearchAlerts.length)continue;
+   if(viewerEventSchedule(event).date<day)continue;
+   const group=state.groups.find(item=>item.id===event.groupId);
+   const search=savedSearchAlerts.find(item=>created>=item.since&&eventMatchesSearch(event,item,group));
+   if(!search&&!(Number.isFinite(since)&&created>=since&&matchesHobbyEventAlert(event,alert)))continue;
+   items.push({type:'event-hobby-alert',eventId:event.id,eventTitle:event.title,actorId:event.createdBy,
+     groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id,searchName:search?.name});
  }
  const reminders=state.notificationSettings.eventReminders||'eve';
  const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
@@ -855,7 +860,7 @@ function renderNotifications(){
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
-     'event-hobby-alert':'Novo encontro · '+item.eventTitle,
+     'event-hobby-alert':item.searchName?'Novo evento em '+item.searchName+' · '+item.eventTitle:'Novo encontro · '+item.eventTitle,
      'event-reminder':(item.onDay?'Hoje: ':'Amanhã: ')+item.eventTitle+(item.eventTime?' · às '+item.eventTime:''),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
@@ -1619,6 +1624,14 @@ function currentEventSearch(){
  return {query:state.eventSearch.trim(),hobby:state.eventHobby,community:state.eventCommunity,
    format:state.eventFormat,city:state.eventCityFilter};
 }
+function eventMatchesSearch(event,search,group){
+ if(search.hobby&&event.hobby!==search.hobby)return false;
+ if(search.community&&event.groupId!==search.community)return false;
+ if(search.format&&eventFormat(event)!==search.format)return false;
+ const city=search.city==='mine'?cityKey(myLocation()):search.city.slice(5);
+ if(search.city&&!eventMatchesCity(event,city,group))return false;
+ return !search.query||norm([event.title,event.description,event.location,event.city,group?.name,group?.location].join(' ')).includes(search.query);
+}
 function renderSavedEventSearches(){
  const entries=[...state.savedEventSearches.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
  const canSave=Object.values(currentEventSearch()).some(Boolean);
@@ -1626,6 +1639,7 @@ function renderSavedEventSearches(){
  ${!state.savedEventSearchesLoaded?'<p class="tip" role="status">Carregando buscas salvas…</p>':`
  ${entries.map(entry=>`<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
  <button type="button" class="btn btn-soft btn-small" data-action="apply-event-search" data-id="${esc(entry.id)}">${esc(entry.name)}</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="toggle-event-search-alert" data-id="${esc(entry.id)}" aria-pressed="${Boolean(entry.alertSince)}" ${state.busy?'disabled':''}>${entry.alertSince?'Aviso ligado':'Avisar sobre novos eventos'}</button>
  <button type="button" class="btn btn-outline btn-small" data-action="delete-event-search" data-id="${esc(entry.id)}" aria-label="Remover busca ${esc(entry.name)}" ${state.busy?'disabled':''}>Remover</button></div>`).join('')}
  ${!entries.length?'<p class="mini muted">Nenhuma busca salva.</p>':''}`}
  ${canSave?`<form id="save-event-search-form" class="form-stack" data-draft="true" data-draft-key="save-event-search-form">
@@ -1651,6 +1665,7 @@ function renderEvents(now=new Date()) {
  const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
  const cityFilter=state.eventCityFilter;
+ const search={...currentEventSearch(),query};
  const city=cityFilter==='mine'?cityKey(myLocation()):cityFilter.slice(5);
  const cityOptions=new Map();
  for(const event of state.events){
@@ -1665,11 +1680,7 @@ function renderEvents(now=new Date()) {
  const events=state.events.filter(event=>{
    const schedule=viewerEventSchedule(event);
    const group=communities.get(event.groupId);
-   if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
-   if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
-   if(state.eventFormat&&eventFormat(event)!==state.eventFormat)return false;
-   if(cityFilter&&!eventMatchesCity(event,city,group))return false;
-   if(query&&!norm([event.title,event.description,event.location,event.city,group?.name,group?.location].join(' ')).includes(query))return false;
+   if(!eventMatchesSearch(event,search,group))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(schedule.date>=localDateKey(days[0])&&schedule.date<=localDateKey(days[6])));
    if(eventFilter==='saved')return state.savedEventDates.has(event.id);
@@ -3975,6 +3986,14 @@ async function onAction(btn) {
     closeModal();
     return;
   }
+  case 'toggle-event-search-alert':await attempt(async()=>{
+    const uid=me(),entry=state.savedEventSearches.get(id);
+    if(!uid||state.modal!=='saved-event-searches'||!entry)return;
+    await firebase.updateDoc(ref('members',uid,'savedEventSearches',id),{
+      alertSince:entry.alertSince?firebase.deleteField():firebase.serverTimestamp()
+    });
+    if(me()===uid)showToast(entry.alertSince?'Aviso desligado.':'Aviso ativado.');
+  });return;
   case 'delete-event-search':await attempt(async()=>{
     const uid=me();
     if(!uid||state.modal!=='saved-event-searches'||!state.savedEventSearches.has(id))return;
