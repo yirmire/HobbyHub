@@ -87,7 +87,7 @@ const state = {
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
-  pinnedDirectThreads:[], directThreadFilter:'all', manualUnreadThreads:new Set(), archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
+  pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -400,7 +400,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
-      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.manualUnreadThreads.clear();state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
+      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
         if(me()!==user.uid)return;
@@ -1717,9 +1717,21 @@ function renderMessages() {
  const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
  const unreadOnly=state.directThreadFilter==='unread';
  const archiveOnly=state.directThreadFilter==='archived';
+ const query=norm(state.directThreadSearch);
  const threads=state.threads.filter(thread=>isArchivedDirectThread(thread.id)===archiveOnly&&
-   (!unreadOnly||unreadThread(thread.id))).sort(compareDirectThreads);
- return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
+   (!unreadOnly||unreadThread(thread.id))).sort(compareDirectThreads).flatMap(thread=>{
+     const peer=thread.participants?.find(id=>id!==me());
+     if(!peer)return [];
+     const profile=member(peer);
+     const name=profile?.name||thread.names?.[peer]||'Pessoa';
+     return !query||norm(name).includes(query)?[{thread,peer,profile,name}]:[];
+   });
+ return `<div class="card chat-shell">
+ <div style="grid-column:1/-1;min-width:0;padding:12px;border-bottom:1px solid var(--line)">
+ <label class="sr-only" for="direct-thread-search">Buscar conversas pelo nome</label>
+ <input class="input" style="width:100%" id="direct-thread-search" type="search" maxlength="100" autocomplete="off" placeholder="Buscar conversas pelo nome" value="${esc(state.directThreadSearch)}">
+ </div>
+ <div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
  <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
  <div class="toggle-row" style="flex-wrap:wrap;margin:8px 0" role="group" aria-label="Filtrar conversas privadas">
@@ -1727,13 +1739,13 @@ function renderMessages() {
  <button class="btn ${unreadOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="unread" aria-pressed="${unreadOnly}">Não lidas</button>
  <button class="btn ${archiveOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="archived" aria-pressed="${archiveOnly}">Arquivadas</button>
  </div>
- ${archiveOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa arquivada.</p>':''}
- ${unreadOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa não lida.</p>':''}
- ${threads.map(t=>{
- const other=(t.participants||[]).find(id=>id!==me());if(!other)return '';
- const p=member(other),isActive=!community&&state.chatTarget?.uid===other;
+ ${query&&!threads.length?'<p class="mini muted" role="status">Nenhuma conversa encontrada neste filtro.</p>':''}
+ ${!query&&archiveOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa arquivada.</p>':''}
+ ${!query&&unreadOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa não lida.</p>':''}
+ ${threads.map(({thread:t,peer:other,profile:p,name})=>{
+ const isActive=!community&&state.chatTarget?.uid===other;
  const unread=unreadThread(t.id);
- return `<button class="chat-contact ${isActive?'active':''} ${unread?'chat-unread':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${state.pinnedDirectThreads.includes(t.id)?'<span aria-hidden="true">📌 </span><span class="sr-only">Fixada. </span>':''}${esc(short(p?.name||t.names?.[other]||'Pessoa',19))}</span>${unread?'<span class="unread-dot"><span class="sr-only">Não lida</span></span>':''}</button>`;
+ return `<button class="chat-contact ${isActive?'active':''} ${unread?'chat-unread':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${state.pinnedDirectThreads.includes(t.id)?'<span aria-hidden="true">📌 </span><span class="sr-only">Fixada. </span>':''}${esc(short(name,19))}</span>${unread?'<span class="unread-dot"><span class="sr-only">Não lida</span></span>':''}</button>`;
  }).join('')}
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
@@ -4050,6 +4062,7 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='direct-thread-search'){state.directThreadSearch=event.target.value;render();return;}
  if(event.target.id==='message-text'){saveCurrentPrivateMessageDraft(event.target.value);return;}
  if(event.target.id==='direct-search'&&state.directSearch){
    state.directSearch.query=event.target.value;
