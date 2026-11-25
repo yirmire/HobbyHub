@@ -17,6 +17,37 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the combined saved-message list fetches personal markers and searches names or message text', async () => {
+  const handlers={};
+  const context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.threads=[
+      {id:'archive_owner',participants:['owner','archive'],names:{archive:'João'}},
+      {id:'owner_peer',participants:['owner','peer'],names:{peer:'Lia'}}
+    ];
+    state.archivedDirectThreads.set('archive_owner',0);
+    firebase={
+      collection:(_db,...parts)=>parts.join('/'),
+      doc:(path,id)=>path+'/'+id,
+      getDocs:async path=>{
+        if(!path.includes('/members/owner/privateSaved/'))throw Error('wrong marker path');
+        return {docs:[{id:path.includes('archive_owner')?'first':'second'}]};
+      },
+      getDoc:async path=>({exists:()=>true,data:()=>path.endsWith('/first')
+        ?{text:'Endereço da feira',createdAt:1}:{text:'Confirmado',createdAt:2}})
+    };
+  `,context);
+  await vm.runInContext('openAllSavedDirectMessages()',context);
+  assert.match(vm.runInContext('renderMessages()',context),/Lia[\s\S]*João/);
+  handlers.input({target:{id:'all-saved-direct-search',value:'JOAO'}});
+  const byName=vm.runInContext('renderMessages()',context);
+  assert.match(byName,/data-id="first" data-value="archive"/);
+  assert.doesNotMatch(byName,/Confirmado/);
+  handlers.input({target:{id:'all-saved-direct-search',value:'endereco'}});
+  assert.match(vm.runInContext('renderMessages()',context),/Endereço da feira/);
+});
+
 test('saved private messages show only personal markers and can jump to their source', async () => {
   const context=appContext();
   vm.runInContext(`
