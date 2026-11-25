@@ -40,6 +40,22 @@ test('saved search news counts matching events and sorts them from the next date
   await vm.runInContext("onAction({dataset:{action:'back-saved-event-search-news'}})",context);
   assert.equal(vm.runInContext('state.modal',context),'saved-event-searches');
   assert.match(vm.runInContext('renderNotifications()',context),/data-action="view-saved-event-search-news" data-id="photo"/);
+  vm.runInContext(`
+    const photo=state.savedEventSearches.get('photo');
+    state.savedEventSearches.set('other',{...photo,id:'other',name:'Outra busca'});
+    showToast=()=>{};
+    firebase={doc:(_db,...segments)=>segments.join('/'),serverTimestamp:()=>({toMillis:()=>300}),
+      updateDoc:async(path,fields)=>{state.reviewedSearchPath=path;Object.assign(photo,fields);}};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'view-saved-event-search-news',id:'photo'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Marcar novidades como vistas/);
+  await vm.runInContext("onAction({dataset:{action:'review-saved-event-search-news'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Nenhum evento novo nesta busca/);
+  assert.match(vm.runInContext('state.reviewedSearchPath',context),/savedEventSearches\/photo$/);
+  assert.equal(vm.runInContext("savedEventSearchNews(state.savedEventSearches.get('other')).length",context),2);
+  vm.runInContext("state.events.push({...state.events[0],id:'new',title:'Publicado depois',createdAt:301})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Publicado depois/);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Encontro próximo|Encontro distante/);
 });
 
 test('saved search alerts match the agenda filters and do not duplicate hobby alerts', () => {
