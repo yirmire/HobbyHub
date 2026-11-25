@@ -82,7 +82,7 @@ const state = {
   groupRemoval:null, moderationHistory:null,
   moderationQueue:null, groupPolls:null, pollDetail:null,
   pollWatches:new Map(), pollNoticeTimer:null,
-  notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
+  notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, eventHobbyAlerts:new Map(), eventHobbyAlertsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
@@ -413,6 +413,9 @@ function startSession() {
     state.notificationReads=new Set(mergeNotificationReads(snapshot.data()?.keys,[...readSync.pending]));
   },'leitura dos avisos');
   void syncNotificationReads();
+  subscribe(col('members',me(),'eventHobbyAlerts'),snapshot=>{
+    state.eventHobbyAlerts=new Map(snapshot.docs.map(doc=>[doc.id,doc.data()]));state.eventHobbyAlertsLoaded=true;
+  },'alertas por hobby');
   subscribe(ref('members',me(),'notificationSettings','main'),snapshot=>{
     state.notificationSettings=snapshot.data()||{};state.notificationSettingsLoaded=true;
   },'preferências de notificações');
@@ -467,7 +470,7 @@ async function init() {
       state.eventFeedback=null;state.eventDiscussion=null;state.eventAnswerId=null;state.eventCheckins=null;
       state.groupRoles.clear();state.moderationSelection=null;
       state.groupRemoval=null;state.moderationHistory=null;
-      state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.groupPolls=null;state.pollDetail=null;
+      state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.eventHobbyAlerts.clear();state.eventHobbyAlertsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
       state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
@@ -636,7 +639,7 @@ const notificationCategoryByType=new Map([
  ['poll-open','polls'],['poll-result','polls'],['event-bulletin','bulletins'],
  ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['comment-reply','interactions'],['testimonial','interactions']
 ]);
-const communityNoticeTypes=new Set(['poll-open','poll-result','event-bulletin','saved-event-change']);
+const communityNoticeTypes=new Set(['event-hobby-alert','poll-open','poll-result','event-bulletin','saved-event-change']);
 function watchFollowedPosts(){
  const uid=me(),available=new Set(state.posts.map(post=>post.id));
  const watches=state.followedPostWatches;
@@ -691,6 +694,33 @@ function isNotificationRead(item){
    (['comment','comment-reply'].includes(item.type)&&state.notificationReads.has(followedCommentReadKey(item.postId,item.commentId)));
 }
 const eventReminderOptions={eve:'Na véspera',day:'No dia',both:'Na véspera e no dia',off:'Desligados'};
+const eventHobbyAlertScopes={city:'Presenciais na minha cidade',online:'Online',both:'Online e na minha cidade'};
+function matchesHobbyEventAlert(event,alert){
+ if(!alert)return false;
+ if(eventFormat(event)==='online')return alert.scope==='online'||alert.scope==='both';
+ if(alert.scope!=='city'&&alert.scope!=='both')return false;
+ const city=cityKey(myLocation());
+ if(!city||city==='brasil')return false;
+ const group=state.groups.find(item=>item.id===event.groupId);
+ return locate(group?.location)||String(event.location||'').split(/[,;\n]/).some(locate);
+}
+function renderEventHobbyAlerts(){
+ const choices=[...state.eventHobbyAlerts].sort(([a],[b])=>a.localeCompare(b,'pt-BR'));
+ return modalWrap('Alertas por hobby',`<form id="event-hobby-alert-form" data-draft="true" class="form-stack">
+ <p>Receba avisos no sino sobre novos encontros dos hobbies que escolher.</p>
+ <label class="field">Hobby${topicSelect()}</label>
+ <label class="field">Quais encontros<select class="select" name="scope" required>
+ ${Object.entries(eventHobbyAlertScopes).map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}
+ </select></label>
+ <p class="mini muted">Cidade do perfil: ${esc(myLocation())}. Para avisos presenciais, a cidade deve constar no local do encontro ou na comunidade.</p>
+ <button type="submit" class="btn btn-primary" ${!state.eventHobbyAlertsLoaded||state.busy?'disabled':''}>Salvar alerta</button>
+ ${state.eventHobbyAlertsLoaded&&!choices.length?'<p class="mini muted">Nenhum alerta configurado.</p>':''}
+ ${choices.map(([hobby,alert])=>`<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
+ <div><strong>${esc(hobby)}</strong><p class="mini muted">${esc(eventHobbyAlertScopes[alert.scope])}</p></div>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline btn-small" data-action="edit-event-hobby-alert" data-id="${esc(hobby)}">Editar</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="remove-event-hobby-alert" data-id="${esc(hobby)}" ${state.busy?'disabled':''}>Desligar</button></div></div>`).join('')}
+ </form>`);
+}
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
  const directComments=new Set(state.notificationSettings.interactions===false?[]:state.notifications
@@ -703,6 +733,16 @@ function notificationItems(){
    }
  }
  const date=new Date(),day=localDateKey(date),nextDay=tomorrow(date);
+ for(const event of state.events){
+   const alert=state.eventHobbyAlerts.get(event.hobby);
+   const since=alert?.since?.toMillis?.();
+   const created=typeof event.createdAt==='number'?event.createdAt:event.createdAt?.toMillis?.();
+   if(Number.isFinite(since)&&created>=since&&event.cancelled!==true&&event.createdBy!==me()&&
+      !event.attendees?.includes(me())&&viewerEventSchedule(event).date>=day&&matchesHobbyEventAlert(event,alert)){
+     items.push({type:'event-hobby-alert',eventId:event.id,eventTitle:event.title,actorId:event.createdBy,
+       groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id});
+   }
+ }
  const reminders=state.notificationSettings.eventReminders||'eve';
  const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
  const latestNews=productNews[0];
@@ -801,6 +841,7 @@ function renderNotifications(){
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
      'event-bulletin':'Recado do organizador · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
      'event-seat':'Uma vaga está reservada para você · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento'),
+     'event-hobby-alert':'Novo encontro · '+item.eventTitle,
      'event-reminder':(item.onDay?'Hoje: ':'Amanhã: ')+item.eventTitle+(item.eventTime?' · às '+item.eventTime:''),
      'saved-event-change':(item.event?.cancelled===true?'Evento salvo cancelado · ':'Seu evento salvo mudou · ')+item.event?.title,
      'confirmed-event-cancellation':'Evento confirmado cancelado · '+item.event?.title,
@@ -809,7 +850,7 @@ function renderNotifications(){
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-hobby-alert':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -1564,8 +1605,9 @@ function renderEvents(now=new Date()) {
  const time=now.toTimeString().slice(0,5);
  const eventFilter=state.eventFilter;
  const filters=`<div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['sent-invites','Convites enviados'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
- if(eventFilter==='invites')return filters+renderReceivedEventInvitations();
- if(eventFilter==='sent-invites')return filters+renderSentEventInvitations();
+ const alerts='<div style="margin:0 0 12px"><button type="button" class="btn btn-outline btn-small" data-action="event-hobby-alerts">Alertas por hobby</button></div>';
+ if(eventFilter==='invites')return alerts+filters+renderReceivedEventInvitations();
+ if(eventFilter==='sent-invites')return alerts+filters+renderSentEventInvitations();
  const weekly=eventFilter==='mine'&&state.eventAgendaView==='week';
  const days=weekly?eventWeek(now,state.eventWeekOffset):[];
  const query=norm(state.eventSearch);
@@ -1604,7 +1646,7 @@ function renderEvents(now=new Date()) {
    :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- ${filters}
+ ${alerts}${filters}
  ${eventFilter==='mine'?`<div class="filters" role="group" aria-label="Visualização dos meus eventos">${[['list','Lista'],['week','Semana']].map(([id,label])=>`<button id="event-agenda-${id}" class="filter ${state.eventAgendaView===id?'active':''}" data-action="event-agenda-view" data-value="${id}" aria-pressed="${state.eventAgendaView===id}">${label}</button>`).join('')}</div>`:''}
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
@@ -2884,6 +2926,7 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='event-hobby-alerts')return renderEventHobbyAlerts();
  if(state.modal==='event-chat-share')return renderEventChatShare();
  if(state.modal==='delete-direct-message'){
    const message=state.directMessages.find(item=>item.id===state.directMessageEditor?.id);
@@ -4161,6 +4204,22 @@ async function onAction(btn) {
   }
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
+  case 'event-hobby-alerts':openModal('event-hobby-alerts');return;
+  case 'edit-event-hobby-alert':{
+    const form=document.getElementById('event-hobby-alert-form'),alert=state.eventHobbyAlerts.get(id);
+    if(form&&alert){
+      form.elements.hobby.value=id;
+      form.elements.scope.value=alert.scope;
+      form.elements.scope.focus();
+    }
+    return;
+  }
+  case 'remove-event-hobby-alert':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.modal!=='event-hobby-alerts'||!state.eventHobbyAlerts.has(id))return;
+    await firebase.deleteDoc(ref('members',uid,'eventHobbyAlerts',id));
+    if(me()===uid)showToast('Alerta desligado.');
+  });return;
   case 'set-event-reminders':await attempt(async()=>{
     const uid=me(),value=btn.dataset.value;
     if(!uid||!state.notificationSettingsLoaded||state.modal!=='notification-settings'||
@@ -4202,7 +4261,7 @@ async function onAction(btn) {
       if(item){item.focus({preventScroll:true});item.scrollIntoView({block:'center'});}
       return;
     }
-    if(['event-seat','event-reminder','saved-event-change','confirmed-event-cancellation'].includes(notice.type)){openEventDetail(notice.eventId);return;}
+    if(['event-seat','event-reminder','event-hobby-alert','saved-event-change','confirmed-event-cancellation'].includes(notice.type)){openEventDetail(notice.eventId);return;}
     if(notice.type==='event-answer'){
       openEventDetail(notice.eventId,notice.questionId);return;
     }
@@ -4957,6 +5016,14 @@ document.addEventListener('submit',async(event)=>{
     const name=val('name');if(name.length<3)return;
     await firebase.addDoc(col('groups'),{name,hobby:val('hobby'),description:val('description'),location:val('location'),createdBy:me(),members:[me()],createdAt:now()});
     closeModal();state.groupView='mine';setTab('groups');showToast('Comunidade criada com sucesso!');
+  });return;
+  case 'event-hobby-alert-form':await attempt(async()=>{
+    const uid=me(),hobby=val('hobby'),scope=val('scope');
+    if(!uid||state.modal!=='event-hobby-alerts'||!state.eventHobbyAlertsLoaded||
+       !TOPICS.some(topic=>topic.name===hobby)||!Object.hasOwn(eventHobbyAlertScopes,scope))return;
+    if(state.eventHobbyAlerts.get(hobby)?.scope===scope)return;
+    await firebase.setDoc(ref('members',uid,'eventHobbyAlerts',hobby),{scope,since:firebase.serverTimestamp()});
+    if(me()===uid)showToast('Alerta salvo.');
   });return;
   case 'event-form':await attempt(async()=>{
     const groupId=state.eventGroupId;

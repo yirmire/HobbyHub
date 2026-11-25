@@ -46,6 +46,25 @@ await request(sender, 'POST', `dm_threads?documentId=${threadId}`, 200, {
 });
 await request(recipient, 'GET', thread, 200);
 await request(other, 'GET', thread, 403);
+const hobbyAlertPath=`public/data/members/${recipient.localId}/eventHobbyAlerts/Fotografia`;
+async function saveHobbyAlert(user,scope,expected){
+  const response=await fetch(base.split('/documents/')[0]+'/documents:commit',{
+    method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
+    body:JSON.stringify({writes:[{
+      update:{name:`${base.split('/v1/')[1]}/${hobbyAlertPath}`,fields:{scope:{stringValue:scope}}},
+      updateTransforms:[{fieldPath:'since',setToServerValue:'REQUEST_TIME'}]
+    }]})
+  });
+  assert.equal(response.status,expected,await response.text());
+}
+await saveHobbyAlert(recipient,'city',200);
+await saveHobbyAlert(recipient,'online',200);
+await saveHobbyAlert(recipient,'anywhere',403);
+await saveHobbyAlert(sender,'both',403);
+await request(sender,'GET',hobbyAlertPath,403);
+await request(recipient,'GET',hobbyAlertPath,200);
+await request(recipient,'DELETE',hobbyAlertPath,200);
 
 const muted = `public/data/members/${sender.localId}/privateMuted/${threadId}`;
 const muteMarker = {muted:{booleanValue:true}};
