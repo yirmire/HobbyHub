@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, directSearch:null, directLinksLimit:0, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -131,6 +131,7 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ state.allSavedDirect=null;
  stopDirectSavedMessages();
  for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
  for(const unsubscribe of state.inboundUnsubs.values())unsubscribe();
@@ -220,7 +221,7 @@ async function markDirectThreadUnread(){
 }
 async function markOpenConversationRead() {
  const uid=me(),peer=state.chatTarget?.uid;
- if(!uid||!peer||state.chatMode!=='direct'||state.tab!=='messages'||state.modal||document.visibilityState!=='visible')return;
+ if(!uid||!peer||state.chatMode!=='direct'||state.tab!=='messages'||state.modal||state.allSavedDirect||document.visibilityState!=='visible')return;
  const id=threadId(uid,peer);
  const lastReadAt=state.directMessages.reduce((latest,message)=>message.senderId!==uid?Math.max(latest,message.createdAt||0):latest,0);
  const pending=state.pendingReads;
@@ -1767,7 +1768,66 @@ function compareDirectThreads(a,b){
  return Number(unreadThread(b.id))-Number(unreadThread(a.id))||
    (state.latestInboundAt.get(b.id)||b.createdAt||0)-(state.latestInboundAt.get(a.id)||a.createdAt||0);
 }
+async function openAllSavedDirectMessages(){
+ const uid=me();
+ if(!uid)return;
+ const panel={entries:[],query:'',limit:25,loading:true,partial:false};
+ state.allSavedDirect=panel;
+ render();
+ const threads=state.threads.flatMap(thread=>{
+   const peer=thread.participants?.find(id=>id!==uid);
+   return peer?[{thread,peer}]:[];
+ });
+ const active=()=>me()===uid&&state.allSavedDirect===panel;
+ const markers=[];
+ for(let offset=0;offset<threads.length&&active();offset+=8){
+   await Promise.all(threads.slice(offset,offset+8).map(async({thread,peer})=>{
+     try{
+       const snapshot=await firebase.getDocs(col('members',uid,'privateSaved',thread.id,'messages'));
+       const name=member(peer)?.name||thread.names?.[peer]||'Pessoa';
+       for(const doc of snapshot.docs)markers.push({threadId:thread.id,peer,name,id:doc.id});
+     }catch{panel.partial=true;}
+   }));
+ }
+ for(let offset=0;offset<markers.length&&active();offset+=8){
+   await Promise.all(markers.slice(offset,offset+8).map(async marker=>{
+     try{
+       const snapshot=await firebase.getDoc(firebase.doc(directMessagesCol(marker.threadId),marker.id));
+       if(snapshot.exists()){
+         const {text,createdAt}=snapshot.data();
+         panel.entries.push({...marker,text,createdAt});
+       }
+     }catch{panel.partial=true;}
+   }));
+ }
+ if(!active())return;
+ panel.entries.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)||a.id.localeCompare(b.id));
+ panel.loading=false;
+ render();
+}
+function renderAllSavedDirectMessages(panel){
+ const term=norm(panel.query);
+ const results=panel.entries.filter(entry=>!term||norm(entry.name).includes(term)||norm(entry.text).includes(term));
+ return `<section class="card form-stack" style="padding:16px" aria-labelledby="all-saved-direct-title">
+ <div class="toggle-row" style="flex-wrap:wrap;justify-content:space-between">
+ <h2 id="all-saved-direct-title">Mensagens salvas</h2>
+ <button type="button" class="btn btn-outline btn-small" data-action="close-all-saved-direct">Voltar às conversas</button>
+ </div>
+ <label class="sr-only" for="all-saved-direct-search">Buscar por nome ou palavra</label>
+ <input id="all-saved-direct-search" type="search" class="input" value="${esc(panel.query)}" maxlength="150" placeholder="Buscar por nome ou palavra">
+ ${panel.loading?'<p class="mini muted" role="status">Carregando mensagens salvas…</p>':`
+ ${panel.partial?'<p class="tip" role="status">Algumas mensagens salvas não puderam ser carregadas. <button type="button" class="text-action" data-action="open-all-saved-direct">Tentar novamente</button></p>':''}
+ ${!results.length&&!panel.partial?`<p class="mini muted" role="status">${term?'Nenhuma mensagem encontrada.':'Nenhuma mensagem privada salva.'}</p>`:''}
+ ${results.slice(0,panel.limit).map(entry=>`<article class="card" style="padding:12px;overflow-wrap:anywhere">
+ <strong>${esc(entry.name)}</strong>
+ <p>${esc(short(entry.text,180))}</p><p class="mini muted">${when(entry.createdAt)}</p>
+ <button type="button" class="btn btn-soft btn-small" data-action="open-all-saved-direct-message" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}" ${state.openingDirect?'disabled':''}>Ir à mensagem</button>
+ </article>`).join('')}
+ ${results.length>panel.limit?'<button type="button" class="btn btn-outline" data-action="more-all-saved-direct">Ver mais mensagens</button>':''}`}
+ </section>`;
+}
 function renderMessages() {
+ if(state.allSavedDirect)return renderAllSavedDirectMessages(state.allSavedDirect);
  const community=state.chatMode!=='direct';
  const global=state.chatMode==='global';
  const messages=community?state.messages.filter(m=>global?m.scope==='global':m.scope!=='global'&&locate(m.location)):state.directMessages;
@@ -1800,6 +1860,7 @@ function renderMessages() {
  <div style="grid-column:1/-1;min-width:0;padding:12px;border-bottom:1px solid var(--line)">
  <label class="sr-only" for="direct-thread-search">Buscar conversas pelo nome</label>
  <input class="input" style="width:100%" id="direct-thread-search" type="search" maxlength="100" autocomplete="off" placeholder="Buscar conversas pelo nome" value="${esc(state.directThreadSearch)}">
+ <button type="button" class="btn btn-soft btn-small" style="margin-top:8px" data-action="open-all-saved-direct">Mensagens salvas</button>
  </div>
  <div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
@@ -2884,7 +2945,7 @@ function closeModal(){
  state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){
- if(tab!=='messages'){state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directReactionPicker=null;}
+ if(tab!=='messages'){state.allSavedDirect=null;state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directReactionPicker=null;}
  if(tab!=='saved')state.savedSelection=null;
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
@@ -2899,7 +2960,7 @@ function returnFromPostEditor(){
  else closeModal();
 }
 function changeTheme(){state.dark=!state.dark;localStorage.setItem('hobbyhub-theme',state.dark?'dark':'light');render();}
-async function startDirect(uid){
+async function startDirect(uid,messageId=''){
  const sender=me();
  if(!sender||!uid||uid===sender)return;
  const p=member(uid);const id=threadId(sender,uid);
@@ -2918,6 +2979,7 @@ async function startDirect(uid){
    if(me()!==sender)return;
    stopDirectSavedMessages();
    if(state.messageUnsub)state.messageUnsub();
+   state.allSavedDirect=null;
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
    const replyTo=readPrivateMessageDraft(privateMessageDraftKey(uid))?.replyTo;
@@ -2933,7 +2995,11 @@ async function startDirect(uid){
    });
    state.messageUnsub=firebase.onSnapshot(directMessagesCol(id),(snap)=>{
      if(me()!==sender||state.chatTarget?.uid!==uid)return;
-     state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));render();
+     state.directMessages=snap.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+     if(messageId&&state.tab==='messages'&&!state.allSavedDirect&&state.directMessages.some(message=>message.id===messageId)){
+       showDirectMessage(messageId);
+       messageId='';
+     }else render();
      void markOpenConversationRead();
    },(error)=>{state.alerts=[`Falha ao carregar conversa privada: ${friendlyError(error)}`];render();});
  },'openingDirect','Esta conversa privada não está disponível no momento.');
@@ -3725,6 +3791,17 @@ async function onAction(btn) {
     await firebase.deleteDoc(ref('members',recipient,'testimonials',me()));
     await loadPersonTestimonials(recipient);
   });return;
+  case 'open-all-saved-direct':await openAllSavedDirectMessages();return;
+  case 'close-all-saved-direct':
+    state.allSavedDirect=null;render();
+    document.querySelector('[data-action="open-all-saved-direct"]')?.focus();
+    return;
+  case 'more-all-saved-direct':
+    if(state.allSavedDirect){state.allSavedDirect.limit+=25;render();}
+    return;
+  case 'open-all-saved-direct-message':
+    if(state.allSavedDirect?.entries.some(entry=>entry.id===id&&entry.peer===btn.dataset.value))await startDirect(btn.dataset.value,id);
+    return;
   case 'open-dm':await startDirect(id);return;
   case 'filter-direct-threads':
     state.directThreadFilter=['unread','archived'].includes(btn.dataset.value)?btn.dataset.value:'all';
@@ -4178,6 +4255,9 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='all-saved-direct-search'&&state.allSavedDirect){
+   state.allSavedDirect.query=event.target.value;state.allSavedDirect.limit=25;render();return;
+ }
  if(event.target.id==='direct-thread-search'){state.directThreadSearch=event.target.value;render();return;}
  if(event.target.id==='message-text'){saveCurrentPrivateMessageDraft(event.target.value);return;}
  if(event.target.id==='direct-search'&&state.directSearch){
