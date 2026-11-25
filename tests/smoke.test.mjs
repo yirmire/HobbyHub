@@ -1859,6 +1859,22 @@ test('post drafts are scoped by account and destination and require a choice on 
   assert.match(vm.runInContext('renderModal()',context),/id="post-form"/);
 });
 
+test('shared media renders direct HTTPS images and videos and survives a media-only draft', () => {
+  const context=appContext(),stored=new Map();
+  context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)};
+  const html=vm.runInContext(`
+    state.user={uid:'reader'};
+    const media={photoUrl:'https://example.test/photo.jpg',videoUrl:'https://example.test/video.mp4'};
+    savePostDraft({dataset:{draftKey:postDraftKey()},elements:{
+      content:{value:''},hobby:{value:'Arte'},format:{value:''},photoUrl:{value:media.photoUrl},videoUrl:{value:media.videoUrl}
+    }});
+    renderProfileMedia(media)+renderSharedMedia(readPostDraft(postDraftKey()),'na publicação');
+  `,context);
+  assert.equal((html.match(/<img src="https:\/\/example\.test\/photo\.jpg"/g)||[]).length,2);
+  assert.equal((html.match(/<video src="https:\/\/example\.test\/video\.mp4" controls playsinline/g)||[]).length,2);
+  assert.equal(vm.runInContext("renderSharedMedia({photoUrl:'https://user:pass@example.test/photo.jpg',videoUrl:'javascript:alert(1)'},'na publicação')",context),'');
+});
+
 test('event reminder preferences retain the default and can independently enable each day', async () => {
   const context=appContext();
   vm.runInContext(`
