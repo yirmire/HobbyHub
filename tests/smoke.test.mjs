@@ -27,16 +27,23 @@ test('the city filter prefers an explicit event city and still finds legacy venu
     state.events=[
       {...schedule,id:'explicit',title:'No parque',city:'São Paulo',location:'Parque'},
       {...schedule,id:'legacy',title:'Na biblioteca',location:'Biblioteca, São Paulo'},
-      {...schedule,id:'different',title:'Outra cidade',city:'Santos',location:'Espaço São Paulo'},
+      {...schedule,id:'different',title:'Outra cidade',city:'Santos',hobby:'Fotografia',location:'Espaço São Paulo'},
+      {...schedule,id:'different-hobby',title:'Encontro de leitura',city:'Santos',hobby:'Leitura',location:'Biblioteca'},
       {...schedule,id:'remote',title:'Sessão online',format:'online',location:'Online'}
     ];
   `,context);
-  handlers.change({target:{id:'event-city-only',checked:true}});
+  handlers.change({target:{id:'event-city-filter',value:'mine'}});
   const agenda=vm.runInContext('renderEvents()',context);
   assert.match(agenda,/No parque/);
   assert.match(agenda,/Na biblioteca/);
   assert.match(agenda,/Parque, São Paulo/);
   assert.doesNotMatch(agenda,/Outra cidade|Sessão online/);
+  assert.match(agenda,/value="city:santos"[^>]*>Santos/);
+  handlers.change({target:{id:'event-city-filter',value:'city:santos'}});
+  handlers.change({target:{id:'event-hobby',value:'Fotografia'}});
+  const selected=vm.runInContext('renderEvents()',context);
+  assert.match(selected,/Outra cidade/);
+  assert.doesNotMatch(selected,/No parque|Na biblioteca|Encontro de leitura|Sessão online/);
   assert.equal(vm.runInContext("eventMatchesProfileCity(state.events[2],{location:'São Paulo'})",context),false);
   assert.match(vm.runInContext("eventFormatFields('in-person','Parque','','','São Paulo')",context),/name="city".*value="São Paulo"/);
 });
