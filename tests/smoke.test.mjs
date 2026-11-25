@@ -8,9 +8,10 @@ function appContext(handlers = {}) {
   const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
     .replace(/\binit\(\);\s*$/, '');
   const context = vm.createContext({
-    console, Date, URL, TextEncoder, setTimeout, clearTimeout, navigator: {},
+    console, Date, URL, URLSearchParams, TextEncoder, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
-    window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0 },
+    window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0,
+      location: new URL('https://example.test/HobbyHub/') },
     document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
   });
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
@@ -1907,6 +1908,27 @@ test('online event time zones preserve the same instant across local dates, conf
   context.expected=expected;
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).date`,context),vm.runInContext('localDateKey(expected)',context));
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
+});
+
+test('Google Calendar prefills the confirmed event and keeps the private room URL in HobbyHub', () => {
+  const context=appContext();
+  context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const event={id:'e',title:'Foto & vídeo',format:'online',date:'2099-05-07',time:'23:30',
+      timeZone:'America/Sao_Paulo',roomUrl:'https://private.example/join',attendees:['reader']};
+  `,context);
+  const html=vm.runInContext('googleCalendarButton(event)',context);
+  const url=new URL(html.match(/href="([^"]+)"/)[1].replaceAll('&amp;','&'));
+  assert.equal(url.origin,'https://calendar.google.com');
+  assert.equal(url.searchParams.get('action'),'TEMPLATE');
+  assert.equal(url.searchParams.get('text'),'Foto & vídeo');
+  assert.equal(url.searchParams.get('dates'),'20990508T023000Z/20990508T033000Z');
+  assert.equal(url.searchParams.get('location'),'Online');
+  assert.equal(url.searchParams.get('details'),'https://example.test/HobbyHub/#event=e');
+  assert.doesNotMatch(html,/private\.example/);
+  assert.equal(vm.runInContext('googleCalendarButton({...event,attendees:[]})',context),'');
+  assert.equal(vm.runInContext('googleCalendarButton({...event,cancelled:true})',context),'');
 });
 
 test('calendar data includes the clean event link and escapes user text', () => {

@@ -2716,7 +2716,7 @@ function renderModal() {
    return modalWrap(event.title,`${eventCard(event,false,true)}
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
-   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${eventCalendarButton(event)}</div>
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${eventCalendarButton(event)}${googleCalendarButton(event)}</div>
    ${renderEventRoom(event)}
    ${canExportEventCalendar(event)?'<p class="tip" style="margin-top:12px">Abra o arquivo .ics baixado para salvar o evento no seu calendário.</p>':''}
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
@@ -3332,6 +3332,22 @@ function canExportEventCalendar(event){
 }
 function eventCalendarButton(event){
  return canExportEventCalendar(event)?`<button class="btn btn-soft btn-small" data-action="event-calendar" data-id="${esc(event.id)}">${event.revision>0?'Baixar calendário atualizado':'Adicionar ao calendário'}</button>`:'';
+}
+function googleCalendarButton(event){
+ if(!canExportEventCalendar(event))return '';
+ const start=eventTimeInstant(event);
+ const end=eventEndTime(event)?eventTimeInstant(event,event.endTime):start+3600000;
+ if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start)return '';
+ const date=instant=>new Date(instant).toISOString().replace(/[-:]|\.\d{3}/g,'');
+ const link=new URL('https://calendar.google.com/calendar/render');
+ link.search=new URLSearchParams({
+   action:'TEMPLATE',
+   text:event.title,
+   dates:`${date(start)}/${date(end)}`,
+   details:contentLink('event',event.id),
+   location:eventFormat(event)==='online'?'Online':event.location||''
+ }).toString();
+ return `<a class="btn btn-outline btn-small" href="${esc(link.href)}" target="_blank" rel="noopener noreferrer">Adicionar ao Google Agenda</a>`;
 }
 function downloadEventCalendar(event) {
  if(!hasCalendarSchedule(event)){
