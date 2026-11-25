@@ -67,7 +67,7 @@ const state = {
   savedComments:new Map(), savedCommentWatches:new Map(),
   myCommentActivity:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityOnly:false, eventRoom:null, homeEventRooms:new Map(),
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -459,7 +459,7 @@ async function init() {
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
-      state.eventFormat='';state.eventCityOnly=false;state.eventRoom=null;
+      state.eventFormat='';state.eventCityFilter='';state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
@@ -695,11 +695,13 @@ function isNotificationRead(item){
 }
 const eventReminderOptions={eve:'Na véspera',day:'No dia',both:'Na véspera e no dia',off:'Desligados'};
 const eventHobbyAlertScopes={city:'Presenciais na minha cidade',online:'Online',both:'Online e na minha cidade'};
-function eventMatchesProfileCity(event,group=state.groups.find(item=>item.id===event.groupId)){
- const city=cityKey(myLocation());
+function eventMatchesCity(event,city,group){
  if(eventFormat(event)==='online'||!city||city==='brasil')return false;
- if(typeof event.city==='string'&&event.city.trim())return locate(event.city);
- return locate(group?.location)||String(event.location||'').split(/[,;\n]/).some(locate);
+ if(typeof event.city==='string'&&event.city.trim())return cityKey(event.city)===city;
+ return cityKey(group?.location)===city||String(event.location||'').split(/[,;\n]/).some(part=>cityKey(part)===city);
+}
+function eventMatchesProfileCity(event,group=state.groups.find(item=>item.id===event.groupId)){
+ return eventMatchesCity(event,cityKey(myLocation()),group);
 }
 function eventLocationWithCity(event){
  const location=String(event.location||'').trim(),city=String(event.city||'').trim();
@@ -1625,14 +1627,25 @@ function renderEvents(now=new Date()) {
  const hobbies=[...new Set(state.events.map(event=>event.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
  const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
- const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat||state.eventCityOnly);
+ const cityFilter=state.eventCityFilter;
+ const city=cityFilter==='mine'?cityKey(myLocation()):cityFilter.slice(5);
+ const cityOptions=new Map();
+ for(const event of state.events){
+   if(eventFormat(event)==='online')continue;
+   const label=String(event.city||communities.get(event.groupId)?.location||'').trim();
+   const key=cityKey(label);
+   if(!key||['brasil','online','a combinar','a definir'].includes(key))continue;
+   if(!cityOptions.has(key)||event.city)cityOptions.set(key,label);
+ }
+ const sortedCities=[...cityOptions].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'));
+ const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat||cityFilter);
  const events=state.events.filter(event=>{
    const schedule=viewerEventSchedule(event);
    const group=communities.get(event.groupId);
    if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
    if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
    if(state.eventFormat&&eventFormat(event)!==state.eventFormat)return false;
-   if(state.eventCityOnly&&!eventMatchesProfileCity(event,group))return false;
+   if(cityFilter&&!eventMatchesCity(event,city,group))return false;
    if(query&&!norm([event.title,event.description,event.location,event.city,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(schedule.date>=localDateKey(days[0])&&schedule.date<=localDateKey(days[6])));
@@ -1663,7 +1676,10 @@ function renderEvents(now=new Date()) {
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <label class="field">Formato<select class="select" id="event-format-filter"><option value="">Todos os formatos</option>${eventFormatOptions(state.eventFormat)}</select></label>
- <label class="toggle-row"><input id="event-city-only" type="checkbox" ${state.eventCityOnly?'checked':''}>Na minha cidade</label>
+ <label class="field">Cidade<select id="event-city-filter" class="select">
+ <option value="">Todas as cidades</option><option value="mine" ${cityFilter==='mine'?'selected':''}>Minha cidade</option>
+ ${sortedCities.map(([key,label])=>`<option value="city:${esc(key)}" ${cityFilter==='city:'+key?'selected':''}>${esc(label)}</option>`).join('')}
+ </select></label>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
  ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
@@ -3924,7 +3940,7 @@ async function onAction(btn) {
   }
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
-  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';state.eventCityOnly=false;render();return;
+  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';state.eventCityFilter='';render();return;
   case 'retry-event-room':await loadEventRoom(true);return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openPostComposer();return;
   case 'continue-post-draft':
@@ -4882,7 +4898,7 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
- else if(event.target.id==='event-city-only')state.eventCityOnly=event.target.checked;
+ else if(event.target.id==='event-city-filter')state.eventCityFilter=event.target.value;
  else if(event.target.id==='saved-collection-filter'){
    state.selectedSavedCollection=event.target.value;state.savedSelection=null;
  }
