@@ -1804,7 +1804,21 @@ function eventChatMessage(event){
  const title=String(event.title||'Evento').replace(/\s+/g,' ').trim();
  return eventChatPrefix+title+'\n'+contentLink('event',event.id);
 }
-function renderDirectMessageText(text){
+function eventInvitationRsvp(event,schedule){
+ const uid=me();
+ if(!uid||event.cancelled||schedule.date<today())return '';
+ if(event.attendees?.includes(uid))return '<span class="pill">Presença confirmada</span>';
+ const eligible=!event.groupId||pollMember(event.groupId);
+ const queued=event.waitlist?.includes(uid);
+ const offered=eligible&&queued&&eventSeatOffer(event);
+ if(queued&&!offered)return '<span class="pill">Na lista de espera</span>';
+ if(!eligible)return '';
+ const waiting=Number.isInteger(event.capacity)&&
+   ((event.attendees||[]).length>=event.capacity||event.waitlist?.length);
+ const label=offered?'Confirmar vaga':waiting?'Entrar na lista de espera':'Confirmar presença';
+ return `<button type="button" class="btn btn-primary btn-small" data-action="rsvp" data-value="invitation" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>${label}</button>`;
+}
+function renderDirectMessageText(text,received=false){
  if(typeof text!=='string'||!text.startsWith(eventChatPrefix))return esc(text);
  const [title,address,...extra]=text.split('\n');
  if(!address||extra.length)return esc(text);
@@ -1818,6 +1832,7 @@ function renderDirectMessageText(text){
    return `<div class="form-stack">
    <strong>${esc(event?.title||title.slice(eventChatPrefix.length))}</strong>
    ${schedule?`<span>${esc(event.cancelled?'Evento cancelado':[dateLabel(schedule.date),schedule.time].filter(Boolean).join(' · '))}</span>`:''}
+   ${received&&event?eventInvitationRsvp(event,schedule):''}
    ${event?`<button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(id)}">Ver evento</button>`:`<a class="btn btn-soft btn-small" href="${esc(link.href)}">Ver evento</a>`}
    </div>`;
  }catch{return esc(text);}
@@ -2087,7 +2102,7 @@ function renderMessages() {
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
@@ -4278,6 +4293,8 @@ async function onAction(btn) {
     const uid=me(),limited=Number.isInteger(event.capacity),queued=event.waitlist?.includes(uid),offered=eventSeatOffer(event);
     if(!uid)return;
     const eligible=!event.groupId||pollMember(event.groupId);
+    const invitation=btn.dataset.value==='invitation';
+    if(invitation&&(!eligible||attending||(queued&&!offered)))return;
     const intent=attending?'leave':queued&&(!offered||!eligible)?'leave-queue':'join';
     const willConfirm=intent==='join'&&(!limited||
       ((event.attendees||[]).length<event.capacity&&(!event.waitlist.length||offered)));
@@ -4304,7 +4321,7 @@ async function onAction(btn) {
     }
     await firebase.updateDoc(ref('events',id),{attendees:attending?firebase.arrayRemove(me()):firebase.arrayUnion(me())});
     watchEventBulletins();
-    showToast(attending?'Participação removida.':event.groupId?'Presença confirmada!':'Sua participação foi marcada como interesse!');
+    showToast(attending?'Participação removida.':event.groupId||invitation?'Presença confirmada!':'Sua participação foi marcada como interesse!');
   });return;
   case 'post-options':{
     if(!me()||!state.posts.some(post=>post.id===id))return;
