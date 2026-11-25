@@ -17,6 +17,27 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('muting a private conversation changes the navigation badge but keeps it in the unread filter', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.threads=[{id:'owner_peer',participants:['owner','peer']}];
+    state.latestInboundAt.set('owner_peer',10);state.directThreadFilter='unread';
+    render=()=>{};showToast=()=>{};
+    firebase={doc:(_db,...parts)=>parts.join('/'),
+      setDoc:async path=>{state.mutePath=path;state.mutedDirectThreads.add('owner_peer');},
+      deleteDoc:async path=>{state.unmutePath=path;state.mutedDirectThreads.clear();}};
+  `,context);
+  assert.match(vm.runInContext("unreadBadge('messages')",context),/1 conversa não lida/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-mute'}})",context);
+  assert.equal(vm.runInContext("unreadBadge('messages')",context),'');
+  assert.match(vm.runInContext('renderMessages()',context),/data-id="peer"[\s\S]*Reativar contador/);
+  assert.match(vm.runInContext('state.mutePath',context),/members\/owner\/privateMuted\/owner_peer$/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-mute'}})",context);
+  assert.equal(vm.runInContext('state.mutePath===state.unmutePath',context),true);
+  assert.match(vm.runInContext("unreadBadge('messages')",context),/1 conversa não lida/);
+});
+
 test('the combined saved-message list fetches personal markers and searches names or message text', async () => {
   const handlers={};
   const context=appContext(handlers);
