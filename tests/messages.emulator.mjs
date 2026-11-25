@@ -606,7 +606,12 @@ await request(sender,'POST','public/data/posts?documentId=editable-post',200,wel
 const photoOnly={...welcome,content:str(''),photoUrl:str('https://example.test/photo.jpg'),photoDescription:str('Céu ao amanhecer')};
 await request(sender,'POST','public/data/posts?documentId=photo-only',200,photoOnly);
 await request(sender,'POST','public/data/posts?documentId=community-video',200,{
-  ...welcome,groupId:str('welcome-group'),content:str(''),videoUrl:str('https://example.test/video.mp4'),videoDescription:str('Como fotografar o amanhecer')
+  ...welcome,groupId:str('welcome-group'),content:str(''),videoUrl:str('https://example.test/video.mp4'),
+  videoDescription:str('Como fotografar o amanhecer'),captionsUrl:str('https://example.test/legendas.vtt')
+});
+await request(sender,'POST','public/data/posts?documentId=orphan-captions',403,{...photoOnly,captionsUrl:str('https://example.test/legendas.vtt')});
+await request(sender,'POST','public/data/posts?documentId=invalid-captions',403,{
+  ...welcome,videoUrl:str('https://example.test/video.mp4'),captionsUrl:str('http://example.test/legendas.vtt')
 });
 await request(sender,'POST','public/data/posts?documentId=orphan-description',403,{...welcome,photoDescription:str('Descrição sem foto')});
 await request(sender,'POST','public/data/posts?documentId=long-video-summary',403,{
@@ -615,14 +620,17 @@ await request(sender,'POST','public/data/posts?documentId=long-video-summary',40
 await request(sender,'POST','public/data/posts?documentId=invalid-media',403,{...photoOnly,photoUrl:str('http://example.test/photo.jpg')});
 await request(sender,'POST','public/data/posts?documentId=empty-post',403,{...welcome,content:str('  ')});
 const editMedia={
-  update:{name:documents+'public/data/posts/photo-only',fields:{videoUrl:str('https://example.test/video.mp4')}},
-  updateMask:{fieldPaths:['photoUrl','videoUrl','photoDescription']},updateTransforms:stamp('editedAt')
+  update:{name:documents+'public/data/posts/photo-only',fields:{
+    videoUrl:str('https://example.test/video.mp4'),captionsUrl:str('https://example.test/legendas.vtt')
+  }},
+  updateMask:{fieldPaths:['photoUrl','videoUrl','photoDescription','captionsUrl']},updateTransforms:stamp('editedAt')
 };
 await moderate(recipient,[editMedia],403);
 await moderate(sender,[editMedia],200);
 const updatedMedia=(await request(recipient,'GET','public/data/posts/photo-only',200)).fields;
 assert.equal(updatedMedia.photoUrl,undefined);
 assert.equal(updatedMedia.videoUrl.stringValue,'https://example.test/video.mp4');
+assert.equal(updatedMedia.captionsUrl.stringValue,'https://example.test/legendas.vtt');
 const followedPath='public/data/members/'+recipient.localId+'/followedPosts/editable-post';
 const followPostWrite={update:{name:documents+followedPath,fields:{}},updateTransforms:stamp('followedAt'),currentDocument:{exists:false}};
 await moderate(sender,[followPostWrite],403);
