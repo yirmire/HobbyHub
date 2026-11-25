@@ -1910,6 +1910,34 @@ test('online event time zones preserve the same instant across local dates, conf
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
 });
 
+test('shared events list private invitations in recent order with current statuses and source shortcuts', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.events=[
+      {id:'walk',title:'Caminhada',date:'2099-05-07',time:'10:30',attendees:['reader']},
+      {id:'photo',title:'Fotografia',date:'2099-05-08',time:'09:00',waitlist:['reader']},
+      {id:'music',title:'Música',date:'2099-05-09',time:'19:00',cancelled:true}
+    ];
+    state.directMessages=[
+      {id:'older',text:eventChatMessage(state.events[0]),createdAt:1,senderId:'reader'},
+      {id:'waiting',text:eventChatMessage(state.events[1]),createdAt:2,senderId:'peer'},
+      {id:'cancelled',text:eventChatMessage(state.events[2]),createdAt:3,senderId:'peer'},
+      {id:'removed',text:eventChatMessage(state.events[0]),createdAt:4,senderId:'reader',deletedAt:{}},
+      {id:'plain',text:'Um comentário comum',createdAt:5,senderId:'peer'}
+    ];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'toggle-shared-direct-events'}})",context);
+  const panel=vm.runInContext('renderMessages()',context);
+  assert.match(panel,/Música[\s\S]*Cancelado[\s\S]*Fotografia[\s\S]*Na lista de espera[\s\S]*Caminhada[\s\S]*Presença confirmada/);
+  assert.match(panel,/data-action="view-event" data-id="walk"/);
+  assert.match(panel,/data-action="jump-direct-message" data-id="older"/);
+  assert.doesNotMatch(panel,/Um comentário comum|data-id="removed"/);
+  await vm.runInContext("onAction({dataset:{action:'jump-direct-message',id:'older'}})",context);
+  assert.equal(vm.runInContext('state.directEventLimit',context),0);
+  assert.equal(vm.runInContext('state.directHistoryAnchor',context),'older');
+});
+
 test('received event invitations offer confirmation or a waitlist without removing existing participation', async () => {
   const context=appContext();
   vm.runInContext(`
