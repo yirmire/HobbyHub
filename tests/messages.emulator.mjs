@@ -140,15 +140,15 @@ await request(sender, 'PATCH', reactionPath, 200, reactionMap([[sender.localId, 
 await request(sender, 'PATCH', reactionPath, 200, reactionMap([recipientReaction]));
 const oldMessage = {...message,createdAt:{integerValue:String(Date.now()-901000)}};
 await request(sender, 'POST', `${thread}/messages?documentId=old`, 200, oldMessage);
-async function editDirectMessage(user,id,expected,extraFields={}) {
+async function editDirectMessage(user,id,expected,extraFields={},timestampField='editedAt') {
   const endpoint=base.split('/documents/')[0]+'/documents:commit';
   const response=await fetch(endpoint,{
     method:'POST',
     headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
     body:JSON.stringify({writes:[{
       update:{name:`${base.split('/v1/')[1]}/${thread}/messages/${id}`,fields:{text:{stringValue:'Texto corrigido'},...extraFields}},
-      updateMask:{fieldPaths:['text',...Object.keys(extraFields)]},
-      updateTransforms:[{fieldPath:'editedAt',setToServerValue:'REQUEST_TIME'}],
+      updateMask:{fieldPaths:[...new Set(['text',...Object.keys(extraFields)])]},
+      updateTransforms:[{fieldPath:timestampField,setToServerValue:'REQUEST_TIME'}],
       currentDocument:{exists:true}
     }]})
   });
@@ -162,6 +162,17 @@ const editedDirect=await request(recipient,'GET',`${thread}/messages/hello`,200)
 assert.equal(editedDirect.fields.text.stringValue,'Texto corrigido');
 assert.ok(editedDirect.fields.editedAt.timestampValue);
 assert.equal(editedDirect.fields.reactions.mapValue.fields[recipient.localId].stringValue,'❤️');
+await request(sender, 'POST', `${thread}/messages?documentId=remove-me`, 200, message);
+const redaction = {text:{stringValue:''}};
+await editDirectMessage(recipient,'remove-me',403,redaction,'deletedAt');
+await editDirectMessage(sender,'old',403,redaction,'deletedAt');
+await editDirectMessage(sender,'remove-me',403,{...redaction,replyTo:{stringValue:'old'}},'deletedAt');
+await editDirectMessage(sender,'remove-me',200,redaction,'deletedAt');
+const removedDirect=await request(recipient,'GET',`${thread}/messages/remove-me`,200);
+assert.equal(removedDirect.fields.text.stringValue,'');
+assert.ok(removedDirect.fields.deletedAt.timestampValue);
+await editDirectMessage(sender,'remove-me',403);
+await request(recipient,'PATCH',savedPath.replace(/hello$/, 'remove-me'),403,savedMessage);
 const block = `${blocked}/${recipient.localId}`;
 const blockFields = { createdAt: { integerValue: String(Date.now()) } };
 await request(recipient, 'POST', `${blocked}?documentId=${recipient.localId}`, 403, blockFields);
