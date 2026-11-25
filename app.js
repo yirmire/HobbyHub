@@ -1634,6 +1634,7 @@ function renderMessages() {
  const blocked=!community&&state.blockedIds.includes(state.chatTarget?.uid);
  const originals=community?null:new Map(messages.map(message=>[message.id,message]));
  const replying=blocked?null:originals?.get(state.directReply?.id);
+ const savedDraft=community?null:readPrivateMessageDraft(privateMessageDraftKey());
  const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
@@ -1654,7 +1655,7 @@ function renderMessages() {
  ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span>${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
- ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
+ ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
 function topicSelect(selected='Arte') {return `<select name="hobby" class="select" required>${TOPICS.map(t=>`<option value="${esc(t.name)}" ${selected===t.name?'selected':''}>${t.emoji} ${esc(t.name)}</option>`).join('')}</select>`;}
 function modalWrap(title,content){
@@ -2530,6 +2531,32 @@ function captureDrafts(){
    state.drafts.set(f.dataset.draftKey||f.id,values);
  });
 }
+function privateMessageDraftKey(peer=state.chatTarget?.uid){
+ const uid=me();
+ return uid&&peer?'hobbyhub-dm-draft:'+encodeURIComponent(uid)+':'+encodeURIComponent(peer):'';
+}
+function readPrivateMessageDraft(key){
+ if(!key)return null;
+ try{
+   const draft=JSON.parse(localStorage.getItem(key)||'null');
+   if(!draft)return null;
+   const message=typeof draft.message==='string'?draft.message.slice(0,1500):'';
+   const replyTo=typeof draft.replyTo==='string'?draft.replyTo:'';
+   return {message,replyTo};
+ }catch{return null;}
+}
+function savePrivateMessageDraft(key,message,replyTo){
+ if(!key)return;
+ try{
+   if(message||replyTo)localStorage.setItem(key,JSON.stringify({message,replyTo}));
+   else localStorage.removeItem(key);
+ }catch{}
+}
+function saveCurrentPrivateMessageDraft(message=document.getElementById('message-text')?.value){
+ if(state.chatMode!=='direct')return;
+ const key=privateMessageDraftKey();
+ savePrivateMessageDraft(key,message??readPrivateMessageDraft(key)?.message??'',state.directReply?.id||'');
+}
 function postDraftKey(){
  const uid=me();
  if(!uid||state.composingIntroduction||state.composingRecapId)return '';
@@ -2710,6 +2737,8 @@ async function startDirect(uid){
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+   const replyTo=readPrivateMessageDraft(privateMessageDraftKey(uid))?.replyTo;
+   if(replyTo)state.directReply={id:replyTo};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
    state.messageUnsub=firebase.onSnapshot(directMessagesCol(id),(snap)=>{
      if(me()!==sender||state.chatTarget?.uid!==uid)return;
@@ -3524,11 +3553,13 @@ async function onAction(btn) {
   case 'reply-direct-message':
     if(state.chatMode!=='direct'||!state.chatTarget||state.blockedIds.includes(state.chatTarget.uid)||!state.directMessages.some(message=>message.id===id))return;
     state.directReply={id};
+    saveCurrentPrivateMessageDraft();
     render();
     document.getElementById('message-text')?.focus();
     return;
   case 'cancel-direct-reply':
     state.directReply=null;
+    saveCurrentPrivateMessageDraft();
     render();
     document.getElementById('message-text')?.focus();
     return;
@@ -3914,6 +3945,7 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='message-text'){saveCurrentPrivateMessageDraft(event.target.value);return;}
  if(event.target.id==='direct-search'&&state.directSearch){
    state.directSearch.query=event.target.value;
    state.directSearch.limit=20;
@@ -4228,14 +4260,24 @@ document.addEventListener('submit',async(event)=>{
     const payload={senderId:me(),senderName:myName(),text,createdAt:now()};
     if(state.chatMode==='direct'){
       if(!state.chatTarget?.uid||state.blockedIds.includes(state.chatTarget.uid))return;
-      const reply=state.directReply;
-      if(reply&&state.directMessages.some(message=>message.id===reply.id))payload.replyTo=reply.id;
-      await firebase.addDoc(directMessagesCol(threadId(me(),state.chatTarget.uid)),payload);
-      if(reply&&state.directReply===reply)state.directReply=null;
+      const peer=state.chatTarget.uid,draftStorageKey=privateMessageDraftKey(peer);
+      const replyTo=state.directReply?.id||'';
+      if(replyTo)payload.replyTo=replyTo;
+      savePrivateMessageDraft(draftStorageKey,data.message,replyTo);
+      await firebase.addDoc(directMessagesCol(threadId(payload.senderId,peer)),payload);
+      const saved=readPrivateMessageDraft(draftStorageKey);
+      if(!saved||(saved.message===data.message&&saved.replyTo===replyTo)){
+        savePrivateMessageDraft(draftStorageKey,'','');
+        if(me()===payload.senderId&&state.chatMode==='direct'&&state.chatTarget?.uid===peer&&(state.directReply?.id||'')===replyTo){
+          const current=document.getElementById(form.id);
+          if(!current||current.dataset.draftKey!==key||current.elements.message.value===data.message)state.directReply=null;
+        }
+        clearSubmittedDraft(form.id,key,'message',data.message);
+      }
     }else{
       await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
+      clearSubmittedDraft(form.id,key,'message',data.message);
     }
-    clearSubmittedDraft(form.id,key,'message',data.message);
     if(me()===payload.senderId)showToast('Mensagem enviada.');
   },'busy',state.chatMode==='direct'?'Não foi possível enviar uma mensagem nesta conversa.':undefined);return;
   case 'feedback-supplement-form':await attempt(async()=>{
