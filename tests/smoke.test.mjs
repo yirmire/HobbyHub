@@ -1910,6 +1910,33 @@ test('online event time zones preserve the same instant across local dates, conf
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
 });
 
+test('event chat invitations show the event and use only eligible private conversations', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.events=[{id:'walk',title:'Caminhada <local>',date:'2099-05-07',time:'10:30',roomUrl:'https://private.example/join'}];
+    state.selectedEvent='walk';state.modal='event-detail';
+    state.members=[{uid:'peer',name:'Ana'},{uid:'restricted',name:'Contato bloqueado'}];
+    state.threads=[
+      {id:'owner_peer',participants:['owner','peer']},
+      {id:'owner_restricted',participants:['owner','restricted']}
+    ];
+    state.blockedIds=['restricted'];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'share-event-in-chat'}})",context);
+  const modal=vm.runInContext('renderModal()',context);
+  assert.match(modal,/event-chat-share-form/);
+  assert.match(modal,/<option value="peer">Ana/);
+  assert.doesNotMatch(modal,/Contato bloqueado/);
+  const card=vm.runInContext('renderDirectMessageText(eventChatMessage(state.events[0]))',context);
+  assert.match(card,/Caminhada &lt;local&gt;/);
+  assert.match(card,/10:30/);
+  assert.match(card,/data-action="view-event" data-id="walk"/);
+  assert.doesNotMatch(card,/private\.example/);
+  const foreign=vm.runInContext('renderDirectMessageText("Convite para evento: Caminhada\\nhttps://foreign.example/#event=walk")',context);
+  assert.doesNotMatch(foreign,/<a |<button/);
+});
+
 test('Google Calendar prefills the confirmed event and keeps the private room URL in HobbyHub', () => {
   const context=appContext();
   context.window.location={pathname:'/HobbyHub/',origin:'https://example.test',hostname:'example.test'};
