@@ -299,7 +299,7 @@ const reportFields = ({ reporter, type, targetId, parentId, author, text }) => (
 });
 const privateReport = reportFields({
   reporter: recipient, type: 'privateMessage', targetId: 'hello',
-  parentId: threadId, author: sender, text: message.text.stringValue
+  parentId: threadId, author: sender, text: editedDirect.fields.text.stringValue
 });
 await request(recipient, 'POST', `${reportCollection}?documentId=private-valid`, 200, privateReport);
 await request(other, 'POST', reportCollection, 403, { ...privateReport, reporterId: str(other.localId) });
