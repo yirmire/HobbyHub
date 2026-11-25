@@ -1934,17 +1934,26 @@ function mediaUrl(value) {
    return url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<=1500?url.href:'';
  } catch {return '';}
 }
+const sharedMediaFieldsLimits={photoUrl:1500,videoUrl:1500,photoDescription:300,videoDescription:800};
+
 function renderSharedMedia(entry,context,preview=false){
  const photo=mediaUrl(entry.photoUrl),video=mediaUrl(entry.videoUrl);
  if(!photo&&!video)return '';
- return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada ${context}" loading="${preview?'eager':'lazy'}" referrerpolicy="no-referrer" data-shared-media><p class="tip" data-media-error role="status" hidden></p>`:''}${video?`<video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Vídeo compartilhado ${context}" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
+ const photoDescription=(typeof entry.photoDescription==='string'&&entry.photoDescription.trim())||'Foto compartilhada '+context;
+ return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="${esc(photoDescription)}" loading="${preview?'eager':'lazy'}" referrerpolicy="no-referrer" data-shared-media><p class="tip" data-media-error role="status" hidden></p>`:''}
+ ${photo&&preview&&entry.photoDescription?`<p class="post-copy">Descrição da foto: ${esc(photoDescription)}</p>`:''}
+ ${video?`<div role="group" aria-label="Vídeo compartilhado ${context}"><video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Reproduzir vídeo" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p>
+ ${entry.videoDescription?`<p class="post-copy">Resumo do vídeo: ${esc(entry.videoDescription)}</p>`:''}
+ <a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a></div>`:''}</div>`;
 }
 function renderProfileMedia(profile){
  return renderSharedMedia(profile,'no perfil');
 }
 function sharedMediaFields(entry={}){
  return `<label class="field">Link HTTPS da foto (opcional)<input class="input" type="url" name="photoUrl" maxlength="1500" value="${esc(entry.photoUrl||'')}" placeholder="https://…/foto.jpg"></label>
+ <label class="field">Descrição da foto (opcional)<input class="input" name="photoDescription" maxlength="${sharedMediaFieldsLimits.photoDescription}" value="${esc(entry.photoDescription||'')}" placeholder="Descreva o que aparece para quem usa leitor de tela"></label>
  <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(entry.videoUrl||'')}" placeholder="https://…/video.mp4"></label>
+ <label class="field">Resumo do vídeo (opcional)<textarea class="textarea" name="videoDescription" rows="2" maxlength="${sharedMediaFieldsLimits.videoDescription}" placeholder="Resuma o que aparece ou é dito">${esc(entry.videoDescription||'')}</textarea></label>
  <div><button class="btn btn-outline btn-small" type="button" data-action="preview-shared-media">Prévia de fotos e vídeos</button>
  <p class="mini muted" data-media-preview-status role="status"></p><div data-media-preview></div></div>`;
 }
@@ -1953,7 +1962,7 @@ function previewSharedMedia(form){
  const preview=form.querySelector('[data-media-preview]');
  preview.replaceChildren();
  try {
-   const media=readSharedMediaFields(name=>form.elements[name].value.trim());
+   const media=readSharedMediaFields(name=>form.elements[name]?.value.trim()||'');
    if(!media.photoUrl&&!media.videoUrl){
      status.textContent='Adicione o link de uma foto ou de um vídeo para ver a prévia.';
      return;
@@ -1967,7 +1976,9 @@ function previewSharedMedia(form){
 function readSharedMediaFields(value){
  const photoUrl=mediaUrl(value('photoUrl')),videoUrl=mediaUrl(value('videoUrl'));
  if((value('photoUrl')&&!photoUrl)||(value('videoUrl')&&!videoUrl))throw new Error('Use um link HTTPS válido para a foto ou o vídeo.');
- return {photoUrl,videoUrl};
+ const photoDescription=photoUrl?value('photoDescription'):'',videoDescription=videoUrl?value('videoDescription'):'';
+ if(photoDescription.length>sharedMediaFieldsLimits.photoDescription||videoDescription.length>sharedMediaFieldsLimits.videoDescription)throw new Error('A descrição da foto aceita até 300 caracteres e o resumo do vídeo até 800.');
+ return {photoUrl,videoUrl,photoDescription,videoDescription};
 }
 function blockButton(uid) {
  if(!uid||uid===me())return '';
@@ -3459,12 +3470,17 @@ function postDraftKey(){
  const scope=state.composingGroup?'group:'+encodeURIComponent(state.composingGroup):'feed';
  return 'hobbyhub-post-draft:'+encodeURIComponent(uid)+':'+scope;
 }
+function postDraftMedia(value){
+ return Object.fromEntries(Object.entries(sharedMediaFieldsLimits).map(([name,limit])=>[name,String(value(name)||'').slice(0,limit)]));
+}
 function readPostDraft(key){
  if(!key)return null;
  try{
    const draft=JSON.parse(localStorage.getItem(key)||'null');
-   if(typeof draft?.content!=='string'||(!draft.content.trim()&&!draft.photoUrl&&!draft.videoUrl))return null;
-   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text',photoUrl:String(draft.photoUrl||'').slice(0,1500),videoUrl:String(draft.videoUrl||'').slice(0,1500)};
+   if(typeof draft?.content!=='string')return null;
+   const media=postDraftMedia(name=>draft[name]);
+   if(!draft.content.trim()&&!Object.values(media).some(Boolean))return null;
+   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text',...media};
  }catch{return null;}
 }
 function removePostDraft(key){
@@ -3473,10 +3489,11 @@ function removePostDraft(key){
 function savePostDraft(form){
  const key=form.dataset.draftKey;
  if(state.modal!=='compose'||!key||key!==postDraftKey())return;
- const {content,hobby,format,photoUrl,videoUrl}=form.elements;
+ const {content,hobby,format}=form.elements;
+ const media=postDraftMedia(name=>form.elements[name]?.value);
  try{
-   if(!content.value.trim()&&!photoUrl?.value&&!videoUrl?.value)removePostDraft(key);
-   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value,photoUrl:photoUrl?.value||'',videoUrl:videoUrl?.value||''}));
+   if(!content.value.trim()&&!Object.values(media).some(Boolean))removePostDraft(key);
+   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value,...media}));
  }catch{}
 }
 function openPostComposer(){
@@ -5115,7 +5132,7 @@ document.addEventListener('error',(event)=>{
 },true);
 
 document.addEventListener('input',(event)=>{
- if(event.target.matches?.('input[name="photoUrl"],input[name="videoUrl"]')){
+ if(Object.hasOwn(sharedMediaFieldsLimits,event.target.name)){
    const form=event.target.form;
    form?.querySelector('[data-media-preview]')?.replaceChildren();
    const status=form?.querySelector('[data-media-preview-status]');
@@ -5215,9 +5232,10 @@ document.addEventListener('submit',async(event)=>{
       const event=state.events.find(item=>item.id===eventRecapId);
       if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
     }
-    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,...(media.photoUrl?{photoUrl:media.photoUrl}:{}),...(media.videoUrl?{videoUrl:media.videoUrl}:{}),format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
+    const mediaFields=Object.fromEntries(Object.entries(media).filter(([,value])=>value));
+    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,...mediaFields,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
     const saved=readPostDraft(key);
-    if(key&&originalDraft?.content===data.content&&originalDraft?.photoUrl===(data.photoUrl||'')&&originalDraft?.videoUrl===(data.videoUrl||'')&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
+    if(key&&originalDraft?.content===data.content&&Object.keys(media).every(name=>originalDraft[name]===(data[name]||''))&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
     if(me()!==uid)return;
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
@@ -5443,8 +5461,8 @@ document.addEventListener('submit',async(event)=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
     if(!name||!location||!avatarValue)throw new Error('Nome, localidade e avatar são obrigatórios.');
     const hobbies=[...new Set(val('hobbies').split(',').map(s=>s.trim()).filter(Boolean))].slice(0,10);
-    const {photoUrl,videoUrl}=readSharedMediaFields(val);
-    await firebase.updateDoc(memberRef(me()),{name,location,avatar:avatarValue,bio:val('bio'),hobbies,photoUrl,videoUrl});
+    const media=readSharedMediaFields(val);
+    await firebase.updateDoc(memberRef(me()),{name,location,avatar:avatarValue,bio:val('bio'),hobbies,...media});
     closeModal();showToast('Perfil atualizado!');
   });return;
   case 'testimonial-form':await attempt(async()=>{
