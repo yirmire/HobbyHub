@@ -285,6 +285,22 @@ service cloud.firestore {
           && request.resource.data.createdAt is number;
         allow update: if false;
       }
+      match /chatPreferences/pinned {
+        function validPinnedThreads() {
+          let data = request.resource.data;
+          let ids = data.threadIds;
+          return data.keys().hasOnly(['threadIds']) && ids is list
+            && ids.size() <= 3 && ids.toSet().size() == ids.size()
+            && (ids.size() < 1 || validThread(ids[0]))
+            && (ids.size() < 2 || validThread(ids[1]))
+            && (ids.size() < 3 || validThread(ids[2]));
+        }
+        function validThread(id) {
+          return validText(id, 1, 300) && id.matches('[^/]+') && threadMember(appId, id);
+        }
+        allow get: if isMe(uid);
+        allow create, update: if isMe(uid) && validPinnedThreads();
+      }
       match /privateReads/{threadId} {
         function validReadTime() {
           return request.resource.data.keys().hasOnly(['lastReadAt'])
