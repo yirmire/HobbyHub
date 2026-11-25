@@ -17,6 +17,27 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('shared private links render newest first with safe addresses and can jump to the source', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=[
+      {id:'older',senderId:'owner',createdAt:1,text:'Veja (https://example.com/wiki/Foo(bar)).'},
+      {id:'newer',senderId:'peer',createdAt:2,text:'https://example.org/?x=1&y=2; javascript:alert(1) https://user:pass@example.net/'}
+    ];
+    state.messages=[{id:'public',text:'https://public.example/'}];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-links'}})",context);
+  const panel=vm.runInContext('renderMessages()',context);
+  assert.match(panel,/href="https:\/\/example\.org\/\?x=1&amp;y=2"[\s\S]*href="https:\/\/example\.com\/wiki\/Foo\(bar\)"/);
+  assert.match(panel,/target="_blank" rel="noopener noreferrer"/);
+  assert.doesNotMatch(panel,/javascript:|example\.net|public\.example/);
+  await vm.runInContext("onAction({dataset:{action:'jump-direct-message',id:'older'}})",context);
+  assert.equal(vm.runInContext('state.directLinksLimit',context),0);
+  assert.equal(vm.runInContext('state.directHistoryAnchor',context),'older');
+});
+
 test('private conversation name search normalizes names and works with the selected filter', () => {
   const handlers={};
   const context=appContext(handlers);
