@@ -1863,7 +1863,7 @@ test('shared media renders direct HTTPS images and videos and survives a media-o
   const context=appContext(),stored=new Map();
   context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)};
   const html=vm.runInContext(`
-    state.user={uid:'reader'};
+    state.user={uid:'reader'};state.modal='compose';
     const media={photoUrl:'https://example.test/photo.jpg',videoUrl:'https://example.test/video.mp4'};
     savePostDraft({dataset:{draftKey:postDraftKey()},elements:{
       content:{value:''},hobby:{value:'Arte'},format:{value:''},photoUrl:{value:media.photoUrl},videoUrl:{value:media.videoUrl}
