@@ -1465,9 +1465,7 @@ async function loadEventInvitations(sent=state.eventFilter==='sent-invites'){
      const peer=thread.participants.find(id=>id!==uid);
      if(!peer||thread.id!==threadId(uid,peer))return;
      try{
-       const query=firebase.query(directMessagesCol(thread.id),firebase.orderBy('text'),
-         firebase.startAt(eventChatPrefix),firebase.endAt(eventChatPrefix+'\uf8ff'));
-       const snapshot=await firebase.getDocs(query);
+       const snapshot=await firebase.getDocs(eventInvitationMessageQuery(thread.id));
        if(!active())return;
        for(const doc of snapshot.docs){
          const message=doc.data();
@@ -1996,6 +1994,50 @@ function eventChatRecipients(){
    return [{peer,thread:thread.id,name:member(peer)?.name||thread.names?.[peer]||'Pessoa'}];
  }).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
 }
+function eventInvitationMessageQuery(thread){
+ return firebase.query(directMessagesCol(thread),firebase.orderBy('text'),
+   firebase.startAt(eventChatPrefix),firebase.endAt(eventChatPrefix+'\uf8ff'));
+}
+async function lastSentEventInvitation(thread,uid,eventId){
+ const snapshot=await firebase.getDocsFromServer(eventInvitationMessageQuery(thread));
+ let latest=null;
+ for(const doc of snapshot.docs){
+   const message=doc.data();
+   if(message.senderId===uid&&!message.deletedAt&&directEventInvitation(message.text)?.id===eventId){
+     latest=Math.max(latest??0,message.createdAt||0);
+   }
+ }
+ return latest;
+}
+async function loadEventChatShareHistory(){
+ const uid=me(),id=state.selectedEvent,panel=state.eventChatShares.get(id);
+ if(!uid||!panel||panel.loading||panel.sending)return;
+ const recipients=eventChatRecipients();
+ panel.loading=true;panel.unknown.clear();
+ render();
+ const active=()=>me()===uid&&state.eventChatShares.get(id)===panel;
+ for(let offset=0;offset<recipients.length&&active();offset+=6){
+   await Promise.all(recipients.slice(offset,offset+6).map(async item=>{
+     try{
+       const latest=await lastSentEventInvitation(item.thread,uid,id);
+       if(latest===null)panel.previous.delete(item.peer);
+       else{panel.previous.set(item.peer,latest);panel.selected.delete(item.peer);}
+     }catch{panel.unknown.add(item.peer);}
+   }));
+ }
+ panel.loading=false;
+ if(active()&&state.modal==='event-chat-share'&&state.selectedEvent===id)render();
+}
+function renderEventChatRecipient(item,panel){
+ if(panel.previous.has(item.peer)){
+   const previous=panel.previous.get(item.peer);
+   return `<div class="card form-stack" style="padding:10px">
+   <strong>${esc(item.name)}</strong><p class="mini muted">Já convidado${previous?' · '+esc(new Date(previous).toLocaleString('pt-BR')):''}</p>
+   ${panel.deliveries.get(item.peer)?.status==='failed'?'':`<button type="button" class="btn btn-outline btn-small" data-action="prepare-event-invite-resend" data-id="${esc(item.peer)}" ${panel.sending||panel.loading||panel.unknown.has(item.peer)?'disabled':''}>Reenviar convite</button>`}
+   </div>`;
+ }
+ return `<button type="button" class="btn ${panel.selected.has(item.peer)?'btn-soft':'btn-outline'}" data-action="select-event-chat-recipient" data-id="${esc(item.peer)}" aria-pressed="${panel.selected.has(item.peer)}" ${panel.sending||panel.loading||panel.unknown.has(item.peer)?'disabled':''}>${esc(item.name)}</button>`;
+}
 function renderEventChatShare(){
  const event=state.events.find(item=>item.id===state.selectedEvent);
  const panel=state.eventChatShares.get(state.selectedEvent);
@@ -2004,16 +2046,23 @@ function renderEventChatShare(){
  const back=`<button type="button" class="btn btn-outline" data-action="view-event" data-id="${esc(event.id)}">Voltar ao evento</button>`;
  if(!recipients.length&&!panel.deliveries.size)return modalWrap('Compartilhar no chat',`<div class="form-stack"><p>Abra uma conversa privada com a pessoa antes de enviar o convite.</p>${back}</div>`);
  const term=norm(panel.query);
- const options=recipients.filter(item=>!panel.deliveries.has(item.peer)&&(!term||norm(item.name).includes(term)));
+ const options=recipients.filter(item=>(!panel.deliveries.has(item.peer)||panel.previous.has(item.peer))&&(!term||norm(item.name).includes(term)));
+ const confirming=recipients.find(item=>item.peer===panel.confirmResend);
  const sent=[...panel.deliveries.values()].filter(item=>item.status==='sent');
  const failed=[...panel.deliveries.values()].filter(item=>item.status==='failed');
  return modalWrap('Compartilhar no chat',`<form id="event-chat-share-form" class="form-stack">
  <p>${esc(event.title)}</p>
  <label class="field">Buscar conversa pelo nome<input type="search" id="event-chat-share-search" class="input" value="${esc(panel.query)}" maxlength="100" autocomplete="off"></label>
  <div class="form-stack" role="group" aria-label="Conversas privadas" style="max-height:35vh;overflow:auto;padding:4px">
- ${options.map(item=>`<button type="button" class="btn ${panel.selected.has(item.peer)?'btn-soft':'btn-outline'}" data-action="select-event-chat-recipient" data-id="${esc(item.peer)}" aria-pressed="${panel.selected.has(item.peer)}" ${panel.sending?'disabled':''}>${esc(item.name)}</button>`).join('')}
+ ${panel.loading?'<p class="mini muted" role="status">Conferindo convites anteriores…</p>':''}
+ ${options.map(item=>renderEventChatRecipient(item,panel)).join('')}
+ ${panel.unknown.size&&!panel.loading?'<p class="tip">Alguns envios anteriores não puderam ser conferidos. <button type="button" class="text-action" data-action="reload-event-invite-history">Tentar novamente</button></p>':''}
  ${!options.length?'<p class="mini muted">Nenhuma conversa disponível neste filtro.</p>':''}
  </div>
+ ${confirming?`<div class="card form-stack" style="padding:10px">
+ <p>Reenviar o convite para ${esc(confirming.name)}?</p>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline btn-small" data-action="cancel-event-invite-resend">Cancelar</button>
+ <button type="button" class="btn btn-primary btn-small" data-action="confirm-event-invite-resend" data-id="${esc(confirming.peer)}">Confirmar reenvio</button></div></div>`:''}
  <div role="status">
  <p class="mini muted">${panel.sending?'Enviando convites…':`${panel.selected.size} selecionada${panel.selected.size===1?'':'s'}`}</p>
  ${sent.length?`<p class="mini">Enviados para ${esc(sent.map(item=>item.name).join(', '))}.</p>`:''}
@@ -2021,15 +2070,18 @@ function renderEventChatShare(){
  </div>
  <div class="toggle-row" style="flex-wrap:wrap">${back}
  ${failed.length?`<button type="button" class="btn btn-outline" data-action="retry-event-chat-share" ${panel.sending?'disabled':''}>Tentar pendentes novamente</button>`:''}
- <button type="submit" class="btn btn-primary" ${panel.sending||!panel.selected.size?'disabled':''}>Enviar convite</button></div></form>`);
+ <button type="submit" class="btn btn-primary" ${panel.sending||panel.loading||!panel.selected.size?'disabled':''}>Enviar convite</button></div></form>`);
 }
-async function sendEventChatInvites(retry=false){
+async function sendEventChatInvites(retry=false,resendPeer=''){
  const uid=me(),id=state.selectedEvent,panel=state.eventChatShares.get(id);
  const event=state.events.find(item=>item.id===id);
- if(!uid||state.modal!=='event-chat-share'||!event||event.cancelled||!panel||panel.sending)return;
+ if(!uid||state.modal!=='event-chat-share'||!event||event.cancelled||!panel||panel.sending||panel.loading)return;
  const recipients=new Map(eventChatRecipients().map(item=>[item.peer,item]));
- const selected=retry?[...panel.deliveries.values()].filter(item=>item.status==='failed'):[...panel.selected]
-   .map(peer=>recipients.get(peer)).filter(Boolean);
+ const recipient=resendPeer&&recipients.get(resendPeer);
+ if(resendPeer&&(!recipient||panel.confirmResend!==resendPeer||!panel.previous.has(resendPeer)||panel.unknown.has(resendPeer)))return;
+ const selected=recipient?[{...recipient,resend:true}]:retry?[...panel.deliveries.values()].filter(item=>item.status==='failed'):[...panel.selected]
+   .filter(peer=>!panel.previous.has(peer)&&!panel.unknown.has(peer)).map(peer=>recipients.get(peer)).filter(Boolean);
+ panel.confirmResend=null;
  if(!selected.length)return;
  const text=eventChatMessage(event);
  if(text.length>1500){showToast('O convite é longo demais para enviar no chat.',true);return;}
@@ -2046,6 +2098,14 @@ async function sendEventChatInvites(retry=false){
      await Promise.all(selected.slice(offset,offset+5).map(async item=>{
        try{
          if(!recipients.has(item.peer))throw new Error('Conversa indisponível');
+         if(!item.resend){
+           const latest=await lastSentEventInvitation(item.thread,uid,id);
+           if(latest!==null){
+             panel.previous.set(item.peer,latest);
+             item.status='sent';
+             return;
+           }
+         }
          item.target??=firebase.doc(directMessagesCol(item.thread));
          item.payload??={senderId:uid,senderName:myName(),text,createdAt:now()};
          try{await firebase.setDoc(item.target,item.payload);}
@@ -2054,6 +2114,7 @@ async function sendEventChatInvites(retry=false){
            const saved=snapshot.data();
            if(saved?.senderId!==uid||saved.text!==item.payload.text)throw error;
          }
+         panel.previous.set(item.peer,item.payload.createdAt);
          item.status='sent';
        }catch{item.status='failed';}
      }));
@@ -3870,19 +3931,32 @@ async function onAction(btn) {
   case 'share-event-in-chat':
     if(state.modal==='event-detail'&&state.events.some(event=>event.id===state.selectedEvent&&!event.cancelled)){
       if(!state.eventChatShares.has(state.selectedEvent)){
-        state.eventChatShares.set(state.selectedEvent,{query:'',selected:new Set(),deliveries:new Map(),sending:false});
+        state.eventChatShares.set(state.selectedEvent,{query:'',selected:new Set(),deliveries:new Map(),previous:new Map(),unknown:new Set(),sending:false,loading:false,confirmResend:null});
       }
       openModal('event-chat-share');
+      await loadEventChatShareHistory();
     }
     return;
   case 'select-event-chat-recipient':{
     const panel=state.eventChatShares.get(state.selectedEvent);
-    if(state.modal!=='event-chat-share'||!panel||panel.sending||panel.deliveries.has(id)||!eventChatRecipients().some(item=>item.peer===id))return;
+    if(state.modal!=='event-chat-share'||!panel||panel.sending||panel.loading||panel.previous.has(id)||panel.unknown.has(id)||panel.deliveries.has(id)||!eventChatRecipients().some(item=>item.peer===id))return;
     if(panel.selected.has(id))panel.selected.delete(id);
     else panel.selected.add(id);
     render();
     return;
   }
+  case 'reload-event-invite-history':await loadEventChatShareHistory();return;
+  case 'prepare-event-invite-resend':{
+    const panel=state.eventChatShares.get(state.selectedEvent);
+    if(state.modal!=='event-chat-share'||!panel||panel.sending||panel.loading||!panel.previous.has(id)||panel.unknown.has(id))return;
+    panel.confirmResend=id;render();return;
+  }
+  case 'cancel-event-invite-resend':{
+    const panel=state.eventChatShares.get(state.selectedEvent);
+    if(panel){panel.confirmResend=null;render();}
+    return;
+  }
+  case 'confirm-event-invite-resend':await sendEventChatInvites(false,id);return;
   case 'retry-event-chat-share':await sendEventChatInvites(true);return;
   case 'copy-event-link':
     if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
