@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -187,7 +187,7 @@ function showCommunityChat(mode,open=false){
  state.directMuteMenu=null;
  stopDirectSavedMessages();
  state.chatMode=mode;state.chatTarget=null;
- state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+ state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  state.directMessages=[];
  render();
@@ -433,7 +433,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+      state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';
@@ -1762,6 +1762,7 @@ function renderDirectSearchMatches(results,limit){
  ${results.length>limit?'<button class="btn btn-soft" data-action="more-direct-matches">Ver mais resultados</button>':''}`;
 }
 function showDirectMessage(id){
+ state.directEventLimit=0;
  state.directSavedLimit=0;
  if(!state.directMessages.some(message=>message.id===id))return;
  state.directSearch=null;
@@ -1818,24 +1819,50 @@ function eventInvitationRsvp(event,schedule){
  const label=offered?'Confirmar vaga':waiting?'Entrar na lista de espera':'Confirmar presença';
  return `<button type="button" class="btn btn-primary btn-small" data-action="rsvp" data-value="invitation" data-id="${esc(event.id)}" ${state.busy?'disabled':''}>${label}</button>`;
 }
-function renderDirectMessageText(text,received=false){
- if(typeof text!=='string'||!text.startsWith(eventChatPrefix))return esc(text);
+function directEventInvitation(text){
+ if(typeof text!=='string'||!text.startsWith(eventChatPrefix))return null;
  const [title,address,...extra]=text.split('\n');
- if(!address||extra.length)return esc(text);
+ if(!address||extra.length)return null;
  try{
    const link=new URL(address);
-   if(!link.hash.startsWith('#event='))return esc(text);
+   if(!link.hash.startsWith('#event='))return null;
    const id=decodeURIComponent(link.hash.slice(7));
-   if(!id||link.href!==contentLink('event',id))return esc(text);
-   const event=state.events.find(item=>item.id===id);
-   const schedule=event&&viewerEventSchedule(event);
-   return `<div class="form-stack">
-   <strong>${esc(event?.title||title.slice(eventChatPrefix.length))}</strong>
-   ${schedule?`<span>${esc(event.cancelled?'Evento cancelado':[dateLabel(schedule.date),schedule.time].filter(Boolean).join(' · '))}</span>`:''}
-   ${received&&event?eventInvitationRsvp(event,schedule):''}
-   ${event?`<button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(id)}">Ver evento</button>`:`<a class="btn btn-soft btn-small" href="${esc(link.href)}">Ver evento</a>`}
-   </div>`;
- }catch{return esc(text);}
+   if(!id||link.href!==contentLink('event',id))return null;
+   return {id,title:title.slice(eventChatPrefix.length),url:link.href};
+ }catch{return null;}
+}
+function renderEventInvitation(invitation,event,received=false,listed=false){
+ const schedule=event&&viewerEventSchedule(event);
+ const uid=me();
+ const status=!listed?'':!event?'Evento indisponível':event.cancelled?'Cancelado':
+   event.attendees?.includes(uid)?'Presença confirmada':schedule.date<today()?'Encerrado':
+   eventSeatOffer(event)?'Vaga reservada':event.waitlist?.includes(uid)?'Na lista de espera':'Sem confirmação';
+ return `<div class="form-stack">
+ <strong>${esc(event?.title||invitation.title)}</strong>
+ ${schedule?`<span>${esc(!listed&&event.cancelled?'Evento cancelado':[dateLabel(schedule.date),schedule.time].filter(Boolean).join(' · '))}</span>`:''}
+ ${listed?`<span class="pill">${status}</span>`:received&&event?eventInvitationRsvp(event,schedule):''}
+ ${event?`<button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(invitation.id)}">Ver evento</button>`:`<a class="btn btn-soft btn-small" href="${esc(invitation.url)}">Ver evento</a>`}
+ </div>`;
+}
+function renderDirectMessageText(text,received=false){
+ const invitation=directEventInvitation(text);
+ if(!invitation)return esc(text);
+ return renderEventInvitation(invitation,state.events.find(item=>item.id===invitation.id),received);
+}
+function renderSharedDirectEvents(messages,limit){
+ const events=new Map(state.events.map(event=>[event.id,event]));
+ const invitations=messages.flatMap(message=>{
+   const invitation=!message.deletedAt&&directEventInvitation(message.text);
+   return invitation?[{invitation,message}]:[];
+ }).reverse();
+ if(!invitations.length)return '<p class="mini muted" role="status">Nenhum evento compartilhado nesta conversa.</p>';
+ return `${invitations.slice(0,limit).map(({invitation,message})=>`<article class="card form-stack" style="padding:12px;overflow-wrap:anywhere">
+ ${renderEventInvitation(invitation,events.get(invitation.id),false,true)}
+ <div class="toggle-row" style="flex-wrap:wrap">
+ <span class="mini muted">${message.senderId===me()?'Enviado':'Recebido'} · ${when(message.createdAt)}</span>
+ <button type="button" class="btn btn-outline btn-small" data-action="jump-direct-message" data-id="${esc(message.id)}">Ir à mensagem</button>
+ </div></article>`).join('')}
+ ${invitations.length>limit?'<button type="button" class="btn btn-soft" data-action="more-shared-direct-events">Ver mais eventos</button>':''}`;
 }
 function eventChatRecipients(){
  const uid=me();
@@ -2037,6 +2064,7 @@ function renderMessages() {
  const start=Math.max(0,end-150);
  const searching=!community&&state.chatTarget&&state.directSearch;
  const showingSaved=!community&&state.chatTarget&&state.directSavedLimit>0;
+ const showingEvents=!community&&state.chatTarget&&state.directEventLimit>0;
  const showingLinks=!community&&state.chatTarget&&state.directLinksLimit>0;
  const matches=searching?directSearchResults(messages,searching.query):[];
  const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
@@ -2088,6 +2116,7 @@ function renderMessages() {
  ${!community&&state.chatTarget?`<div class="chat-tools">
  <button class="btn btn-soft btn-small" data-action="toggle-direct-search" aria-expanded="${Boolean(searching)}">${searching?'Fechar busca':'Buscar na conversa'}</button>
  <button class="btn btn-soft btn-small" data-action="toggle-direct-links" aria-expanded="${Boolean(showingLinks)}">${showingLinks?'Fechar links':'Links compartilhados'}</button>
+ <button type="button" class="btn btn-soft btn-small" data-action="toggle-shared-direct-events" aria-expanded="${Boolean(showingEvents)}">${showingEvents?'Fechar eventos':'Eventos compartilhados'}</button>
  <button class="btn btn-soft btn-small" data-action="toggle-direct-saved-panel" aria-expanded="${Boolean(showingSaved)}">${showingSaved?'Fechar salvas':'Mensagens salvas'}</button>
  </div>
  <div id="mobile-chat-options" class="chat-options ${state.mobileChatOptions?'is-open':''}" role="group" aria-label="Opções da conversa">
@@ -2100,7 +2129,7 @@ function renderMessages() {
  </div>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
- <div id="chat-log" class="chat-log">${showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
+ <div id="chat-log" class="chat-log">${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
  ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
@@ -3178,7 +3207,7 @@ function closeModal(){
  state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){
- if(tab!=='messages'){state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;closeAllSavedDirectMessages();state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directReactionPicker=null;}
+ if(tab!=='messages'){state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;closeAllSavedDirectMessages();state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directReactionPicker=null;}
  if(tab!=='saved')state.savedSelection=null;
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
@@ -3217,7 +3246,7 @@ async function startDirect(uid,messageId=''){
    if(isMobileChatLayout()&&state.tab==='messages'&&!state.mobileChatOpen)state.mobileChatListScroll=window.scrollY;
    state.mobileChatOpen=true;state.mobileChatOptions=false;
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
-   state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+   state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
    const replyTo=readPrivateMessageDraft(privateMessageDraftKey(uid))?.replyTo;
    if(replyTo)state.directReply={id:replyTo};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
@@ -4083,6 +4112,7 @@ async function onAction(btn) {
   case 'mark-direct-unread':await markDirectThreadUnread();return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
   case 'toggle-direct-search':
+    state.directEventLimit=0;
     state.directSavedLimit=0;
     state.directLinksLimit=0;
     state.directSearch=state.directSearch?null:{query:'',limit:20};
@@ -4090,6 +4120,7 @@ async function onAction(btn) {
     document.getElementById('direct-search')?.focus();
     return;
   case 'toggle-direct-links':
+    state.directEventLimit=0;
     state.directSavedLimit=0;
     if(state.chatMode!=='direct'||!state.chatTarget)return;
     state.directSearch=null;
@@ -4100,7 +4131,7 @@ async function onAction(btn) {
   case 'toggle-direct-saved-message':await toggleSavedDirectMessage(id);return;
   case 'toggle-direct-saved-panel':{
     if(state.chatMode!=='direct'||!state.chatTarget)return;
-    state.directSearch=null;state.directLinksLimit=0;
+    state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;
     state.directSavedLimit=state.directSavedLimit?0:25;
     render();
     const log=document.getElementById('chat-log');if(log&&state.directSavedLimit)log.scrollTop=0;
@@ -4110,6 +4141,22 @@ async function onAction(btn) {
     if(!state.directSavedLimit)return;
     const scroll=document.getElementById('chat-log')?.scrollTop||0;
     state.directSavedLimit+=25;
+    render();
+    const log=document.getElementById('chat-log');if(log)log.scrollTop=scroll;
+    return;
+  }
+  case 'toggle-shared-direct-events':{
+    if(state.chatMode!=='direct'||!state.chatTarget)return;
+    state.directSearch=null;state.directSavedLimit=0;state.directLinksLimit=0;
+    state.directEventLimit=state.directEventLimit?0:25;
+    render();
+    const log=document.getElementById('chat-log');if(log&&state.directEventLimit)log.scrollTop=0;
+    return;
+  }
+  case 'more-shared-direct-events':{
+    if(!state.directEventLimit)return;
+    const scroll=document.getElementById('chat-log')?.scrollTop||0;
+    state.directEventLimit+=25;
     render();
     const log=document.getElementById('chat-log');if(log)log.scrollTop=scroll;
     return;
