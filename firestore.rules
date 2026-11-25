@@ -222,7 +222,7 @@ service cloud.firestore {
       match /savedEventSearches/{searchId} {
         function validSavedEventSearch() {
           let data = request.resource.data;
-          return data.keys().hasOnly(['name','query','hobby','community','format','city','alertSince'])
+          return data.keys().hasOnly(['name','query','hobby','community','format','city','alertSince','reviewedAt'])
             && validText(data.name, 1, 60) && validText(data.query, 0, 150)
             && validText(data.hobby, 0, 60) && validText(data.community, 0, 200)
             && data.format in ['', 'in-person', 'online']
@@ -230,9 +230,13 @@ service cloud.firestore {
             && (data.city in ['', 'mine'] || data.city.matches('city:.+'));
         }
         allow read, delete: if isMe(uid);
-        allow create: if isMe(uid) && validSavedEventSearch() && !('alertSince' in request.resource.data);
-        allow update: if isMe(uid) && validSavedEventSearch() && changedOnly(['alertSince'])
-          && (!('alertSince' in request.resource.data) || request.resource.data.alertSince == request.time);
+        allow create: if isMe(uid) && validSavedEventSearch()
+          && !request.resource.data.keys().hasAny(['alertSince','reviewedAt']);
+        allow update: if isMe(uid) && validSavedEventSearch()
+          && ((changedOnly(['alertSince'])
+                && (!('alertSince' in request.resource.data) || request.resource.data.alertSince == request.time))
+            || (changedOnly(['reviewedAt']) && resource.data.alertSince is timestamp
+                && request.resource.data.reviewedAt == request.time));
       }
       match /eventHobbyAlerts/{hobby} {
         function validHobbyAlert() {
