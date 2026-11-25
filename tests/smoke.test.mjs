@@ -18,6 +18,29 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the city filter prefers an explicit event city and still finds legacy venues', () => {
+  const handlers={};
+  const context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};state.profile={location:'São Paulo, SP'};
+    const schedule={date:'2099-05-01',time:'10:00',attendees:[]};
+    state.events=[
+      {...schedule,id:'explicit',title:'No parque',city:'São Paulo',location:'Parque'},
+      {...schedule,id:'legacy',title:'Na biblioteca',location:'Biblioteca, São Paulo'},
+      {...schedule,id:'different',title:'Outra cidade',city:'Santos',location:'Espaço São Paulo'},
+      {...schedule,id:'remote',title:'Sessão online',format:'online',location:'Online'}
+    ];
+  `,context);
+  handlers.change({target:{id:'event-city-only',checked:true}});
+  const agenda=vm.runInContext('renderEvents()',context);
+  assert.match(agenda,/No parque/);
+  assert.match(agenda,/Na biblioteca/);
+  assert.match(agenda,/Parque, São Paulo/);
+  assert.doesNotMatch(agenda,/Outra cidade|Sessão online/);
+  assert.equal(vm.runInContext("eventMatchesProfileCity(state.events[2],{location:'São Paulo'})",context),false);
+  assert.match(vm.runInContext("eventFormatFields('in-person','Parque','','','São Paulo')",context),/name="city".*value="São Paulo"/);
+});
+
 test('hobby notices include only new matching events and respect city and format', () => {
   const context=appContext();
   const alerts=vm.runInContext(`
