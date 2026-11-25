@@ -17,6 +17,34 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('private conversation name search normalizes names and works with the selected filter', () => {
+  const handlers={};
+  const context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.members=[{uid:'pin',name:'João da Silva'},{uid:'other',name:'Maria'}];
+    state.threads=[
+      {id:'owner_current',participants:['owner','current'],names:{current:'Joana'},createdAt:20},
+      {id:'owner_pin',participants:['owner','pin'],createdAt:5},
+      {id:'arch_owner',participants:['owner','arch'],names:{arch:'João Arquivado'}},
+      {id:'other_owner',participants:['owner','other']}
+    ];
+    state.pinnedDirectThreads=['owner_pin'];
+    state.archivedDirectThreads.set('arch_owner',0);
+    state.latestInboundAt.set('owner_current',20);
+  `,context);
+  handlers.input({target:{id:'direct-thread-search',value:'JOA'}});
+  const results=vm.runInContext('renderMessages()',context);
+  assert.match(results,/data-id="pin"[\s\S]*data-id="current"/);
+  assert.doesNotMatch(results,/data-id="arch"|data-id="other"/);
+  const unread=vm.runInContext("state.directThreadFilter='unread';renderMessages()",context);
+  assert.match(unread,/data-id="current"/);
+  assert.doesNotMatch(unread,/data-id="pin"/);
+  assert.match(vm.runInContext("state.directThreadFilter='archived';renderMessages()",context),/data-id="arch"/);
+  handlers.input({target:{id:'direct-thread-search',value:'xyz'}});
+  assert.match(vm.runInContext('renderMessages()',context),/Nenhuma conversa encontrada neste filtro/);
+});
+
 test('archived conversations return to the unread list when a newer message arrives', () => {
   const context=appContext();
   vm.runInContext(`
