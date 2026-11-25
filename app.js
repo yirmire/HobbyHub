@@ -989,7 +989,7 @@ function postCard(post) {
  <div class="author"><button data-action="person" data-id="${esc(post.userId)}">${esc(author)}</button><small>${icon('map')} ${esc(post.location||'Comunidade')} · ${when(post.createdAt)}</small></div>
  <span class="post-category">${emoji(post.hobby)} ${esc(post.hobby||'Interesses')}</span></div>
  ${post.groupId?`<button class="pill" style="margin-top:14px" data-action="view-group" data-id="${esc(post.groupId)}">${icon('users')} ${esc(short(state.groups.find(g=>g.id===post.groupId)?.name||'Comunidade',34))}</button>`:''}
- <div class="post-copy">${esc(post.content)}</div>${editedPostLabel(post)}
+ ${post.content?`<div class="post-copy">${esc(post.content)}</div>`:''}${renderSharedMedia(post,'na publicação')}${editedPostLabel(post)}
  ${recapEventButton(post)}
  ${post.format==='highlight'?`<div class="post-visual"><span class="emoji">${emoji(post.hobby)}</span><div><small>Uma paixão, mil possibilidades</small><br><strong>Compartilhe o que faz você feliz.</strong></div></div>`:''}
  <div class="post-stats"><span>${Array.isArray(post.likes)?post.likes.length:0} curtidas</span><span>${esc(post.location||'HobbyHub')}</span></div>
@@ -1934,10 +1934,22 @@ function mediaUrl(value) {
    return url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<=1500?url.href:'';
  } catch {return '';}
 }
-function renderProfileMedia(profile) {
- const photo=mediaUrl(profile.photoUrl),video=mediaUrl(profile.videoUrl);
+function renderSharedMedia(entry,context){
+ const photo=mediaUrl(entry.photoUrl),video=mediaUrl(entry.videoUrl);
  if(!photo&&!video)return '';
- return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada no perfil" loading="lazy" referrerpolicy="no-referrer">`:''}${video?`<video src="${esc(video)}" controls playsinline preload="none" aria-label="Vídeo compartilhado no perfil"></video><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
+ return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada ${context}" loading="lazy" referrerpolicy="no-referrer">`:''}${video?`<video src="${esc(video)}" controls playsinline preload="none" aria-label="Vídeo compartilhado ${context}"></video><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
+}
+function renderProfileMedia(profile){
+ return renderSharedMedia(profile,'no perfil');
+}
+function sharedMediaFields(entry={}){
+ return `<label class="field">Link HTTPS da foto (opcional)<input class="input" type="url" name="photoUrl" maxlength="1500" value="${esc(entry.photoUrl||'')}" placeholder="https://…/foto.jpg"></label>
+ <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(entry.videoUrl||'')}" placeholder="https://…/video.mp4"></label>`;
+}
+function readSharedMediaFields(value){
+ const photoUrl=mediaUrl(value('photoUrl')),videoUrl=mediaUrl(value('videoUrl'));
+ if((value('photoUrl')&&!photoUrl)||(value('videoUrl')&&!videoUrl))throw new Error('Use um link HTTPS válido para a foto ou o vídeo.');
+ return {photoUrl,videoUrl};
 }
 function blockButton(uid) {
  if(!uid||uid===me())return '';
@@ -3132,7 +3144,8 @@ function renderModal() {
    <button class="text-action" data-action="return-to-post">Voltar</button></div>`);
    if(post.userId!==me())return modalWrap('Publicação indisponível','<p>Esta publicação não está mais disponível.</p>');
    return modalWrap('Editar publicação',`<form id="edit-post-form" data-draft="true" data-draft-key="edit-post:${esc(post.id)}" class="form-stack">
-   <label class="field">Texto da publicação<textarea class="textarea" id="edit-post-content" name="content" required maxlength="2000">${esc(post.content)}</textarea></label>
+   <label class="field">Texto da publicação<textarea class="textarea" id="edit-post-content" name="content" maxlength="2000">${esc(post.content)}</textarea></label>
+   ${sharedMediaFields(post)}
    <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="return-to-post">Cancelar</button>
    <button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`);
  }
@@ -3255,7 +3268,9 @@ function renderModal() {
  return modalWrap(title,`<form id="post-form" data-draft="true" ${key?`data-draft-key="${esc(key)}"`:''} class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
  ${recap?'<p class="tip">Conte como foi o encontro, compartilhe dicas ou sugira uma próxima edição.</p>':''}
- <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" required maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
+ <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
+ ${sharedMediaFields()}
+ <p class="mini muted">Inclua texto, uma foto ou um vídeo. Use links diretos para os arquivos.</p>
  <div class="field-grid"><div class="field"><label>Seu interesse</label>${topicSelect(state.composingGroup?state.groups.find(g=>g.id===state.composingGroup)?.hobby:(state.topic==='Todos'?'Arte':state.topic))}</div><div class="field"><label>Formato</label><select class="select" name="format"><option value="text">Post simples</option><option value="highlight">Post em destaque</option></select></div></div>
  <div class="tip">A publicação pode ser vista por outras pessoas cadastradas. Não compartilhe dados pessoais sensíveis.</div>
  ${key?'<p class="mini muted">Seu rascunho é salvo neste aparelho.</p>':''}
@@ -3271,7 +3286,8 @@ function renderModal() {
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
- <strong class="mini">${esc(authorName(post))}</strong> ${editedPostLabel(post)}<p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>
+ <strong class="mini">${esc(authorName(post))}</strong> ${editedPostLabel(post)}${post.content?`<p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>`:''}
+ ${renderSharedMedia(post,'na publicação')}
  ${recapEventButton(post)}
  <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${postOptionsButton(post)}${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
@@ -3312,8 +3328,7 @@ function renderModal() {
  return modalWrap('Editar perfil',`<form id="profile-form" data-draft="true" class="form-stack"><div class="field-grid"><div class="field"><label>Seu nome</label><input class="input" name="name" value="${esc(p.name)}" maxlength="60" required></div><div class="field"><label>Avatar (emoji)</label><input class="input" name="avatar" value="${esc(p.avatar)}" maxlength="8" required></div></div>
  <div class="field"><label>Sua cidade ou região</label><input class="input" name="location" value="${esc(p.location)}" maxlength="90" required></div><div class="field"><label>Um pouco sobre você</label><textarea class="textarea" name="bio" maxlength="300">${esc(p.bio)}</textarea></div>
  <div class="field"><label>Seus hobbies (separados por vírgula)</label><input class="input" name="hobbies" maxlength="240" value="${esc((p.hobbies||[]).join(', '))}" placeholder="Fotografia, Leitura, Games"></div>
- <label class="field">Link HTTPS da foto (opcional)<input class="input" type="url" name="photoUrl" maxlength="1500" value="${esc(p.photoUrl||'')}" placeholder="https://…/foto.jpg"></label>
- <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(p.videoUrl||'')}" placeholder="https://…/video.mp4"></label>
+ ${sharedMediaFields(p)}
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>Salvar alterações</button></div></form>`);
  }
  if(state.modal==='comments'){
@@ -3322,7 +3337,7 @@ function renderModal() {
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
  const parent=state.comments.find(item=>item.id===state.commentReplyId&&!item.parentId);
- return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${recapEventButton(post)}</div>
+ return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${renderSharedMedia(post,'na publicação')}${recapEventButton(post)}</div>
  <div class="comment-list">${state.comments.length?renderCommentThreads(belongsToGroup,canModerate):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}:${state.commentReplyId||''}`)}" class="form-stack">
  ${state.commentReplyId?`<div class="toggle-row" style="flex-wrap:wrap"><strong>${parent?`Respondendo a ${esc(member(parent.userId)?.name||parent.userName||'Pessoa')}`:'Comentário original indisponível'}</strong>
@@ -3430,8 +3445,8 @@ function readPostDraft(key){
  if(!key)return null;
  try{
    const draft=JSON.parse(localStorage.getItem(key)||'null');
-   if(typeof draft?.content!=='string'||!draft.content.trim())return null;
-   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text'};
+   if(typeof draft?.content!=='string'||(!draft.content.trim()&&!draft.photoUrl&&!draft.videoUrl))return null;
+   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text',photoUrl:String(draft.photoUrl||'').slice(0,1500),videoUrl:String(draft.videoUrl||'').slice(0,1500)};
  }catch{return null;}
 }
 function removePostDraft(key){
@@ -3440,10 +3455,10 @@ function removePostDraft(key){
 function savePostDraft(form){
  const key=form.dataset.draftKey;
  if(state.modal!=='compose'||!key||key!==postDraftKey())return;
- const {content,hobby,format}=form.elements;
+ const {content,hobby,format,photoUrl,videoUrl}=form.elements;
  try{
-   if(!content.value.trim())removePostDraft(key);
-   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value}));
+   if(!content.value.trim()&&!photoUrl?.value&&!videoUrl?.value)removePostDraft(key);
+   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value,photoUrl:photoUrl?.value||'',videoUrl:videoUrl?.value||''}));
  }catch{}
 }
 function openPostComposer(){
@@ -5141,25 +5156,32 @@ document.addEventListener('submit',async(event)=>{
   case 'edit-post-form':await attempt(async()=>{
     const editor=state.postEditor,uid=me(),content=val('content');
     const post=state.posts.find(item=>item.id===editor?.id&&item.userId===uid);
-    if(!uid||!post||state.modal!=='edit-post'||!content||content.length>2000)return;
-    if(content!==post.content){
-      await firebase.updateDoc(ref('posts',post.id),{content,editedAt:firebase.serverTimestamp()});
+    if(!uid||!post||state.modal!=='edit-post'||content.length>2000)return;
+    const media=readSharedMediaFields(val);
+    if(!content&&!media.photoUrl&&!media.videoUrl)throw new Error('Inclua texto, uma foto ou um vídeo.');
+    const updates={};
+    if(content!==post.content)updates.content=content;
+    for(const [key,value] of Object.entries(media))if(value!==(post[key]||''))updates[key]=value;
+    if(Object.keys(updates).length){
+      await firebase.updateDoc(ref('posts',post.id),{...updates,editedAt:firebase.serverTimestamp()});
       if(me()!==uid)return;
       showToast('Publicação atualizada.');
     }
     if(state.postEditor===editor&&state.modal==='edit-post')returnFromPostEditor();
   });return;
   case 'post-form':await attempt(async()=>{
-    const content=val('content');if(!content||content.length>2000)return;
+    const content=val('content'),media=readSharedMediaFields(val);
+    if(content.length>2000)return;
+    if(!content&&!media.photoUrl&&!media.videoUrl)throw new Error('Inclua texto, uma foto ou um vídeo.');
     const uid=me(),key=postDraftKey(),originalDraft=readPostDraft(key);
     const groupId=state.composingGroup,eventRecapId=state.composingRecapId;
     if(eventRecapId){
       const event=state.events.find(item=>item.id===eventRecapId);
       if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
     }
-    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
+    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,...(media.photoUrl?{photoUrl:media.photoUrl}:{}),...(media.videoUrl?{videoUrl:media.videoUrl}:{}),format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
     const saved=readPostDraft(key);
-    if(key&&originalDraft?.content===data.content&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
+    if(key&&originalDraft?.content===data.content&&originalDraft?.photoUrl===(data.photoUrl||'')&&originalDraft?.videoUrl===(data.videoUrl||'')&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
     if(me()!==uid)return;
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
     closeModal();setTab(groupId?'groups':'home');
@@ -5385,8 +5407,7 @@ document.addEventListener('submit',async(event)=>{
     const name=val('name'),location=val('location'),avatarValue=val('avatar');
     if(!name||!location||!avatarValue)throw new Error('Nome, localidade e avatar são obrigatórios.');
     const hobbies=[...new Set(val('hobbies').split(',').map(s=>s.trim()).filter(Boolean))].slice(0,10);
-    const photoUrl=mediaUrl(val('photoUrl')),videoUrl=mediaUrl(val('videoUrl'));
-    if((val('photoUrl')&&!photoUrl)||(val('videoUrl')&&!videoUrl))throw new Error('Use um link HTTPS válido para a foto ou o vídeo.');
+    const {photoUrl,videoUrl}=readSharedMediaFields(val);
     await firebase.updateDoc(memberRef(me()),{name,location,avatar:avatarValue,bio:val('bio'),hobbies,photoUrl,videoUrl});
     closeModal();showToast('Perfil atualizado!');
   });return;
