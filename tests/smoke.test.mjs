@@ -1935,7 +1935,8 @@ test('dismissing and restoring an invitation only changes its personal inbox mar
 });
 
 test('the event inbox lists only received invitations and puts upcoming unanswered events first', async () => {
-  const context=appContext();
+  const handlers={};
+  const context=appContext(handlers);
   vm.runInContext(`
     state.user={uid:'reader'};state.tab='events';state.eventFilter='invites';
     state.threads=[{id:'peer_reader',participants:['reader','peer'],names:{peer:'Lia'}}];
@@ -1960,6 +1961,16 @@ test('the event inbox lists only received invitations and puts upcoming unanswer
   assert.match(html,/data-action="open-received-event-invite" data-id="early-msg" data-value="peer"/);
   assert.match(html,/data-action="rsvp" data-value="invitation" data-id="early"/);
   assert.doesNotMatch(html,/Meu convite/);
+  handlers.input({target:{id:'received-event-invite-search',value:'MAIS CEDO'}});
+  assert.match(vm.runInContext('renderEvents()',context),/Mais cedo/);
+  assert.doesNotMatch(vm.runInContext('renderEvents()',context),/Mais tarde/);
+  handlers.input({target:{id:'received-event-invite-search',value:'lia'}});
+  await vm.runInContext("onAction({dataset:{action:'filter-event-invite-status',value:'confirmed'}})",context);
+  assert.match(vm.runInContext('renderEvents()',context),/Presença confirmada/);
+  assert.doesNotMatch(vm.runInContext('renderEvents()',context),/Mais cedo|Mais tarde/);
+  vm.runInContext("state.events.find(event=>event.id==='later').waitlist=['reader']",context);
+  await vm.runInContext("onAction({dataset:{action:'filter-event-invite-status',value:'waitlist'}})",context);
+  assert.match(vm.runInContext('renderEvents()',context),/Mais tarde[\s\S]*Na lista de espera/);
 });
 
 test('shared events list private invitations in recent order with current statuses and source shortcuts', async () => {
