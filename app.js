@@ -87,7 +87,7 @@ const state = {
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
-  pinnedDirectThreads:[], latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
+  pinnedDirectThreads:[], directThreadFilter:'all', latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -353,7 +353,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
-      state.pinnedDirectThreads=[];state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
+      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
         if(me()!==user.uid)return;
@@ -1668,10 +1668,17 @@ function renderMessages() {
  const replying=blocked?null:originals?.get(state.directReply?.id);
  const savedDraft=community?null:readPrivateMessageDraft(privateMessageDraftKey());
  const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
+ const unreadOnly=state.directThreadFilter==='unread';
+ const threads=state.threads.filter(thread=>!unreadOnly||unreadThread(thread.id)).sort(compareDirectThreads);
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
  <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
- ${[...state.threads].sort(compareDirectThreads).map(t=>{
+ <div class="toggle-row" style="flex-wrap:wrap;margin:8px 0" role="group" aria-label="Filtrar conversas privadas">
+ <button class="btn ${unreadOnly?'btn-outline':'btn-soft'} btn-small" data-action="filter-direct-threads" data-value="all" aria-pressed="${!unreadOnly}">Todas</button>
+ <button class="btn ${unreadOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="unread" aria-pressed="${unreadOnly}">Não lidas</button>
+ </div>
+ ${unreadOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa não lida.</p>':''}
+ ${threads.map(t=>{
  const other=(t.participants||[]).find(id=>id!==me());if(!other)return '';
  const p=member(other),isActive=!community&&state.chatTarget?.uid===other;
  const unread=unreadThread(t.id);
@@ -3570,6 +3577,10 @@ async function onAction(btn) {
     await loadPersonTestimonials(recipient);
   });return;
   case 'open-dm':await startDirect(id);return;
+  case 'filter-direct-threads':
+    state.directThreadFilter=btn.dataset.value==='unread'?'unread':'all';
+    render();
+    return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
   case 'toggle-direct-search':
     state.directSearch=state.directSearch?null:{query:'',limit:20};
