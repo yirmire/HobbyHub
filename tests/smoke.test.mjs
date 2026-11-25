@@ -1884,7 +1884,7 @@ test('media preview loads on request, clears on edits and reports unavailable me
   assert.match(html,/<video[^>]*preload="metadata"/);
   assert.match(html,/alt="Lua &quot;cheia&quot; &lt;brilhante&gt;"/);
   assert.match(html,/Resumo do vídeo: Como observar a Lua/);
-  handlers.input({target:{name:'photoDescription',form:vm.runInContext('form',context)}});
+  handlers.input({target:{name:'photoDescription',matches:()=>false,form:vm.runInContext('form',context)}});
   assert.equal(vm.runInContext('preview.innerHTML',context),'');
   assert.equal(vm.runInContext('status.textContent',context),'');
   const notice={hidden:true};
