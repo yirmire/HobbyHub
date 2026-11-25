@@ -319,6 +319,14 @@ service cloud.firestore {
         allow read, delete: if isMe(uid);
         allow create, update: if isMe(uid) && threadMember(appId, threadId) && validArchiveMarker();
       }
+      match /privateMuted/{threadId} {
+        function validMutedThread() {
+          return request.resource.data.keys().hasOnly(['muted'])
+            && request.resource.data.muted == true;
+        }
+        allow read, delete: if isMe(uid);
+        allow create, update: if isMe(uid) && threadMember(appId, threadId) && validMutedThread();
+      }
       match /privateUnread/{threadId} {
         function validUnreadMarker() {
           return request.resource.data.keys().hasOnly(['unread'])
