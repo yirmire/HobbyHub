@@ -1864,7 +1864,7 @@ test('media preview loads on request, clears on edits and reports unavailable me
   vm.runInContext(`
     const preview={innerHTML:'',replaceChildren(){this.innerHTML='';}};
     const status={textContent:''};
-    const form={elements:{photoUrl:{value:''},videoUrl:{value:''}},
+    const form={elements:{photoUrl:{value:''},videoUrl:{value:''},photoDescription:{value:'Lua "cheia" <brilhante>'},videoDescription:{value:'Como observar a Lua'}},
       querySelector:selector=>selector==='[data-media-preview]'?preview:status};
     const button={dataset:{action:'preview-shared-media'},form};
   `,context);
@@ -1882,7 +1882,9 @@ test('media preview loads on request, clears on edits and reports unavailable me
   const html=vm.runInContext('preview.innerHTML',context);
   assert.match(html,/<img[^>]*loading="eager"/);
   assert.match(html,/<video[^>]*preload="metadata"/);
-  handlers.input({target:{matches:()=>true,form:vm.runInContext('form',context)}});
+  assert.match(html,/alt="Lua &quot;cheia&quot; &lt;brilhante&gt;"/);
+  assert.match(html,/Resumo do vídeo: Como observar a Lua/);
+  handlers.input({target:{name:'photoDescription',form:vm.runInContext('form',context)}});
   assert.equal(vm.runInContext('preview.innerHTML',context),'');
   assert.equal(vm.runInContext('status.textContent',context),'');
   const notice={hidden:true};
@@ -1900,12 +1902,15 @@ test('shared media renders direct HTTPS images and videos and survives a media-o
     state.user={uid:'reader'};state.modal='compose';
     const media={photoUrl:'https://example.test/photo.jpg',videoUrl:'https://example.test/video.mp4'};
     savePostDraft({dataset:{draftKey:postDraftKey()},elements:{
-      content:{value:''},hobby:{value:'Arte'},format:{value:''},photoUrl:{value:media.photoUrl},videoUrl:{value:media.videoUrl}
+      content:{value:''},hobby:{value:'Arte'},format:{value:''},photoUrl:{value:media.photoUrl},videoUrl:{value:media.videoUrl},
+      photoDescription:{value:'Lua crescente'},videoDescription:{value:'Como localizar a Lua'}
     }});
     renderProfileMedia(media)+renderSharedMedia(readPostDraft(postDraftKey()),'na publicação');
   `,context);
   assert.equal((html.match(/<img src="https:\/\/example\.test\/photo\.jpg"/g)||[]).length,2);
   assert.equal((html.match(/<video src="https:\/\/example\.test\/video\.mp4" controls playsinline/g)||[]).length,2);
+  assert.match(html,/alt="Lua crescente"/);
+  assert.match(html,/Resumo do vídeo: Como localizar a Lua/);
   assert.equal(vm.runInContext("renderSharedMedia({photoUrl:'https://user:pass@example.test/photo.jpg',videoUrl:'javascript:alert(1)'},'na publicação')",context),'');
 });
 
