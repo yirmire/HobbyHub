@@ -46,6 +46,18 @@ await request(sender, 'POST', `dm_threads?documentId=${threadId}`, 200, {
 });
 await request(recipient, 'GET', thread, 200);
 await request(other, 'GET', thread, 403);
+const savedEventSearchPath=`public/data/members/${recipient.localId}/savedEventSearches/photo`;
+const savedEventSearchFields=Object.fromEntries(Object.entries({
+  name:'Fotografia em Petrópolis',query:'caminhada',hobby:'Fotografia',community:'',format:'in-person',city:'city:petropolis'
+}).map(([key,stringValue])=>[key,{stringValue}]));
+await request(recipient,'PATCH',savedEventSearchPath,403,{...savedEventSearchFields,format:{stringValue:'invalid'}});
+await request(sender,'PATCH',savedEventSearchPath,403,savedEventSearchFields);
+await request(recipient,'PATCH',savedEventSearchPath,200,savedEventSearchFields);
+await request(recipient,'GET',savedEventSearchPath,200);
+await request(sender,'GET',savedEventSearchPath,403);
+await request(sender,'DELETE',savedEventSearchPath,403);
+await request(recipient,'DELETE',savedEventSearchPath,200);
+
 const hobbyAlertPath=`public/data/members/${recipient.localId}/eventHobbyAlerts/Fotografia`;
 async function saveHobbyAlert(user,scope,expected){
   const response=await fetch(base.split('/documents/')[0]+'/documents:commit',{
