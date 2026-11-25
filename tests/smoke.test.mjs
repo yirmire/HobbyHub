@@ -1910,6 +1910,30 @@ test('online event time zones preserve the same instant across local dates, conf
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
 });
 
+test('dismissing and restoring an invitation only changes its personal inbox marker', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='events';state.eventFilter='invites';
+    state.events=[{id:'walk',title:'Caminhada',date:'2099-05-07',time:'10:30'}];
+    state.receivedEventInvites={limit:25,entries:[{id:'message',peer:'peer',thread:{id:'peer_reader'},invitation:{id:'walk'}}]};
+    showToast=()=>{};
+    firebase={doc:(_db,...parts)=>parts.join('/'),
+      setDoc:async(path,data)=>{state.dismissWrite={path,data};state.dismissedEventInviteIds.add('peer_reader:message');},
+      deleteDoc:async path=>{state.restoredPath=path;state.dismissedEventInviteIds.clear();}};
+  `,context);
+  assert.match(vm.runInContext('renderEvents()',context),/Dispensar convite/);
+  await vm.runInContext("onAction({dataset:{action:'dismiss-event-invite',id:'message',value:'peer'}})",context);
+  assert.match(vm.runInContext('state.dismissWrite.path',context),/members\/reader\/dismissedEventInvites\/peer_reader:message$/);
+  assert.doesNotMatch(vm.runInContext('renderEvents()',context),/Caminhada/);
+  await vm.runInContext("onAction({dataset:{action:'filter-dismissed-event-invites',value:'dismissed'}})",context);
+  const dismissed=vm.runInContext('renderEvents()',context);
+  assert.match(dismissed,/Caminhada[\s\S]*Restaurar convite/);
+  assert.doesNotMatch(dismissed,/data-action="rsvp"/);
+  await vm.runInContext("onAction({dataset:{action:'restore-event-invite',id:'message',value:'peer'}})",context);
+  assert.equal(vm.runInContext('state.restoredPath===state.dismissWrite.path',context),true);
+  assert.match(vm.runInContext('renderEvents()',context),/Nenhum convite dispensado/);
+});
+
 test('the event inbox lists only received invitations and puts upcoming unanswered events first', async () => {
   const context=appContext();
   vm.runInContext(`

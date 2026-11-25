@@ -301,6 +301,23 @@ service cloud.firestore {
         allow get: if isMe(uid);
         allow create, update: if isMe(uid) && validPinnedThreads();
       }
+      match /dismissedEventInvites/{markerId} {
+        function receivedInvitation(threadId, messageId) {
+          let message = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(threadId)/messages/$(messageId)).data;
+          return message.senderId != uid && !('deletedAt' in message)
+            && message.text is string && message.text.matches('(?s)Convite para evento: .*');
+        }
+        function validDismissedInvite() {
+          let data = request.resource.data;
+          return data.keys().hasOnly(['threadId', 'messageId'])
+            && validText(data.threadId, 1, 300) && data.threadId.matches('[^/]+')
+            && validText(data.messageId, 1, 200) && data.messageId.matches('[^/]+')
+            && markerId == data.threadId + ':' + data.messageId
+            && threadMember(appId, data.threadId) && receivedInvitation(data.threadId, data.messageId);
+        }
+        allow read, delete: if isMe(uid);
+        allow create, update: if isMe(uid) && validDismissedInvite();
+      }
       match /privateSaved/{threadId}/messages/{messageId} {
         function validSavedMessage() {
           let message = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(threadId)/messages/$(messageId)).data;

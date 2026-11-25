@@ -102,6 +102,18 @@ const message = {
 };
 await request(sender, 'POST', `${thread}/messages?documentId=hello`, 200, message);
 const received = await request(recipient, 'GET', `${thread}/messages/hello`, 200);
+await request(sender,'POST',`${thread}/messages?documentId=invite`,200,{
+  ...message,text:{stringValue:'Convite para evento: Caminhada\nhttps://example.test/#event=walk'}
+});
+const inviteMarker=messageId=>({threadId:{stringValue:threadId},messageId:{stringValue:messageId}});
+const dismissedPath=`public/data/members/${recipient.localId}/dismissedEventInvites/${threadId}:invite`;
+await request(recipient,'PATCH',dismissedPath,200,inviteMarker('invite'));
+await request(sender,'GET',dismissedPath,403);
+await request(sender,'DELETE',dismissedPath,403);
+await request(sender,'PATCH',`public/data/members/${sender.localId}/dismissedEventInvites/${threadId}:invite`,403,inviteMarker('invite'));
+await request(recipient,'PATCH',dismissedPath.replace(/invite$/,'hello'),403,inviteMarker('hello'));
+await request(recipient,'DELETE',dismissedPath,200);
+await request(recipient,'GET',`${thread}/messages/invite`,200);
 const savedPath = `public/data/members/${recipient.localId}/privateSaved/${threadId}/messages/hello`;
 const savedMessage = {saved:{booleanValue:true}};
 await request(recipient, 'PATCH', savedPath, 200, savedMessage);
@@ -113,7 +125,7 @@ await request(recipient, 'PATCH', savedPath.replace(/hello$/, 'missing'), 403, s
 await request(recipient, 'DELETE', savedPath, 200);
 assert.equal(received.fields.text.stringValue, message.text.stringValue);
 const inbox = await request(recipient, 'GET', `${thread}/messages`, 200);
-assert.equal(inbox.documents.length, 1);
+assert.equal(inbox.documents.length, 2);
 await request(other, 'GET', `${thread}/messages/hello`, 403);
 await request(other, 'POST', `${thread}/messages?documentId=other`, 403, {
   ...message,
