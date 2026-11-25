@@ -18,6 +18,23 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('the compact event filter button counts only active facets and preserves them when folded', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.eventSearch='caminhada';state.eventHobby='Fotografia';state.eventCityFilter='mine';
+  `,context);
+  const closed=vm.runInContext('renderEvents()',context);
+  assert.match(closed,/data-action="toggle-event-filters" aria-expanded="false"[^>]*>Filtros \(2\)/);
+  assert.match(closed,/data-action="saved-event-searches"[^>]*>Minhas buscas/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-event-filters'}})",context);
+  assert.match(vm.runInContext('renderEvents()',context),/event-extra-filters is-open/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-event-filters'}})",context);
+  assert.match(vm.runInContext('renderEvents()',context),/Filtros \(2\)/);
+  await vm.runInContext("onAction({dataset:{action:'clear-event-filters'}})",context);
+  assert.doesNotMatch(vm.runInContext('renderEvents()',context),/Filtros \(2\)/);
+});
+
 test('saved search news counts matching events and sorts them from the next date', async () => {
   const context=appContext();
   vm.runInContext(`
