@@ -413,6 +413,17 @@ await request(recipient, 'PATCH', rsvp, 200, { attendees: both });
 await request(recipient, 'PATCH', `${group}?updateMask.fieldPaths=members`, 200, { members: organizerOnly });
 await request(recipient, 'PATCH', rsvp, 200, { attendees: organizerOnly });
 const { groupId: _groupId, ...standalone } = eventFields;
+await request(sender,'POST',events+'?documentId=event-city',200,{...standalone,city:str('Nova Friburgo, RJ')});
+await request(sender,'POST',events+'?documentId=bad-city',403,{...standalone,city:str('x'.repeat(91))});
+await request(sender,'POST',events+'?documentId=legacy-city',200,standalone);
+const cityEdit=events+'/legacy-city?updateMask.fieldPaths=city&updateMask.fieldPaths=revision&updateMask.fieldPaths=previousSchedule';
+const cityEditFields={city:str('Nova Friburgo, RJ'),revision:{integerValue:'1'},previousSchedule:{mapValue:{fields:{
+  date:standalone.date,time:standalone.time,endTime:str(''),timeZone:str(''),location:standalone.location,
+  city:str(''),revision:{integerValue:'1'}
+}}}};
+await request(recipient,'PATCH',cityEdit,403,cityEditFields);
+await request(sender,'PATCH',cityEdit,200,cityEditFields);
+assert.equal((await request(recipient,'GET',events+'/legacy-city',200)).fields.city.stringValue,'Nova Friburgo, RJ');
 await request(sender, 'POST', `${events}?documentId=standalone`, 200, standalone);
 await request(recipient, 'PATCH', `${events}/standalone?updateMask.fieldPaths=attendees`, 200, { attendees: both });
 const updateDetails = `${events}/standalone?updateMask.fieldPaths=date&updateMask.fieldPaths=time&updateMask.fieldPaths=location&updateMask.fieldPaths=revision&updateMask.fieldPaths=previousSchedule`;
