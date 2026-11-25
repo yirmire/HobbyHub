@@ -1492,6 +1492,24 @@ function exportableWeekEvents(days){
    return event.cancelled!==true&&event.attendees?.includes(me())&&date>=first&&date<=last&&hasCalendarSchedule(event);
  }).sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)));
 }
+function renderUpcomingEventsByDay(events,date){
+ const todayKey=localDateKey(date),tomorrowKey=tomorrow(date);
+ const days=new Map();
+ for(const event of events){
+   const key=viewerEventSchedule(event).date;
+   if(!days.has(key))days.set(key,[]);
+   days.get(key).push(event);
+ }
+ return `<div class="form-stack">${[...days].map(([day,entries])=>{
+   const weekday=new Date(day+'T12:00:00');
+   const fullDate=Number.isFinite(weekday.getTime())?weekday.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'}):'Data a combinar';
+   const title=day===todayKey?'Hoje':day===tomorrowKey?'Amanhã':fullDate.charAt(0).toUpperCase()+fullDate.slice(1);
+   return `<section class="form-stack" aria-labelledby="upcoming-day-${esc(day)}">
+   <h2 id="upcoming-day-${esc(day)}" style="font-size:16px;margin:0">${esc(title)}</h2>
+   <div class="grid-two">${entries.map(event=>eventCard(event)).join('')}</div>
+   </section>`;
+ }).join('')}</div>`;
+}
 function renderEventWeek(days,events){
  const sections=days.map(day=>{
    const entries=events.filter(event=>viewerEventSchedule(event).date===localDateKey(day));
@@ -1770,7 +1788,7 @@ function renderEvents(now=new Date()) {
  </div>
  ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
  ${eventFilter==='history'&&state.personalHistory.error?'<p class="tip">Alguns check-ins não puderam ser carregados. <button class="text-action" data-action="refresh-event-history">Tentar novamente</button></p>':''}
- ${weekly?renderEventWeek(days,events):events.length?`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`:eventFilter==='history'&&state.personalHistory.loading?'':emptyAgenda}
+ ${weekly?renderEventWeek(days,events):events.length?(eventFilter==='upcoming'?renderUpcomingEventsByDay(events,now):`<div class="grid-two">${events.map(event=>eventCard(event)).join('')}</div>`):eventFilter==='history'&&state.personalHistory.loading?'':emptyAgenda}
  <p class="tip" style="margin-top:18px">Dica de segurança: combine encontros públicos, avise alguém de confiança e evite divulgar endereços residenciais na rede.</p>`;
 }
 function unreadFollowedComments(postId){
