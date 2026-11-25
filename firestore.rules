@@ -303,9 +303,10 @@ service cloud.firestore {
       }
       match /privateSaved/{threadId}/messages/{messageId} {
         function validSavedMessage() {
+          let message = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(threadId)/messages/$(messageId)).data;
           return request.resource.data.keys().hasOnly(['saved'])
             && request.resource.data.saved == true
-            && exists(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(threadId)/messages/$(messageId));
+            && message.text is string && !('deletedAt' in message);
         }
         allow read, delete: if isMe(uid);
         allow create, update: if isMe(uid) && threadMember(appId, threadId) && validSavedMessage();
@@ -957,22 +958,33 @@ service cloud.firestore {
             && after.diff(before).affectedKeys().hasOnly([uid])
             && (!(uid in after) || after[uid] in ['👍', '❤️', '😂', '😮', '🙌']);
         }
-        function validTextEdit() {
-          let data = request.resource.data;
+        function authorWithinEditWindow() {
           let sentAt = resource.data.createdAt;
           let at = request.time.toMillis();
           return resource.data.senderId == request.auth.uid
-            && sentAt <= at && at < sentAt + 900000
+            && sentAt <= at && at < sentAt + 900000;
+        }
+        function validTextEdit() {
+          let data = request.resource.data;
+          return authorWithinEditWindow()
             && data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
             && data.text != resource.data.text && data.editedAt == request.time;
+        }
+        function validMessageRemoval() {
+          let data = request.resource.data;
+          return authorWithinEditWindow()
+            && data.diff(resource.data).affectedKeys().hasOnly(['text', 'deletedAt'])
+            && data.text == '' && data.deletedAt == request.time;
         }
         allow read: if threadMember(appId, id);
         allow create: if loggedIn() && canSendDirectMessage(appId, id)
           && request.resource.data.senderId == request.auth.uid
           && validDirectMessage(request.resource.data)
-          && !request.resource.data.keys().hasAny(['reactions', 'editedAt']);
+          && !request.resource.data.keys().hasAny(['reactions', 'editedAt', 'deletedAt']);
         allow update: if loggedIn() && canSendDirectMessage(appId, id)
-          && validDirectMessage(request.resource.data) && (validReactionUpdate() || validTextEdit());
+          && !('deletedAt' in resource.data)
+          && ((validDirectMessage(request.resource.data) && (validReactionUpdate() || validTextEdit()))
+            || validMessageRemoval());
         allow delete: if false;
       }
     }
