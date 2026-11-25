@@ -957,13 +957,22 @@ service cloud.firestore {
             && after.diff(before).affectedKeys().hasOnly([uid])
             && (!(uid in after) || after[uid] in ['👍', '❤️', '😂', '😮', '🙌']);
         }
+        function validTextEdit() {
+          let data = request.resource.data;
+          let sentAt = resource.data.createdAt;
+          let at = request.time.toMillis();
+          return resource.data.senderId == request.auth.uid
+            && sentAt <= at && at < sentAt + 900000
+            && data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
+            && data.text != resource.data.text && data.editedAt == request.time;
+        }
         allow read: if threadMember(appId, id);
         allow create: if loggedIn() && canSendDirectMessage(appId, id)
           && request.resource.data.senderId == request.auth.uid
           && validDirectMessage(request.resource.data)
-          && !('reactions' in request.resource.data);
+          && !request.resource.data.keys().hasAny(['reactions', 'editedAt']);
         allow update: if loggedIn() && canSendDirectMessage(appId, id)
-          && validDirectMessage(request.resource.data) && validReactionUpdate();
+          && validDirectMessage(request.resource.data) && (validReactionUpdate() || validTextEdit());
         allow delete: if false;
       }
     }

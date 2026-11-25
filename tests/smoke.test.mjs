@@ -17,6 +17,22 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('only the sender can edit a recent direct message and edited messages are labeled', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'owner'};state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=[
+      {id:'old',senderId:'owner',createdAt:now()-directMessageEditWindow,text:'Antiga'},
+      {id:'peer',senderId:'peer',createdAt:now()-100,text:'Recebida',editedAt:{}},
+      {id:'own',senderId:'owner',createdAt:now()-100,text:'Minha'}
+    ];
+    renderMessages()
+  `,context);
+  assert.match(html,/data-action="edit-direct-message" data-id="own"/);
+  assert.doesNotMatch(html,/data-action="edit-direct-message" data-id="(?:old|peer)"/);
+  assert.match(html,/Editada/);
+});
+
 test('muting a private conversation changes the navigation badge but keeps it in the unread filter', async () => {
   const context=appContext();
   vm.runInContext(`
