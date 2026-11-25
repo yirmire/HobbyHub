@@ -131,6 +131,7 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ state.savedEventSearchNews=null;
  state.receivedEventInvites=null;state.sentEventInvites=null;state.dismissedEventInviteIds.clear();state.showDismissedEventInvites=false;
  if(['invites','sent-invites'].includes(state.eventFilter))state.eventFilter='upcoming';
  state.eventChatShares.clear();
@@ -747,20 +748,18 @@ function notificationItems(){
    }
  }
  const date=new Date(),day=localDateKey(date),nextDay=tomorrow(date);
- const savedSearchAlerts=[...state.savedEventSearches.values()].filter(search=>search.alertSince)
-   .map(search=>({...search,query:norm(search.query),since:search.alertSince.toMillis()}));
+ const savedSearchAlerts=[...state.savedEventSearches.values()].filter(search=>search.alertSince).map(savedSearchAlert);
  for(const event of state.events){
    const alert=state.eventHobbyAlerts.get(event.hobby);
    const since=alert?.since?.toMillis?.();
-   const created=typeof event.createdAt==='number'?event.createdAt:event.createdAt?.toMillis?.();
-   if(!Number.isFinite(created)||event.cancelled===true||event.createdBy===me()||event.attendees?.includes(me()))continue;
    if(!alert&&!savedSearchAlerts.length)continue;
-   if(viewerEventSchedule(event).date<day)continue;
+   const created=newEventAlertTime(event,day);
+   if(!Number.isFinite(created))continue;
    const group=state.groups.find(item=>item.id===event.groupId);
    const search=savedSearchAlerts.find(item=>created>=item.since&&eventMatchesSearch(event,item,group));
    if(!search&&!(Number.isFinite(since)&&created>=since&&matchesHobbyEventAlert(event,alert)))continue;
    items.push({type:'event-hobby-alert',eventId:event.id,eventTitle:event.title,actorId:event.createdBy,
-     groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id,searchName:search?.name});
+     groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id,searchName:search?.name,searchId:search?.id});
  }
  const reminders=state.notificationSettings.eventReminders||'eve';
  const reminderTime=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();
@@ -873,6 +872,7 @@ function renderNotifications(){
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
+   ${item.searchId?`<button type="button" class="text-action" data-action="view-saved-event-search-news" data-id="${esc(item.searchId)}">Ver novidades</button>`:''}
    ${isUnread?`<button class="text-action" data-action="read-notification" data-id="${esc(item.readKey)}" aria-label="Marcar como lida: ${esc(message)}">Marcar como lida</button>`:''}</div></div>`;
  }).join('');
  const options=[['all','Todas'],['unread','Não lidas']].map(([id,label])=>
@@ -1632,15 +1632,52 @@ function eventMatchesSearch(event,search,group){
  if(search.city&&!eventMatchesCity(event,city,group))return false;
  return !search.query||norm([event.title,event.description,event.location,event.city,group?.name,group?.location].join(' ')).includes(search.query);
 }
+function newEventAlertTime(event,day){
+ if(event.cancelled||event.createdBy===me()||event.attendees?.includes(me())||
+    state.blockedIds.includes(event.createdBy)||state.mutedCommunityIds.has(event.groupId)||
+    viewerEventSchedule(event).date<day)return NaN;
+ return typeof event.createdAt==='number'?event.createdAt:event.createdAt?.toMillis?.();
+}
+function savedSearchAlert(search){
+ return {...search,query:norm(search.query),since:search.alertSince.toMillis()};
+}
+function savedEventSearchNews(search){
+ if(!search?.alertSince)return [];
+ const alert=savedSearchAlert(search),day=today();
+ return state.events.filter(event=>newEventAlertTime(event,day)>=alert.since&&
+   eventMatchesSearch(event,alert,state.groups.find(group=>group.id===event.groupId)));
+}
+function renderSavedEventSearchNews(){
+ const panel=state.savedEventSearchNews;
+ const search=state.savedEventSearches.get(panel?.id);
+ const events=savedEventSearchNews(search).sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)));
+ return modalWrap('Novidades da busca',`<div class="form-stack">
+ <button type="button" class="text-action" data-action="back-saved-event-search-news">${panel?.previous==='notifications'?'Voltar às notificações':'Voltar a Minhas buscas'}</button>
+ ${search?`<h3>${esc(search.name)}</h3>`:''}
+ ${!events.length?'<p class="tip" role="status">Nenhum evento novo nesta busca.</p>':''}
+ ${events.slice(0,panel?.limit||25).map(event=>`<article class="card form-stack" style="padding:12px">
+ <strong>${esc(event.title)}</strong>
+ <p class="mini muted">${esc(dateLabel(viewerEventSchedule(event).date))} ${esc(eventTimeLabel(event))}</p>
+ <button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(event.id)}">Ver evento</button>
+ </article>`).join('')}
+ ${events.length>(panel?.limit||25)?'<button type="button" class="btn btn-outline" data-action="more-saved-event-search-news">Ver mais eventos</button>':''}
+ </div>`);
+}
 function renderSavedEventSearches(){
  const entries=[...state.savedEventSearches.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
  const canSave=Object.values(currentEventSearch()).some(Boolean);
  return modalWrap('Minhas buscas',`<div class="form-stack">
  ${!state.savedEventSearchesLoaded?'<p class="tip" role="status">Carregando buscas salvas…</p>':`
- ${entries.map(entry=>`<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
+ ${entries.map(entry=>{
+ const count=savedEventSearchNews(entry).length;
+ return `<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
  <button type="button" class="btn btn-soft btn-small" data-action="apply-event-search" data-id="${esc(entry.id)}">${esc(entry.name)}</button>
  <button type="button" class="btn btn-outline btn-small" data-action="toggle-event-search-alert" data-id="${esc(entry.id)}" aria-pressed="${Boolean(entry.alertSince)}" ${state.busy?'disabled':''}>${entry.alertSince?'Aviso ligado':'Avisar sobre novos eventos'}</button>
- <button type="button" class="btn btn-outline btn-small" data-action="delete-event-search" data-id="${esc(entry.id)}" aria-label="Remover busca ${esc(entry.name)}" ${state.busy?'disabled':''}>Remover</button></div>`).join('')}
+ <button type="button" class="btn btn-outline btn-small" data-action="delete-event-search" data-id="${esc(entry.id)}" aria-label="Remover busca ${esc(entry.name)}" ${state.busy?'disabled':''}>Remover</button>
+ ${entry.alertSince?`<div class="toggle-row" style="flex-wrap:wrap"><small>${count} ${count===1?'evento novo':'eventos novos'}</small>
+ <button type="button" class="text-action" data-action="view-saved-event-search-news" data-id="${esc(entry.id)}">Ver novidades</button></div>`:''}
+ </div>`;
+ }).join('')}
  ${!entries.length?'<p class="mini muted">Nenhuma busca salva.</p>':''}`}
  ${canSave?`<form id="save-event-search-form" class="form-stack" data-draft="true" data-draft-key="save-event-search-form">
  <label class="field">Nome para a busca atual<input class="input" name="name" maxlength="60" required placeholder="Ex.: Fotografia em Petrópolis"></label>
@@ -2989,6 +3026,7 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='saved-event-search-news')return renderSavedEventSearchNews();
  if(state.modal==='saved-event-searches')return renderSavedEventSearches();
  if(state.modal==='event-hobby-alerts')return renderEventHobbyAlerts();
  if(state.modal==='event-chat-share')return renderEventChatShare();
@@ -3483,6 +3521,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.savedEventSearchNews=null;
  state.directMessageEditor=null;
  state.myCommentActivity=null;
  state.savedNotePostId=null;
@@ -3978,6 +4017,21 @@ async function onAction(btn) {
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
   case 'saved-event-searches':openModal('saved-event-searches');return;
+  case 'view-saved-event-search-news':
+    if(!['saved-event-searches','notifications'].includes(state.modal)||!state.savedEventSearches.get(id)?.alertSince)return;
+    state.savedEventSearchNews={id,previous:state.modal,limit:25};
+    openModal('saved-event-search-news');
+    return;
+  case 'back-saved-event-search-news':
+    if(state.modal==='saved-event-search-news'){
+      const previous=state.savedEventSearchNews?.previous||'saved-event-searches';
+      state.savedEventSearchNews=null;
+      openModal(previous);
+    }
+    return;
+  case 'more-saved-event-search-news':
+    if(state.modal==='saved-event-search-news'&&state.savedEventSearchNews){state.savedEventSearchNews.limit+=25;render();}
+    return;
   case 'apply-event-search':{
     const entry=state.savedEventSearches.get(id);
     if(state.modal!=='saved-event-searches'||!entry)return;
