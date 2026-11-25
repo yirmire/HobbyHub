@@ -87,6 +87,15 @@ const message = {
 };
 await request(sender, 'POST', `${thread}/messages?documentId=hello`, 200, message);
 const received = await request(recipient, 'GET', `${thread}/messages/hello`, 200);
+const savedPath = `public/data/members/${recipient.localId}/privateSaved/${threadId}/messages/hello`;
+const savedMessage = {saved:{booleanValue:true}};
+await request(recipient, 'PATCH', savedPath, 200, savedMessage);
+await request(recipient, 'GET', savedPath, 200);
+await request(sender, 'GET', savedPath, 403);
+await request(sender, 'DELETE', savedPath, 403);
+await request(other, 'PATCH', `public/data/members/${other.localId}/privateSaved/${threadId}/messages/hello`, 403, savedMessage);
+await request(recipient, 'PATCH', savedPath.replace(/hello$/, 'missing'), 403, savedMessage);
+await request(recipient, 'DELETE', savedPath, 200);
 assert.equal(received.fields.text.stringValue, message.text.stringValue);
 const inbox = await request(recipient, 'GET', `${thread}/messages`, 200);
 assert.equal(inbox.documents.length, 1);

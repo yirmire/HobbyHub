@@ -17,6 +17,26 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('saved private messages show only personal markers and can jump to their source', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=[
+      {id:'saved',text:'Endereço <principal>',senderId:'peer',createdAt:1},
+      {id:'other',text:'Mensagem comum',senderId:'owner',createdAt:2}
+    ];
+    state.directSavedIds=new Set(['saved']);
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-saved-panel'}})",context);
+  const panel=vm.runInContext('renderMessages()',context);
+  assert.match(panel,/Endereço &lt;principal&gt;/);
+  assert.match(panel,/data-action="toggle-direct-saved-message" data-id="saved"[^>]*>Remover dos salvos/);
+  assert.doesNotMatch(panel,/Mensagem comum/);
+  await vm.runInContext("onAction({dataset:{action:'jump-direct-message',id:'saved'}})",context);
+  assert.equal(vm.runInContext('state.directSavedLimit',context),0);
+  assert.equal(vm.runInContext('state.directHistoryAnchor',context),'saved');
+});
+
 test('shared private links render newest first with safe addresses and can jump to the source', async () => {
   const context=appContext();
   vm.runInContext(`
