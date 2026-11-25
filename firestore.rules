@@ -9,8 +9,15 @@ service cloud.firestore {
     function validMediaLink(link) {
       return link is string && (link == '' || (link.size() <= 1500 && link.matches('https://[^ ]+')));
     }
-    function validProfileMedia(data) {
-      return validMediaLink(data.get('photoUrl', '')) && validMediaLink(data.get('videoUrl', ''));
+    function validMediaDescription(description, link, limit) {
+      return validText(description, 0, limit) && (description == '' || link != '');
+    }
+    function validSharedMedia(data) {
+      let photo = data.get('photoUrl', '');
+      let video = data.get('videoUrl', '');
+      return validMediaLink(photo) && validMediaLink(video)
+        && validMediaDescription(data.get('photoDescription', ''), photo, 300)
+        && validMediaDescription(data.get('videoDescription', ''), video, 800);
     }
     function changedOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
@@ -135,17 +142,17 @@ service cloud.firestore {
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.avatar, 1, 8)
         && validText(request.resource.data.bio, 0, 300)
-        && validProfileMedia(request.resource.data)
+        && validSharedMedia(request.resource.data)
         && request.resource.data.hobbies is list
         && request.resource.data.hobbies.size() <= 10;
       allow update: if isMe(uid)
         && resource.data.uid == uid
-        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies', 'photoUrl', 'videoUrl'])
+        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies', 'photoUrl', 'videoUrl', 'photoDescription', 'videoDescription'])
         && validText(request.resource.data.name, 1, 60)
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.avatar, 1, 8)
         && validText(request.resource.data.bio, 0, 300)
-        && validProfileMedia(request.resource.data)
+        && validSharedMedia(request.resource.data)
         && request.resource.data.hobbies is list
         && request.resource.data.hobbies.size() <= 10;
       allow delete: if false;
@@ -447,7 +454,7 @@ service cloud.firestore {
       allow read: if loggedIn();
       allow create: if loggedIn() && (ordinaryPost() || restoresGroupPost(appId, postId, request.resource.data));
       function validPostContent(data) {
-        return validProfileMedia(data) && validText(data.content, 0, 2000)
+        return validSharedMedia(data) && validText(data.content, 0, 2000)
           && (data.content.matches('(?s).*[^\\s].*') || data.get('photoUrl','') != '' || data.get('videoUrl','') != '');
       }
       function ordinaryPost() {
@@ -478,8 +485,8 @@ service cloud.firestore {
       }
       allow update: if onlyMyArrayMembership('likes');
       allow update: if isMe(resource.data.userId)
-        && changedOnly(['content','photoUrl','videoUrl','editedAt'])
-        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl'])
+        && changedOnly(['content','photoUrl','videoUrl','photoDescription','videoDescription','editedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl','photoDescription','videoDescription'])
         && validPostContent(request.resource.data)
         && request.resource.data.editedAt == request.time;
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
