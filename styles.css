@@ -57,3 +57,23 @@
 .profile-media{display:grid;gap:10px;margin:16px 0;text-align:left}.profile-media img,.profile-media video{display:block;width:100%;max-height:340px;object-fit:contain;border-radius:14px;background:var(--line)}.profile-media a{font-weight:700;font-size:13px}
 
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}.unread-count{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 4px;border-radius:999px;background:#6847cf;color:#fff;font-size:11px;font-weight:800;line-height:1}.nav-btn .unread-count{margin-left:auto}.bottom-nav button[data-tab="messages"]{position:relative}.bottom-nav .unread-count{position:absolute;top:0;right:2px}.chat-contact.chat-unread{font-weight:800}.unread-dot{width:9px;height:9px;flex:none;margin-left:auto;border-radius:50%;background:#8e6af2}
+.chat-list-search{grid-column:1/-1;min-width:0;padding:12px;border-bottom:1px solid var(--line)}
+.chat-mobile-navigation{display:none}
+.chat-tools,.chat-options{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px}
+.chat-options{padding-top:0}
+@media(max-width:850px){
+ .chat-shell{display:block;min-height:0}
+ .chat-shell:not(.mobile-chat-open) .chat-panel,.mobile-chat-open .chat-list,.mobile-chat-open .chat-list-search{display:none}
+ .chat-list{padding:12px;border-right:0}
+ .chat-contact{flex-direction:row;text-align:left;gap:10px;padding:10px;font-size:13px}
+ .chat-contact .avatar{width:34px;height:34px;flex-basis:34px}
+ .layout.mobile-chat-detail .main-column{padding:0}
+ .mobile-chat-detail .mobile-header,.mobile-chat-detail .page-head,.mobile-chat-detail .mobile-search{display:none}
+ .mobile-chat-open{border-radius:0}
+ .mobile-chat-open .chat-panel{height:calc(100vh - 72px - env(safe-area-inset-bottom));height:calc(100dvh - 72px - env(safe-area-inset-bottom));min-height:0;max-height:none}
+ .chat-mobile-navigation{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+ .chat-mobile-navigation button{min-height:44px}
+ .chat-mobile-navigation .circle-btn{font-size:24px}
+ .chat-options:not(.is-open){display:none}
+ .chat-options.is-open{max-height:30dvh;overflow:auto;border-bottom:1px solid var(--line)}
+}

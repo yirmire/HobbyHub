@@ -17,6 +17,26 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('mobile chat navigation preserves the inbox search and filter when returning from a conversation', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    window.matchMedia=()=>({matches:true});
+    state.directThreadSearch='Lia';state.directThreadFilter='archived';
+  `,context);
+  assert.doesNotMatch(vm.runInContext('renderMessages()',context),/chat-shell mobile-chat-open/);
+  await vm.runInContext("onAction({dataset:{action:'chat-community',value:'global'}})",context);
+  assert.match(vm.runInContext('renderMessages()',context),/chat-shell mobile-chat-open/);
+  vm.runInContext("state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'}",context);
+  await vm.runInContext("onAction({dataset:{action:'toggle-mobile-chat-options'}})",context);
+  assert.match(vm.runInContext('renderMessages()',context),/chat-options is-open/);
+  await vm.runInContext("onAction({dataset:{action:'back-mobile-chats'}})",context);
+  const inbox=vm.runInContext('renderMessages()',context);
+  assert.doesNotMatch(inbox,/chat-shell mobile-chat-open|chat-options is-open/);
+  assert.match(inbox,/value="Lia"/);
+  assert.match(inbox,/data-value="archived" aria-pressed="true"/);
+});
+
 test('removed direct messages hide their content and disappear from saved messages and links', () => {
   const context=appContext();
   vm.runInContext(`
