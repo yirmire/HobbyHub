@@ -15,7 +15,9 @@ service cloud.firestore {
     function validSharedMedia(data) {
       let photo = data.get('photoUrl', '');
       let video = data.get('videoUrl', '');
-      return validMediaLink(photo) && validMediaLink(video)
+      let captions = data.get('captionsUrl', '');
+      return validMediaLink(photo) && validMediaLink(video) && validMediaLink(captions)
+        && (captions == '' || video != '')
         && validMediaDescription(data.get('photoDescription', ''), photo, 300)
         && validMediaDescription(data.get('videoDescription', ''), video, 800);
     }
@@ -147,7 +149,7 @@ service cloud.firestore {
         && request.resource.data.hobbies.size() <= 10;
       allow update: if isMe(uid)
         && resource.data.uid == uid
-        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies', 'photoUrl', 'videoUrl', 'photoDescription', 'videoDescription'])
+        && changedOnly(['name', 'location', 'avatar', 'bio', 'hobbies', 'photoUrl', 'videoUrl', 'photoDescription', 'videoDescription', 'captionsUrl'])
         && validText(request.resource.data.name, 1, 60)
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.avatar, 1, 8)
@@ -485,8 +487,8 @@ service cloud.firestore {
       }
       allow update: if onlyMyArrayMembership('likes');
       allow update: if isMe(resource.data.userId)
-        && changedOnly(['content','photoUrl','videoUrl','photoDescription','videoDescription','editedAt'])
-        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl','photoDescription','videoDescription'])
+        && changedOnly(['content','photoUrl','videoUrl','photoDescription','videoDescription','captionsUrl','editedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl','photoDescription','videoDescription','captionsUrl'])
         && validPostContent(request.resource.data)
         && request.resource.data.editedAt == request.time;
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));

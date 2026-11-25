@@ -1934,16 +1934,19 @@ function mediaUrl(value) {
    return url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<=1500?url.href:'';
  } catch {return '';}
 }
-const sharedMediaFieldsLimits={photoUrl:1500,videoUrl:1500,photoDescription:300,videoDescription:800};
+const sharedMediaFieldsLimits={photoUrl:1500,videoUrl:1500,photoDescription:300,videoDescription:800,captionsUrl:1500};
+const maxCaptionBytes=256*1024;
 
 function renderSharedMedia(entry,context,preview=false){
  const photo=mediaUrl(entry.photoUrl),video=mediaUrl(entry.videoUrl);
+ const captions=mediaUrl(entry.captionsUrl);
  if(!photo&&!video)return '';
  const photoDescription=(typeof entry.photoDescription==='string'&&entry.photoDescription.trim())||'Foto compartilhada '+context;
  return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="${esc(photoDescription)}" loading="${preview?'eager':'lazy'}" referrerpolicy="no-referrer" data-shared-media><p class="tip" data-media-error role="status" hidden></p>`:''}
  ${photo&&preview&&entry.photoDescription?`<p class="post-copy">Descrição da foto: ${esc(photoDescription)}</p>`:''}
  ${video?`<div role="group" aria-label="Vídeo compartilhado ${context}"><video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Reproduzir vídeo" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p>
  ${entry.videoDescription?`<p class="post-copy">Resumo do vídeo: ${esc(entry.videoDescription)}</p>`:''}
+ ${captions?`<button class="btn btn-outline btn-small" type="button" data-action="load-video-captions" data-url="${esc(captions)}">${preview?'Testar legendas':'Ativar legendas'}</button><p class="mini muted" data-caption-status role="status"></p>`:''}
  <a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a></div>`:''}</div>`;
 }
 function renderProfileMedia(profile){
@@ -1954,6 +1957,7 @@ function sharedMediaFields(entry={}){
  <label class="field">Descrição da foto (opcional)<input class="input" name="photoDescription" maxlength="${sharedMediaFieldsLimits.photoDescription}" value="${esc(entry.photoDescription||'')}" placeholder="Descreva o que aparece para quem usa leitor de tela"></label>
  <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(entry.videoUrl||'')}" placeholder="https://…/video.mp4"></label>
  <label class="field">Resumo do vídeo (opcional)<textarea class="textarea" name="videoDescription" rows="2" maxlength="${sharedMediaFieldsLimits.videoDescription}" placeholder="Resuma o que aparece ou é dito">${esc(entry.videoDescription||'')}</textarea></label>
+ <label class="field">Link das legendas do vídeo (opcional)<input class="input" type="url" name="captionsUrl" maxlength="${sharedMediaFieldsLimits.captionsUrl}" value="${esc(entry.captionsUrl||'')}" placeholder="https://…/legendas.vtt"><small class="muted">Use um link HTTPS direto para um arquivo .vtt que permita acesso pelo HobbyHub. Confira em Testar legendas na prévia.</small></label>
  <div><button class="btn btn-outline btn-small" type="button" data-action="preview-shared-media">Prévia de fotos e vídeos</button>
  <p class="mini muted" data-media-preview-status role="status"></p><div data-media-preview></div></div>`;
 }
@@ -1977,8 +1981,71 @@ function readSharedMediaFields(value){
  const photoUrl=mediaUrl(value('photoUrl')),videoUrl=mediaUrl(value('videoUrl'));
  if((value('photoUrl')&&!photoUrl)||(value('videoUrl')&&!videoUrl))throw new Error('Use um link HTTPS válido para a foto ou o vídeo.');
  const photoDescription=photoUrl?value('photoDescription'):'',videoDescription=videoUrl?value('videoDescription'):'';
+ const captionsUrl=videoUrl?mediaUrl(value('captionsUrl')):'';
+ if(videoUrl&&value('captionsUrl')&&!captionsUrl)throw new Error('Use um link HTTPS válido para as legendas do vídeo.');
  if(photoDescription.length>sharedMediaFieldsLimits.photoDescription||videoDescription.length>sharedMediaFieldsLimits.videoDescription)throw new Error('A descrição da foto aceita até 300 caracteres e o resumo do vídeo até 800.');
- return {photoUrl,videoUrl,photoDescription,videoDescription};
+ return {photoUrl,videoUrl,photoDescription,videoDescription,captionsUrl};
+}
+async function readVideoCaptions(url){
+ const response=await fetch(url,{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(10000)});
+ if(!response.ok||!response.body)throw new Error('Erro ao buscar legendas.');
+ const reader=response.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});
+ let text='',size=0;
+ try{
+   while(true){
+     const {done,value}=await reader.read();
+     if(done)break;
+     size+=value.byteLength;
+     if(size>maxCaptionBytes)throw new Error('Arquivo de legendas muito grande.');
+     text+=decoder.decode(value,{stream:true});
+   }
+   text+=decoder.decode();
+ } finally {
+   void reader.cancel().catch(()=>{});
+ }
+ if(!/^WEBVTT(?:[ \t][^\r\n]*)?(?:\r\n|[\r\n])/.test(text))throw new Error('Arquivo de legendas inválido.');
+ return text;
+}
+async function loadVideoCaptions(button){
+ const panel=button.parentElement,status=panel.querySelector('[data-caption-status]');
+ const video=panel.querySelector('video');
+ if(!video){
+   status.textContent='Use um link de vídeo que carregue para testar as legendas.';
+   return;
+ }
+ const loadedTrack=video.querySelector('track');
+ if(loadedTrack){
+   loadedTrack.track.mode='showing';
+   status.textContent='Legendas ativadas. Use os controles do vídeo para desativá-las.';
+   return;
+ }
+ button.disabled=true;
+ status.textContent='Carregando legendas…';
+ let track,source;
+ try{
+   const captions=await readVideoCaptions(button.dataset.url);
+   if(!video.isConnected)return;
+   source=URL.createObjectURL(new Blob([captions],{type:'text/vtt'}));
+   track=document.createElement('track');
+   track.kind='captions';
+   track.label='Legendas';
+   track.src=source;
+   await new Promise((resolve,reject)=>{
+     const timeout=setTimeout(reject,5000);
+     track.addEventListener('load',()=>{clearTimeout(timeout);resolve();},{once:true});
+     track.addEventListener('error',()=>{clearTimeout(timeout);reject();},{once:true});
+     video.append(track);
+     track.track.mode='showing';
+   });
+   if(!track.track.cues?.length)throw new Error('Nenhuma legenda encontrada.');
+   status.textContent='Legendas ativadas. Use os controles do vídeo para desativá-las.';
+ } catch {
+   track?.remove();
+   status.textContent='As legendas não carregaram. Confira se o link dá acesso direto a um arquivo .vtt de até 256 KB.';
+ } finally {
+   if(source)URL.revokeObjectURL(source);
+   button.disabled=false;
+ }
 }
 function blockButton(uid) {
  if(!uid||uid===me())return '';
@@ -4009,6 +4076,7 @@ async function onAction(btn) {
  const id=btn.dataset.id;
  switch(action){
   case 'preview-shared-media':previewSharedMedia(btn.form);return;
+  case 'load-video-captions':await loadVideoCaptions(btn);return;
   case 'reload':window.location.reload();return;
   case 'toggle-auth':state.authMode=state.authMode==='login'?'register':'login';state.drafts.clear();render();return;
   case 'forgot-password':state.authMode='reset';state.drafts.clear();render();return;
