@@ -47,6 +47,16 @@ await request(sender, 'POST', `dm_threads?documentId=${threadId}`, 200, {
 await request(recipient, 'GET', thread, 200);
 await request(other, 'GET', thread, 403);
 
+const archive = `public/data/members/${sender.localId}/privateArchive/${threadId}`;
+const archiveMarker = {lastInboundAt:{integerValue:'100'}};
+await request(sender, 'PATCH', archive, 200, archiveMarker);
+await request(sender, 'GET', archive, 200);
+await request(recipient, 'GET', archive, 403);
+await request(recipient, 'DELETE', archive, 403);
+await request(sender, 'PATCH', archive, 403, {lastInboundAt:{integerValue:'-1'}});
+await request(other, 'PATCH', `public/data/members/${other.localId}/privateArchive/${threadId}`, 403, archiveMarker);
+await request(sender, 'DELETE', archive, 200);
+
 const manualUnread = `public/data/members/${sender.localId}/privateUnread/${threadId}`;
 const unreadMarker = {unread:{booleanValue:true}};
 await request(sender, 'PATCH', manualUnread, 200, unreadMarker);
