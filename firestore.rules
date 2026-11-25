@@ -446,11 +446,15 @@ service cloud.firestore {
     match /artifacts/{appId}/public/data/posts/{postId} {
       allow read: if loggedIn();
       allow create: if loggedIn() && (ordinaryPost() || restoresGroupPost(appId, postId, request.resource.data));
+      function validPostContent(data) {
+        return validProfileMedia(data) && validText(data.content, 0, 2000)
+          && (data.content.matches('(?s).*[^\\s].*') || data.get('photoUrl','') != '' || data.get('videoUrl','') != '');
+      }
       function ordinaryPost() {
         return request.resource.data.userId == request.auth.uid
         && request.resource.data.likes == []
         && !request.resource.data.keys().hasAny(['editedAt'])
-        && validText(request.resource.data.content, 1, 2000)
+        && validPostContent(request.resource.data)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.location, 1, 90)
         && validText(request.resource.data.userName, 1, 60)
@@ -474,10 +478,9 @@ service cloud.firestore {
       }
       allow update: if onlyMyArrayMembership('likes');
       allow update: if isMe(resource.data.userId)
-        && changedOnly(['content','editedAt'])
-        && request.resource.data.content != resource.data.content
-        && validText(request.resource.data.content, 1, 2000)
-        && request.resource.data.content.matches('(?s).*[^\\s].*')
+        && changedOnly(['content','photoUrl','videoUrl','editedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl'])
+        && validPostContent(request.resource.data)
         && request.resource.data.editedAt == request.time;
       allow delete: if loggedIn() && (resource.data.userId == request.auth.uid || archivedPostRemoval(appId, postId, resource.data));
 
@@ -690,7 +693,7 @@ service cloud.firestore {
           && ((request.resource.data.targetType == 'post' && request.resource.data.commentId == '')
             || (request.resource.data.targetType == 'comment' && validText(request.resource.data.commentId, 1, 120)
               && request.resource.data.commentId.matches('[^/]+')))
-          && validText(request.resource.data.text, 1, 2000)
+          && validText(request.resource.data.text, request.resource.data.targetType == 'post' ? 0 : 1, 2000)
           && validText(request.resource.data.reason, 1, 80) && validText(request.resource.data.details, 0, 500)
           && verifiedTarget(request.resource.data);
         allow update: if loggedIn() && canReviewModeration() && resource.data.status == 'pending'

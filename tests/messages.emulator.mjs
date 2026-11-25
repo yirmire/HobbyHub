@@ -599,6 +599,22 @@ await request(recipient,'DELETE',privateCollection,200);
 assert.equal((await request(recipient,'GET',savedMembership,200)).fields.collectionIds.arrayValue.values[1].stringValue,'another');
 const editable='public/data/posts/editable-post';
 await request(sender,'POST','public/data/posts?documentId=editable-post',200,welcome);
+const photoOnly={...welcome,content:str(''),photoUrl:str('https://example.test/photo.jpg')};
+await request(sender,'POST','public/data/posts?documentId=photo-only',200,photoOnly);
+await request(sender,'POST','public/data/posts?documentId=community-video',200,{
+  ...welcome,groupId:str('welcome-group'),content:str(''),videoUrl:str('https://example.test/video.mp4')
+});
+await request(sender,'POST','public/data/posts?documentId=invalid-media',403,{...photoOnly,photoUrl:str('http://example.test/photo.jpg')});
+await request(sender,'POST','public/data/posts?documentId=empty-post',403,{...welcome,content:str('  ')});
+const editMedia={
+  update:{name:documents+'public/data/posts/photo-only',fields:{videoUrl:str('https://example.test/video.mp4')}},
+  updateMask:{fieldPaths:['photoUrl','videoUrl']},updateTransforms:stamp('editedAt')
+};
+await moderate(recipient,[editMedia],403);
+await moderate(sender,[editMedia],200);
+const updatedMedia=(await request(recipient,'GET','public/data/posts/photo-only',200)).fields;
+assert.equal(updatedMedia.photoUrl,undefined);
+assert.equal(updatedMedia.videoUrl.stringValue,'https://example.test/video.mp4');
 const followedPath='public/data/members/'+recipient.localId+'/followedPosts/editable-post';
 const followPostWrite={update:{name:documents+followedPath,fields:{}},updateTransforms:stamp('followedAt'),currentDocument:{exists:false}};
 await moderate(sender,[followPostWrite],403);
