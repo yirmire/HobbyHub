@@ -18,6 +18,26 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('named event searches restore all saved filters and can be removed', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='events';state.modal='saved-event-searches';
+    state.savedEventSearchesLoaded=true;
+    state.savedEventSearches.set('photo',{id:'photo',name:'Fotografia <Petrópolis>',query:'caminhada',
+      hobby:'Fotografia',community:'group',format:'in-person',city:'city:petropolis'});
+    showToast=()=>{};
+    firebase={doc:(_db,...parts)=>parts.join('/'),deleteDoc:async path=>{state.removedSearch=path;state.savedEventSearches.clear();}};
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/Fotografia &lt;Petrópolis&gt;/);
+  await vm.runInContext("onAction({dataset:{action:'apply-event-search',id:'photo'}})",context);
+  assert.equal(vm.runInContext('Object.values(currentEventSearch()).join("|")',context),'caminhada|Fotografia|group|in-person|city:petropolis');
+  assert.match(vm.runInContext('renderEvents()',context),/value="city:petropolis" selected/);
+  await vm.runInContext("onAction({dataset:{action:'saved-event-searches'}})",context);
+  await vm.runInContext("onAction({dataset:{action:'delete-event-search',id:'photo'}})",context);
+  assert.match(vm.runInContext('state.removedSearch',context),/members\/reader\/savedEventSearches\/photo$/);
+  assert.match(vm.runInContext('renderModal()',context),/Nenhuma busca salva/);
+});
+
 test('the city filter prefers an explicit event city and still finds legacy venues', () => {
   const handlers={};
   const context=appContext(handlers);

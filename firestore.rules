@@ -219,6 +219,19 @@ service cloud.firestore {
         allow create, update: if isMe(uid) && validSettings(request.resource.data);
         allow list, delete: if false;
       }
+      match /savedEventSearches/{searchId} {
+        function validSavedEventSearch() {
+          let data = request.resource.data;
+          return data.keys().hasOnly(['name','query','hobby','community','format','city'])
+            && validText(data.name, 1, 60) && validText(data.query, 0, 150)
+            && validText(data.hobby, 0, 60) && validText(data.community, 0, 200)
+            && data.format in ['', 'in-person', 'online']
+            && validText(data.city, 0, 100)
+            && (data.city in ['', 'mine'] || data.city.matches('city:.+'));
+        }
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && validSavedEventSearch();
+      }
       match /eventHobbyAlerts/{hobby} {
         function validHobbyAlert() {
           let data = request.resource.data;
