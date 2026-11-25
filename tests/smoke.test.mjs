@@ -1910,6 +1910,28 @@ test('online event time zones preserve the same instant across local dates, conf
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
 });
 
+test('received event invitations offer confirmation or a waitlist without removing existing participation', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.events=[{id:'walk',title:'Caminhada',date:'2099-05-07',time:'10:30',attendees:[]}];
+    const invite=eventChatMessage(state.events[0]);
+    const card=()=>renderDirectMessageText(invite,true);
+    firebase={doc:()=>({}),arrayUnion:uid=>uid,updateDoc:async()=>{state.events[0].attendees=['reader'];}};
+    showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('card()',context),/data-action="rsvp"[^>]*>Confirmar presença/);
+  await vm.runInContext("onAction({dataset:{action:'rsvp',id:'walk',value:'invitation'}})",context);
+  assert.match(vm.runInContext('card()',context),/Presença confirmada/);
+  assert.doesNotMatch(vm.runInContext('card()',context),/data-action="rsvp"/);
+  await vm.runInContext("onAction({dataset:{action:'rsvp',id:'walk',value:'invitation'}})",context);
+  assert.match(vm.runInContext('card()',context),/Presença confirmada/);
+  const full=vm.runInContext("Object.assign(state.events[0],{capacity:1,attendees:['other'],waitlist:[]});card()",context);
+  assert.match(full,/Entrar na lista de espera/);
+  assert.match(vm.runInContext("state.events[0].waitlist=['reader'];card()",context),/Na lista de espera/);
+  assert.doesNotMatch(vm.runInContext("state.events[0].cancelled=true;card()",context),/data-action="rsvp"/);
+});
+
 test('event chat invitations show the event and use only eligible private conversations', async () => {
   const context=appContext();
   vm.runInContext(`
