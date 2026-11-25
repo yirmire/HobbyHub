@@ -47,6 +47,17 @@ await request(sender, 'POST', `dm_threads?documentId=${threadId}`, 200, {
 await request(recipient, 'GET', thread, 200);
 await request(other, 'GET', thread, 403);
 
+const manualUnread = `public/data/members/${sender.localId}/privateUnread/${threadId}`;
+const unreadMarker = {unread:{booleanValue:true}};
+await request(sender, 'PATCH', manualUnread, 200, unreadMarker);
+await request(sender, 'GET', manualUnread, 200);
+await request(recipient, 'GET', manualUnread, 403);
+await request(recipient, 'DELETE', manualUnread, 403);
+await request(sender, 'PATCH', manualUnread, 403, {unread:{booleanValue:false}});
+await request(other, 'PATCH', `public/data/members/${other.localId}/privateUnread/${threadId}`, 403, unreadMarker);
+await request(sender, 'DELETE', manualUnread, 200);
+await request(sender, 'GET', manualUnread, 404);
+
 const pins = `public/data/members/${sender.localId}/chatPreferences/pinned`;
 const pinnedIds = (...ids) => ({ threadIds: { arrayValue: { values: ids.map(stringValue => ({stringValue})) } } });
 await request(sender, 'GET', pins, 404);
