@@ -1895,6 +1895,31 @@ test('media preview loads on request, clears on edits and reports unavailable me
   assert.equal(removed,true);
 });
 
+test('video captions require a video and load a bounded WebVTT file without credentials', async () => {
+  const context=appContext();
+  const render=fields=>vm.runInContext(`renderSharedMedia(${JSON.stringify(fields)},'na publicação',true)`,context);
+  const videoUrl='https://example.test/video.mp4',captionsUrl='https://example.test/legendas.vtt';
+  assert.match(render({videoUrl,captionsUrl}),/data-action="load-video-captions"[^>]*>Testar legendas/);
+  assert.doesNotMatch(render({videoUrl,captionsUrl:'http://example.test/legendas.vtt'}),/load-video-captions/);
+  assert.equal(vm.runInContext(`readSharedMediaFields(name=>({captionsUrl:${JSON.stringify(captionsUrl)}}[name]||'')).captionsUrl`,context),'');
+  const vtt='WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nUma demonstração\n';
+  let body=vtt;
+  context.TextDecoder=TextDecoder;
+  context.AbortSignal=AbortSignal;
+  context.fetch=async (url,options)=>{
+    assert.equal(url,captionsUrl);
+    assert.equal(options.mode,'cors');
+    assert.equal(options.credentials,'omit');
+    return new Response(body);
+  };
+  const load=()=>vm.runInContext(`readVideoCaptions(${JSON.stringify(captionsUrl)})`,context);
+  assert.equal(await load(),vtt);
+  body='<html>Arquivo indisponível</html>';
+  await assert.rejects(load(),/Arquivo de legendas inválido/);
+  body='WEBVTT\n'+ 'x'.repeat(256*1024);
+  await assert.rejects(load(),/muito grande/);
+});
+
 test('shared media renders direct HTTPS images and videos and survives a media-only draft', () => {
   const context=appContext(),stored=new Map();
   context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)};
@@ -1903,7 +1928,8 @@ test('shared media renders direct HTTPS images and videos and survives a media-o
     const media={photoUrl:'https://example.test/photo.jpg',videoUrl:'https://example.test/video.mp4'};
     savePostDraft({dataset:{draftKey:postDraftKey()},elements:{
       content:{value:''},hobby:{value:'Arte'},format:{value:''},photoUrl:{value:media.photoUrl},videoUrl:{value:media.videoUrl},
-      photoDescription:{value:'Lua crescente'},videoDescription:{value:'Como localizar a Lua'}
+      photoDescription:{value:'Lua crescente'},videoDescription:{value:'Como localizar a Lua'},
+      captionsUrl:{value:'https://example.test/legendas.vtt'}
     }});
     renderProfileMedia(media)+renderSharedMedia(readPostDraft(postDraftKey()),'na publicação');
   `,context);
@@ -1911,6 +1937,7 @@ test('shared media renders direct HTTPS images and videos and survives a media-o
   assert.equal((html.match(/<video src="https:\/\/example\.test\/video\.mp4" controls playsinline/g)||[]).length,2);
   assert.match(html,/alt="Lua crescente"/);
   assert.match(html,/Resumo do vídeo: Como localizar a Lua/);
+  assert.match(html,/data-url="https:\/\/example\.test\/legendas\.vtt"/);
   assert.equal(vm.runInContext("renderSharedMedia({photoUrl:'https://user:pass@example.test/photo.jpg',videoUrl:'javascript:alert(1)'},'na publicação')",context),'');
 });
 
