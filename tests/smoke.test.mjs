@@ -17,6 +17,33 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('a personal unread marker restores a read conversation until it is opened again', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.threads=[{id:'owner_peer',participants:['owner','peer']}];
+    state.directThreadFilter='unread';
+    state.privateReadAt.set('owner_peer',10);
+    state.latestInboundAt.set('owner_peer',10);
+    render=()=>{};showToast=()=>{};
+    firebase={
+      doc:(_db,...parts)=>parts.join('/'),collection:()=>({}),onSnapshot:()=>()=>{},
+      setDoc:async path=>{state.savedUnreadMarker=path;state.manualUnreadThreads.add('owner_peer');},
+      runTransaction:async(_db,callback)=>callback({
+        get:async()=>({exists:()=>true}),
+        delete:path=>{state.deletedUnreadMarker=path;state.manualUnreadThreads.delete('owner_peer');}
+      })
+    };
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'mark-direct-unread'}})",context);
+  assert.match(vm.runInContext('state.savedUnreadMarker',context),/members\/owner\/privateUnread\/owner_peer$/);
+  assert.match(vm.runInContext('renderMessages()',context),/data-action="open-dm" data-id="peer"/);
+  await vm.runInContext("startDirect('peer')",context);
+  assert.equal(vm.runInContext('state.savedUnreadMarker===state.deletedUnreadMarker',context),true);
+  assert.match(vm.runInContext('renderMessages()',context),/Nenhuma conversa não lida/);
+});
+
 test('unread conversation filter keeps unread pins first and leaves the active chat open after reading', async () => {
   const context=appContext();
   vm.runInContext(`
@@ -2162,7 +2189,7 @@ for (const exists of [false,true]) {
         collection:()=>({}),
         onSnapshot:()=>()=>{},
         runTransaction:async(_db,callback)=>callback({
-          get:async()=>({exists:()=>${exists}}),
+          get:async path=>({exists:()=>!path.includes('/privateUnread/')&&${exists}}),
           set:(...args)=>writes.push(args)
         })
       };

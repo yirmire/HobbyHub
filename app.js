@@ -87,7 +87,7 @@ const state = {
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
-  pinnedDirectThreads:[], directThreadFilter:'all', latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
+  pinnedDirectThreads:[], directThreadFilter:'all', manualUnreadThreads:new Set(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -173,7 +173,17 @@ function watchLatestIncomingMessages() {
  }
 }
 function unreadThread(id) {
- return (state.latestInboundAt.get(id)||0)>(state.privateReadAt.get(id)||0);
+ return state.manualUnreadThreads.has(id)||(state.latestInboundAt.get(id)||0)>(state.privateReadAt.get(id)||0);
+}
+async function markDirectThreadUnread(){
+ const uid=me(),peer=state.chatTarget?.uid;
+ if(!uid||!peer||state.chatMode!=='direct')return;
+ const id=threadId(uid,peer);
+ if(!state.threads.some(thread=>thread.id===id))return;
+ await attempt(async()=>{
+   await firebase.setDoc(ref('members',uid,'privateUnread',id),{unread:true});
+   if(me()===uid)showToast('Conversa marcada como não lida.');
+ },'markingDirectUnread');
 }
 async function markOpenConversationRead() {
  const uid=me(),peer=state.chatTarget?.uid;
@@ -244,6 +254,9 @@ function startSession() {
   subscribe(ref('members',me(),'chatPreferences','pinned'),snapshot=>{
     state.pinnedDirectThreads=pinnedDirectThreads(snapshot);
   },'conversas fixadas');
+  subscribe(col('members',me(),'privateUnread'),snapshot=>{
+    state.manualUnreadThreads=new Set(snapshot.docs.map(doc=>doc.id));
+  },'conversas marcadas como não lidas');
   subscribe(col('members',me(),'privateReads'),snapshot=>{
     for(const doc of snapshot.docs)state.privateReadAt.set(doc.id,Math.max(doc.data().lastReadAt||0,state.privateReadAt.get(doc.id)||0));
   },'estado de leitura de mensagens');
@@ -353,7 +366,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
-      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
+      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.manualUnreadThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
         if(me()!==user.uid)return;
@@ -1690,6 +1703,7 @@ function renderMessages() {
  ${!community&&state.chatTarget?`<div class="toggle-row" style="flex-wrap:wrap;padding:6px">
  <button class="btn btn-soft btn-small" data-action="toggle-direct-search" aria-expanded="${Boolean(searching)}">${searching?'Fechar busca':'Buscar na conversa'}</button>
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-pinned-direct-thread" ${state.changingPinnedDirectThread?'disabled':''}>${state.pinnedDirectThreads.includes(activeThread)?'Desafixar conversa':'Fixar conversa'}</button>`:''}
+ ${state.threads.some(thread=>thread.id===activeThread)&&!state.manualUnreadThreads.has(activeThread)?`<button class="btn btn-soft btn-small" data-action="mark-direct-unread" ${state.markingDirectUnread?'disabled':''}>Marcar como não lida</button>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${searching?renderDirectSearchMatches(matches,searching.limit):`
@@ -2773,6 +2787,9 @@ async function startDirect(uid){
      const thread=await transaction.get(dmRef(id));
      if(!thread.exists()){
        transaction.set(dmRef(id),threadData);
+     }else{
+       const marker=ref('members',sender,'privateUnread',id);
+       if((await transaction.get(marker)).exists())transaction.delete(marker);
      }
    });
    if(me()!==sender)return;
@@ -3581,6 +3598,7 @@ async function onAction(btn) {
     state.directThreadFilter=btn.dataset.value==='unread'?'unread':'all';
     render();
     return;
+  case 'mark-direct-unread':await markDirectThreadUnread();return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
   case 'toggle-direct-search':
     state.directSearch=state.directSearch?null:{query:'',limit:20};
