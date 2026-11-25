@@ -67,7 +67,7 @@ const state = {
   savedComments:new Map(), savedCommentWatches:new Map(),
   myCommentActivity:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityOnly:false, eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -459,7 +459,7 @@ async function init() {
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
-      state.eventFormat='';state.eventRoom=null;
+      state.eventFormat='';state.eventCityOnly=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
@@ -695,14 +695,22 @@ function isNotificationRead(item){
 }
 const eventReminderOptions={eve:'Na véspera',day:'No dia',both:'Na véspera e no dia',off:'Desligados'};
 const eventHobbyAlertScopes={city:'Presenciais na minha cidade',online:'Online',both:'Online e na minha cidade'};
+function eventMatchesProfileCity(event,group=state.groups.find(item=>item.id===event.groupId)){
+ const city=cityKey(myLocation());
+ if(eventFormat(event)==='online'||!city||city==='brasil')return false;
+ if(typeof event.city==='string'&&event.city.trim())return locate(event.city);
+ return locate(group?.location)||String(event.location||'').split(/[,;\n]/).some(locate);
+}
+function eventLocationWithCity(event){
+ const location=String(event.location||'').trim(),city=String(event.city||'').trim();
+ if(!city||norm(location).includes(norm(city)))return location;
+ return [location,city].filter(Boolean).join(', ');
+}
 function matchesHobbyEventAlert(event,alert){
  if(!alert)return false;
  if(eventFormat(event)==='online')return alert.scope==='online'||alert.scope==='both';
  if(alert.scope!=='city'&&alert.scope!=='both')return false;
- const city=cityKey(myLocation());
- if(!city||city==='brasil')return false;
- const group=state.groups.find(item=>item.id===event.groupId);
- return locate(group?.location)||String(event.location||'').split(/[,;\n]/).some(locate);
+ return eventMatchesProfileCity(event);
 }
 function renderEventHobbyAlerts(){
  const choices=[...state.eventHobbyAlerts].sort(([a],[b])=>a.localeCompare(b,'pt-BR'));
@@ -712,7 +720,7 @@ function renderEventHobbyAlerts(){
  <label class="field">Quais encontros<select class="select" name="scope" required>
  ${Object.entries(eventHobbyAlertScopes).map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}
  </select></label>
- <p class="mini muted">Cidade do perfil: ${esc(myLocation())}. Para avisos presenciais, a cidade deve constar no local do encontro ou na comunidade.</p>
+ <p class="mini muted">Cidade do perfil: ${esc(myLocation())}. O aviso usa a cidade do evento ou, em eventos sem esse campo, a cidade do local ou da comunidade.</p>
  <button type="submit" class="btn btn-primary" ${!state.eventHobbyAlertsLoaded||state.busy?'disabled':''}>Salvar alerta</button>
  ${state.eventHobbyAlertsLoaded&&!choices.length?'<p class="mini muted">Nenhum alerta configurado.</p>':''}
  ${choices.map(([hobby,alert])=>`<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
@@ -930,6 +938,7 @@ function eventChangeDescriptions(event) {
  if(oldSchedule.endTime!==schedule.endTime||oldSchedule.endDate!==schedule.endDate&&schedule.endTime){
    changes.push(schedule.endTime?`Novo horário de término: ${schedule.endTime}.`:'Horário de término removido.');
  }
+ if(Object.hasOwn(previous,'city')&&previous.city!==(event.city||''))changes.push(event.city?'Cidade atualizada para '+event.city+'.':'Cidade removida do evento.');
  if(previous.location!==event.location)changes.push(`Local alterado de ${previous.location} para ${event.location}.`);
  return changes.length?changes:['Confira as informações atualizadas do evento.'];
 }
@@ -1013,7 +1022,7 @@ function renderEventReminders(day=tomorrow()) {
    <h2 style="font-size:16px;margin:0 0 8px">Seus eventos de amanhã</h2>
    <div class="form-stack">${events.map(event=>`<div>
      <strong>${esc(event.title)}</strong>
-     <p class="mini">${eventTimeLabel(event)?`Às ${esc(eventTimeLabel(event))} · `:''}${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')}</p>
+     <p class="mini">${eventTimeLabel(event)?`Às ${esc(eventTimeLabel(event))} · `:''}${eventFormat(event)==='online'?'Online':esc(eventLocationWithCity(event)||'Local a combinar')}</p>
      <button class="text-action" data-action="view-event" data-id="${esc(event.id)}">Abrir evento</button>
    </div>`).join('')}</div>
  </section>`;
@@ -1222,17 +1231,17 @@ function defaultEventTimeZone(){
 function eventZoneToday(zone){
  return Object.hasOwn(eventTimeZones,zone)?new Intl.DateTimeFormat('sv-SE',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format():today();
 }
-function eventFormatFields(format,location,roomUrl='',timeZone=''){
+function eventFormatFields(format,location,roomUrl='',timeZone='',city=''){
  const online=format==='online';
  return `<label class="field">Formato<select class="select" name="format" required>${eventFormatOptions(format)}</select></label>
- <div data-format-field="in-person" ${online?'hidden':''}><label class="field">Local presencial<input class="input" name="location" maxlength="120" value="${esc(location)}" placeholder="Ex.: Praça central, Nova Friburgo" ${online?'disabled':'required'}></label></div>
+ <div data-format-field="in-person" ${online?'hidden':''}><label class="field">Local presencial<input class="input" name="location" maxlength="120" value="${esc(location)}" placeholder="Ex.: Praça central" ${online?'disabled':'required'}></label><label class="field">Cidade (opcional)<input class="input" name="city" maxlength="90" value="${esc(city)}" placeholder="Ex.: Nova Friburgo, RJ" ${online?'disabled':''}></label></div>
  <div data-format-field="online" ${online?'':'hidden'}><label class="field">Fuso horário do evento<select class="select" name="timeZone" ${online?'required':'disabled'}>${Object.entries(eventTimeZones).map(([zone,label])=>`<option value="${zone}" ${(timeZone||defaultEventTimeZone())===zone?'selected':''}>${label}</option>`).join('')}</select></label><label class="field">Link da sala online<input class="input" type="url" name="roomUrl" maxlength="2048" placeholder="https://" value="${esc(roomUrl)}" ${online?'required':'disabled'}></label><p class="tip">O link da sala fica disponível para quem confirmar presença.</p></div>`;
 }
 function syncEventFormatFields(form){
  form.querySelectorAll('[data-format-field]').forEach(section=>{
    const active=section.dataset.formatField===form.elements.format.value;
    section.hidden=!active;
-   section.querySelectorAll('input,select').forEach(input=>{input.disabled=!active;input.required=active;});
+   section.querySelectorAll('input,select').forEach(input=>{input.disabled=!active;input.required=active&&input.name!=='city';});
  });
  const zone=form.elements.format.value==='online'?form.elements.timeZone.value:'';
  form.elements.date.min=eventZoneToday(zone);
@@ -1315,7 +1324,7 @@ function eventDirectionsLink(event){
    /https?:\/\/|^www\./i.test(location))return '';
  const url=new URL('https://www.google.com/maps/dir/');
  url.searchParams.set('api','1');
- url.searchParams.set('destination',location);
+ url.searchParams.set('destination',eventLocationWithCity(event));
  return `<a class="text-action" href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">Como chegar</a>`;
 }
 function eventCard(event, inGroup=false, detail=false) {
@@ -1330,7 +1339,7 @@ function eventCard(event, inGroup=false, detail=false) {
  return `<article class="card event-card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span class="event-day">${dateLabel(schedule.date)} ${esc(eventTimeLabel(event,schedule))}${event.timeZone?' (seu horário)':''}</span><span class="post-category">${emoji(event.hobby)} ${esc(event.hobby||'Outros')}</span></div>
  ${detail?'':`<h3><button class="text-action" data-action="view-event" data-id="${esc(event.id)}">${esc(event.title)}</button></h3>`}<p>${esc(detail?event.description:short(event.description||'Encontre pessoas com os mesmos interesses.',115))}</p>
  ${event.cancelled===true?'<p class="pill">Evento cancelado</p>':event.revision>0?'<p class="pill">Evento atualizado</p>':''}
- <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${eventFormat(event)==='online'?'Online':esc(event.location||'Local a combinar')} ${eventDirectionsLink(event)}</div>
+ <div class="card-meta" style="flex-wrap:wrap">${icon('map')} ${eventFormat(event)==='online'?'Online':esc(eventLocationWithCity(event)||'Local a combinar')} ${eventDirectionsLink(event)}</div>
  <button class="text-action" data-action="save-event" data-id="${esc(event.id)}" data-value="${saved?'remove':'save'}" aria-pressed="${saved}">${icon('bookmark')} ${saved?'Remover dos salvos':'Salvar evento'}</button>
  ${!detail&&event.cancelled!==true?`<button class="text-action" data-action="share-event" data-id="${esc(event.id)}">Compartilhar evento</button>`:''}
  ${detail?'':eventCalendarButton(event)}
@@ -1616,14 +1625,15 @@ function renderEvents(now=new Date()) {
  const hobbies=[...new Set(state.events.map(event=>event.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
  const eventGroups=[...new Set(state.events.map(event=>event.groupId))].map(id=>communities.get(id)).filter(Boolean)
    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
- const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat);
+ const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat||state.eventCityOnly);
  const events=state.events.filter(event=>{
    const schedule=viewerEventSchedule(event);
    const group=communities.get(event.groupId);
    if(state.eventHobby&&event.hobby!==state.eventHobby)return false;
    if(state.eventCommunity&&event.groupId!==state.eventCommunity)return false;
    if(state.eventFormat&&eventFormat(event)!==state.eventFormat)return false;
-   if(query&&!norm([event.title,event.description,event.location,group?.name,group?.location].join(' ')).includes(query))return false;
+   if(state.eventCityOnly&&!eventMatchesProfileCity(event,group))return false;
+   if(query&&!norm([event.title,event.description,event.location,event.city,group?.name,group?.location].join(' ')).includes(query))return false;
    if(eventFilter==='all')return true;
    if(eventFilter==='mine')return event.attendees?.includes(me())&&(!weekly||(schedule.date>=localDateKey(days[0])&&schedule.date<=localDateKey(days[6])));
    if(eventFilter==='saved')return state.savedEventDates.has(event.id);
@@ -1653,6 +1663,7 @@ function renderEvents(now=new Date()) {
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <label class="field">Formato<select class="select" id="event-format-filter"><option value="">Todos os formatos</option>${eventFormatOptions(state.eventFormat)}</select></label>
+ <label class="toggle-row"><input id="event-city-only" type="checkbox" ${state.eventCityOnly?'checked':''}>Na minha cidade</label>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
  ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
@@ -3105,7 +3116,7 @@ function renderModal() {
      <label class="field">Data<input class="input" type="date" name="date" required min="${today()}" value="${esc(event.date)}"></label>
      <label class="field">Horário de início<input class="input" type="time" name="time" required value="${esc(event.time)}"></label>
      <label class="field">Horário de término (opcional)<input class="input" type="time" name="endTime" value="${esc(event.endTime||'')}"></label>
-     ${eventFormatFields(eventFormat(event),eventFormat(event)==='in-person'?event.location:'',state.eventRoom?.id===event.id?state.eventRoom.url:'',event.timeZone)}
+     ${eventFormatFields(eventFormat(event),eventFormat(event)==='in-person'?event.location:'',state.eventRoom?.id===event.id?state.eventRoom.url:'',event.timeZone,event.city)}
      ${state.eventRoom?.id===event.id&&state.eventRoom.error?'<p class="tip">Não foi possível carregar o link da sala. <button type="button" class="text-action" data-action="retry-event-room">Tentar novamente</button></p>':''}
      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="view-event" data-id="${esc(event.id)}">Voltar</button><button class="btn btn-primary" type="submit" ${state.busy||state.eventRoom?.loading?'disabled':''}>Salvar alterações</button></div>
    </form>`);
@@ -3168,7 +3179,7 @@ function renderModal() {
  <div class="field-grid"><div class="field"><label>Dia</label><input class="input" type="date" name="date" required min="${today()}"></div><label class="field">Horário de início<input class="input" name="time" type="time" required></label></div>
  <label class="field">Horário de término (opcional)<input class="input" name="endTime" type="time"></label>
  <div class="field"><label>Interesse</label>${topicSelect(template?.hobby||eventGroup?.hobby)}</div>
- ${eventFormatFields(template?eventFormat(template):'in-person',template&&eventFormat(template)==='in-person'?template.location:'','',template?.timeZone)}
+ ${eventFormatFields(template?eventFormat(template):'in-person',template&&eventFormat(template)==='in-person'?template.location:'','',template?.timeZone,template?.city)}
  <label class="field">Número de vagas (opcional)<input class="input" type="number" name="capacity" min="2" max="200" step="1" value="${esc(template?.capacity)}" placeholder="Em branco para vagas ilimitadas"></label>
  <div class="field"><label>Descrição</label><textarea class="textarea" name="description" maxlength="800" required placeholder="O que vai acontecer e o que as pessoas precisam saber?">${esc(template?.description)}</textarea></div>
  <div class="tip">Por segurança, prefira locais públicos. O HobbyHub não verifica automaticamente a identidade de participantes.</div>
@@ -3639,7 +3650,7 @@ function calendarEventsFile(events, stamp=new Date()) {
    `SEQUENCE:${Number.isSafeInteger(event.revision)&&event.revision>=0?event.revision:0}`,
    `DTSTART:${eventCalendarDateTime(event,event.time)}`,
    ...(eventEndTime(event)?[`DTEND:${eventCalendarDateTime(event,event.endTime)}`]:[]),
-   `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(eventFormat(event)==='online'?'Online':event.location)}`,
+   `SUMMARY:${escapeText(event.title)}`,`LOCATION:${escapeText(eventFormat(event)==='online'?'Online':eventLocationWithCity(event))}`,
    `DESCRIPTION:${escapeText([event.description,link].filter(Boolean).join('\n'))}`,`URL:${link}`,'END:VEVENT'];
  }),'END:VCALENDAR'];
  const encoder=new TextEncoder();
@@ -3722,7 +3733,7 @@ function googleCalendarButton(event){
    text:event.title,
    dates:`${date(start)}/${date(end)}`,
    details:contentLink('event',event.id),
-   location:eventFormat(event)==='online'?'Online':event.location||''
+   location:eventFormat(event)==='online'?'Online':eventLocationWithCity(event)
  }).toString();
  return `<a class="btn btn-outline btn-small" href="${esc(link.href)}" target="_blank" rel="noopener noreferrer">Adicionar ao Google Agenda</a>`;
 }
@@ -3913,7 +3924,7 @@ async function onAction(btn) {
   }
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
-  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';render();return;
+  case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';state.eventCityOnly=false;render();return;
   case 'retry-event-room':await loadEventRoom(true);return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openPostComposer();return;
   case 'continue-post-draft':
@@ -4871,6 +4882,7 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='event-hobby')state.eventHobby=event.target.value;
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
+ else if(event.target.id==='event-city-only')state.eventCityOnly=event.target.checked;
  else if(event.target.id==='saved-collection-filter'){
    state.selectedSavedCollection=event.target.value;state.savedSelection=null;
  }
@@ -5037,10 +5049,11 @@ document.addEventListener('submit',async(event)=>{
     if(timeZone&&!Object.hasOwn(eventTimeZones,timeZone))throw new Error('Escolha um fuso horário válido.');
     if(val('date')<eventZoneToday(timeZone))throw new Error('A data deve ser hoje ou no futuro.');
     const location=format==='online'?'Online':val('location');
+    const city=format==='online'?'':val('city');
     if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
     if(!location)throw new Error('Informe o local do encontro.');
     validateEventEndTime(time,endTime);
-    const fields={...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),...(timeZone?{timeZone}:{}),hobby:val('hobby'),format,location,description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})};
+    const fields={...(limit?{capacity,waitlist:[],offerAt:null}:{}),title:val('title'),date:val('date'),time,...(endTime?{endTime}:{}),...(timeZone?{timeZone}:{}),hobby:val('hobby'),format,location,...(city?{city}:{}),description:val('description'),createdBy:uid,attendees:[uid],createdAt:now(),...(groupId?{groupId}:{})};
     let created;
     if(format==='online'){
       if(fields.description.includes(roomUrl))throw new Error('Use apenas o campo privado para o link da sala.');
@@ -5066,6 +5079,7 @@ document.addEventListener('submit',async(event)=>{
     const timeZone=format==='online'?(val('timeZone')||defaultEventTimeZone()):'';
     if(timeZone&&!Object.hasOwn(eventTimeZones,timeZone))throw new Error('Escolha um fuso horário válido.');
     const location=format==='online'?'Online':val('location');
+    const city=format==='online'?'':val('city');
     if(date<eventZoneToday(timeZone)||!time||!location)throw new Error('Informe data, horário e local válidos.');
     if(format==='online'&&!validEventRoomUrl(roomUrl))throw new Error('Informe um link HTTPS válido para a sala.');
     validateEventEndTime(time,endTime);
@@ -5076,12 +5090,13 @@ document.addEventListener('submit',async(event)=>{
       const roomRef=ref('events',event.id,'private','room');
       const previousRoom=latest.format==='online'?(await transaction.get(roomRef)).data()?.url:'';
       if(format==='online'&&latest.description?.includes(roomUrl))throw new Error('Escolha um link que não esteja na descrição pública do evento.');
-      if(date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&timeZone===(latest.timeZone||'')&&location===latest.location&&format===latest.format&&
+      const cityChanged=city!==(latest.city||'');
+      if(!cityChanged&&date===latest.date&&time===latest.time&&endTime===(latest.endTime||'')&&timeZone===(latest.timeZone||'')&&location===latest.location&&format===latest.format&&
          (format!=='online'||previousRoom===roomUrl))return false;
       const revision=(latest.revision||0)+1;
       const previousLocation=format==='online'&&/https?:\/\/|www\./i.test(latest.location)?'Online':latest.location;
-      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',timeZone:latest.timeZone||'',location:previousLocation,revision};
-      transaction.update(target,{date,time,endTime,timeZone,format,location,previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
+      const previousSchedule={date:latest.date,time:latest.time,endTime:latest.endTime||'',timeZone:latest.timeZone||'',location:previousLocation,revision,...(cityChanged?{city:latest.city||''}:{})};
+      transaction.update(target,{date,time,endTime,timeZone,format,location,...(cityChanged?{city}:{}),previousSchedule,revision,scheduleChangedAt:firebase.serverTimestamp()});
       if(format==='online')transaction.set(roomRef,{url:roomUrl,ownerId:latest.createdBy});
       else if(latest.format==='online')transaction.delete(roomRef);
       return true;
