@@ -624,6 +624,23 @@ test('community tabs separate memberships and show the latest post and nearest a
   assert.doesNotMatch(discovery, /Meu clube|Fotografia da serra|Leitores do litoral/);
 });
 
+test('the upcoming agenda groups filtered events by day and sorts each group by time', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.eventHobby='Fotografia';
+    state.events=[
+      {id:'later',title:'À tarde',hobby:'Fotografia',date:'2026-11-25',time:'16:00'},
+      {id:'before',title:'De manhã',hobby:'Fotografia',date:'2026-11-25',time:'09:00'},
+      {id:'tomorrow',title:'Passeio de amanhã',hobby:'Fotografia',date:'2026-11-26',time:'11:00'},
+      {id:'later-day',title:'Passeio de sábado',hobby:'Fotografia',date:'2026-11-28',time:'11:00'},
+      {id:'other',title:'Outro hobby',hobby:'Leitura',date:'2026-11-25',time:'08:00'}
+    ];
+    renderEvents(new Date(2026,10,25,12))
+  `,context);
+  assert.match(html,/>Hoje<\/h2>[\s\S]*De manhã[\s\S]*À tarde[\s\S]*>Amanhã<\/h2>[\s\S]*Passeio de amanhã[\s\S]*Sábado, 28 de novembro[\s\S]*Passeio de sábado/);
+  assert.doesNotMatch(html,/Outro hobby/);
+});
+
 test('the event agenda combines search, hobby, community and date filters', () => {
   const context = appContext();
   const results = vm.runInContext(`
