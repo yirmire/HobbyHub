@@ -2073,6 +2073,7 @@ test('multiple event invitations retry only failed recipients with the same mess
     const writes=[];
     let allowed=false,sequence=0;
     firebase={collection:(_db,...path)=>path.join('/'),doc:path=>path+'/'+(++sequence),
+      query:path=>path,orderBy:()=>null,startAt:()=>null,endAt:()=>null,getDocsFromServer:async()=>({docs:[]}),
       setDoc:async target=>{writes.push(target);if(target.includes('joao_owner')&&!allowed)throw Error('denied');},
       getDoc:async()=>({data:()=>undefined})};
   `,context);
@@ -2090,6 +2091,15 @@ test('multiple event invitations retry only failed recipients with the same mess
   assert.equal(vm.runInContext('writes.length',context),3);
   assert.equal(vm.runInContext('writes[1]===writes[2]',context),true);
   assert.match(vm.runInContext('renderModal()',context),/Enviados para Ana, João/);
+  const previous=vm.runInContext('renderModal()',context);
+  assert.match(previous,/Já convidado/);
+  assert.doesNotMatch(previous,/data-action="select-event-chat-recipient"/);
+  await vm.runInContext("onAction({dataset:{action:'prepare-event-invite-resend',id:'ana'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Reenviar o convite para Ana\?/);
+  assert.equal(vm.runInContext('writes.length',context),3);
+  await vm.runInContext("onAction({dataset:{action:'confirm-event-invite-resend',id:'ana'}})",context);
+  assert.equal(vm.runInContext('writes.length',context),4);
+  assert.equal(vm.runInContext('writes[0]!==writes[3]',context),true);
 });
 
 test('Google Calendar prefills the confirmed event and keeps the private room URL in HobbyHub', () => {
