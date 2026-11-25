@@ -1954,11 +1954,11 @@ test('the event inbox lists only received invitations and puts upcoming unanswer
           data:()=>({senderId:event.id==='sent'?'reader':'peer',text:eventChatMessage(event),createdAt:100-index})}))};
       }};
   `,context);
-  await vm.runInContext('loadReceivedEventInvitations()',context);
+  await vm.runInContext('loadEventInvitations()',context);
   const html=vm.runInContext('renderEvents()',context);
   assert.match(html,/Mais cedo[\s\S]*Mais tarde[\s\S]*Confirmado/);
   assert.match(html,/Enviado por Lia/);
-  assert.match(html,/data-action="open-received-event-invite" data-id="early-msg" data-value="peer"/);
+  assert.match(html,/data-action="open-event-invitation-chat" data-id="early-msg" data-value="peer"/);
   assert.match(html,/data-action="rsvp" data-value="invitation" data-id="early"/);
   assert.doesNotMatch(html,/Meu convite/);
   handlers.input({target:{id:'received-event-invite-search',value:'MAIS CEDO'}});
@@ -1971,6 +1971,15 @@ test('the event inbox lists only received invitations and puts upcoming unanswer
   vm.runInContext("state.events.find(event=>event.id==='later').waitlist=['reader']",context);
   await vm.runInContext("onAction({dataset:{action:'filter-event-invite-status',value:'waitlist'}})",context);
   assert.match(vm.runInContext('renderEvents()',context),/Mais tarde[\s\S]*Na lista de espera/);
+  await vm.runInContext("onAction({dataset:{action:'event-filter',value:'sent-invites'}})",context);
+  const sent=vm.runInContext('renderEvents()',context);
+  assert.match(sent,/Enviado para Lia[\s\S]*Meu convite/);
+  assert.match(sent,/data-action="open-event-invitation-chat" data-id="sent-msg" data-value="peer"/);
+  assert.doesNotMatch(sent,/Mais cedo|Mais tarde|data-action="rsvp"/);
+  handlers.input({target:{id:'sent-event-invite-search',value:'outra pessoa'}});
+  assert.match(vm.runInContext('renderEvents()',context),/Nenhum convite encontrado/);
+  handlers.input({target:{id:'sent-event-invite-search',value:'LIA'}});
+  assert.match(vm.runInContext('renderEvents()',context),/Meu convite/);
 });
 
 test('shared events list private invitations in recent order with current statuses and source shortcuts', async () => {
