@@ -18,6 +18,28 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('hobby notices include only new matching events and respect city and format', () => {
+  const context=appContext();
+  const alerts=vm.runInContext(`
+    state.user={uid:'reader'};state.profile={location:'São Paulo, SP'};
+    state.eventHobbyAlerts=new Map([
+      ['Fotografia',{scope:'city',since:{toMillis:()=>100}}],
+      ['Leitura',{scope:'online',since:{toMillis:()=>100}}]
+    ]);
+    const base={date:'2099-05-01',time:'10:00',createdAt:200,createdBy:'organizer',attendees:[]};
+    state.events=[
+      {...base,id:'local',hobby:'Fotografia',location:'Praça central, São Paulo - SP'},
+      {...base,id:'online',hobby:'Leitura',format:'online',location:'Online'},
+      {...base,id:'other-city',hobby:'Fotografia',location:'Rio de Janeiro'},
+      {...base,id:'old',hobby:'Fotografia',location:'São Paulo',createdAt:99},
+      {...base,id:'wrong-format',hobby:'Leitura',location:'São Paulo'},
+      {...base,id:'cancelled',hobby:'Fotografia',location:'São Paulo',cancelled:true}
+    ];
+    notificationItems().filter(item=>item.type==='event-hobby-alert').map(item=>item.eventId).sort().join(',')
+  `,context);
+  assert.equal(alerts,'local,online');
+});
+
 test('mobile chat navigation preserves the inbox search and filter when returning from a conversation', async () => {
   const context=appContext();
   vm.runInContext(`
