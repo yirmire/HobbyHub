@@ -1995,8 +1995,9 @@ function eventChatRecipients(){
  }).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
 }
 function eventInvitationMessageQuery(thread){
+ // O limite exclusivo avança o espaço final do prefixo, incluindo títulos com qualquer caractere.
  return firebase.query(directMessagesCol(thread),firebase.orderBy('text'),
-   firebase.startAt(eventChatPrefix),firebase.endAt(eventChatPrefix+'\uf8ff'));
+   firebase.startAt(eventChatPrefix),firebase.endBefore(eventChatPrefix.trimEnd()+'!'));
 }
 async function lastSentEventInvitation(thread,uid,eventId){
  const snapshot=await firebase.getDocsFromServer(eventInvitationMessageQuery(thread));

@@ -1946,10 +1946,10 @@ test('the event inbox lists only received invitations and puts upcoming unanswer
       {id:'early',title:'Mais cedo',date:'2099-05-03',time:'12:00',attendees:[]},
       {id:'sent',title:'Meu convite',date:'2099-05-01',time:'12:00'}
     ];
-    firebase={collection:(_db,...parts)=>parts.join('/'),orderBy:value=>value,startAt:value=>value,endAt:value=>value,
+    firebase={collection:(_db,...parts)=>parts.join('/'),orderBy:value=>value,startAt:value=>value,endBefore:value=>value,
       query:(path,...constraints)=>({path,constraints}),
       getDocs:async query=>{
-        if(!query.path.endsWith('/peer_reader/messages')||query.constraints[1]!==eventChatPrefix)throw Error('Consulta incorreta');
+        if(!query.path.endsWith('/peer_reader/messages')||query.constraints[1]!==eventChatPrefix||query.constraints[2]!=='Convite para evento:!')throw Error('Consulta incorreta');
         return {docs:state.events.map((event,index)=>({id:event.id+'-msg',
           data:()=>({senderId:event.id==='sent'?'reader':'peer',text:eventChatMessage(event),createdAt:100-index})}))};
       }};
@@ -2073,7 +2073,7 @@ test('multiple event invitations retry only failed recipients with the same mess
     const writes=[];
     let allowed=false,sequence=0;
     firebase={collection:(_db,...path)=>path.join('/'),doc:path=>path+'/'+(++sequence),
-      query:path=>path,orderBy:()=>null,startAt:()=>null,endAt:()=>null,getDocsFromServer:async()=>({docs:[]}),
+      query:path=>path,orderBy:()=>null,startAt:()=>null,endBefore:()=>null,getDocsFromServer:async()=>({docs:[]}),
       setDoc:async target=>{writes.push(target);if(target.includes('joao_owner')&&!allowed)throw Error('denied');},
       getDoc:async()=>({data:()=>undefined})};
   `,context);
