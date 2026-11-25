@@ -1934,17 +1934,35 @@ function mediaUrl(value) {
    return url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<=1500?url.href:'';
  } catch {return '';}
 }
-function renderSharedMedia(entry,context){
+function renderSharedMedia(entry,context,preview=false){
  const photo=mediaUrl(entry.photoUrl),video=mediaUrl(entry.videoUrl);
  if(!photo&&!video)return '';
- return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada ${context}" loading="lazy" referrerpolicy="no-referrer">`:''}${video?`<video src="${esc(video)}" controls playsinline preload="none" aria-label="Vídeo compartilhado ${context}"></video><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
+ return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="Foto compartilhada ${context}" loading="${preview?'eager':'lazy'}" referrerpolicy="no-referrer" data-shared-media><p class="tip" data-media-error role="status" hidden></p>`:''}${video?`<video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Vídeo compartilhado ${context}" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p><a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`:''}</div>`;
 }
 function renderProfileMedia(profile){
  return renderSharedMedia(profile,'no perfil');
 }
 function sharedMediaFields(entry={}){
  return `<label class="field">Link HTTPS da foto (opcional)<input class="input" type="url" name="photoUrl" maxlength="1500" value="${esc(entry.photoUrl||'')}" placeholder="https://…/foto.jpg"></label>
- <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(entry.videoUrl||'')}" placeholder="https://…/video.mp4"></label>`;
+ <label class="field">Link HTTPS do vídeo (opcional)<input class="input" type="url" name="videoUrl" maxlength="1500" value="${esc(entry.videoUrl||'')}" placeholder="https://…/video.mp4"></label>
+ <div><button class="btn btn-outline btn-small" type="button" data-action="preview-shared-media">Prévia de fotos e vídeos</button>
+ <p class="mini muted" data-media-preview-status role="status"></p><div data-media-preview></div></div>`;
+}
+function previewSharedMedia(form){
+ const status=form.querySelector('[data-media-preview-status]');
+ const preview=form.querySelector('[data-media-preview]');
+ preview.replaceChildren();
+ try {
+   const media=readSharedMediaFields(name=>form.elements[name].value.trim());
+   if(!media.photoUrl&&!media.videoUrl){
+     status.textContent='Adicione o link de uma foto ou de um vídeo para ver a prévia.';
+     return;
+   }
+   status.textContent='Prévia da mídia';
+   preview.innerHTML=renderSharedMedia(media,'na prévia',true);
+ } catch(error) {
+   status.textContent=error.message;
+ }
 }
 function readSharedMediaFields(value){
  const photoUrl=mediaUrl(value('photoUrl')),videoUrl=mediaUrl(value('videoUrl'));
@@ -3973,6 +3991,7 @@ async function onAction(btn) {
  const action=btn.dataset.action;
  const id=btn.dataset.id;
  switch(action){
+  case 'preview-shared-media':previewSharedMedia(btn.form);return;
   case 'reload':window.location.reload();return;
   case 'toggle-auth':state.authMode=state.authMode==='login'?'register':'login';state.drafts.clear();render();return;
   case 'forgot-password':state.authMode='reset';state.drafts.clear();render();return;
@@ -5084,7 +5103,24 @@ window.addEventListener('hashchange',openLinkedContent);
 window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
+document.addEventListener('error',(event)=>{
+ const media=event.target;
+ if(!media.matches?.('[data-shared-media]'))return;
+ const status=media.nextElementSibling;
+ status.textContent=media.tagName==='IMG'
+   ?'A foto não carregou. Confira se o link abre a imagem diretamente.'
+   :'O vídeo não carregou. Confira se o link abre o arquivo de vídeo diretamente.';
+ status.hidden=false;
+ media.remove();
+},true);
+
 document.addEventListener('input',(event)=>{
+ if(event.target.matches?.('input[name="photoUrl"],input[name="videoUrl"]')){
+   const form=event.target.form;
+   form?.querySelector('[data-media-preview]')?.replaceChildren();
+   const status=form?.querySelector('[data-media-preview-status]');
+   if(status)status.textContent='';
+ }
  if(event.target.id==='sent-event-invite-search'&&state.sentEventInvites){
    state.sentEventInvites.query=event.target.value;
    state.sentEventInvites.limit=25;
