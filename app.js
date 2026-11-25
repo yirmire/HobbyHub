@@ -1453,7 +1453,8 @@ function renderEventWeek(days,events){
 async function loadReceivedEventInvitations(){
  const uid=me();
  if(!uid)return;
- const inbox={entries:[],limit:25,loading:true,partial:false};
+ const previous=state.receivedEventInvites;
+ const inbox={entries:[],limit:25,loading:true,partial:false,query:previous?.query||'',status:previous?.status||'all'};
  state.receivedEventInvites=inbox;
  render();
  const active=()=>me()===uid&&state.receivedEventInvites===inbox;
@@ -1496,18 +1497,25 @@ async function updateDismissedEventInvite(id,peer,dismiss){
    if(me()===uid)showToast(dismiss?'Convite dispensado.':'Convite restaurado.');
  },'updatingDismissedEventInvite');
 }
+const eventInviteStatusFilters=[['all','Todos'],['pending','Sem resposta'],['confirmed','Confirmados'],['waitlist','Lista de espera']];
 function renderReceivedEventInvitations(){
  const inbox=state.receivedEventInvites;
  if(!inbox||inbox.loading)return '<p class="tip" role="status">Carregando convites recebidos…</p>';
  const uid=me(),day=today(),events=new Map(state.events.map(event=>[event.id,event]));
  const dismissed=state.showDismissedEventInvites;
+ const query=norm(inbox.query),statusFilter=inbox.status||'all';
  const entries=inbox.entries.filter(entry=>state.dismissedEventInviteIds.has(receivedInviteMarkerId(entry))===dismissed).map(entry=>{
    const event=events.get(entry.invitation.id);
    const schedule=event&&viewerEventSchedule(event);
    const pending=Boolean(event&&!event.cancelled&&schedule.date>=day&&
      !event.attendees?.includes(uid)&&!event.waitlist?.includes(uid));
-   return {...entry,event,pending,date:schedule?.date||'',time:schedule?.time||''};
- }).sort((a,b)=>Number(b.pending)-Number(a.pending)||
+   const status=pending?'pending':!event||event.cancelled?'other':event.attendees?.includes(uid)?'confirmed':
+     schedule.date>=day&&event.waitlist?.includes(uid)?'waitlist':'other';
+   const sender=member(entry.peer)?.name||entry.thread.names?.[entry.peer]||'Pessoa';
+   return {...entry,event,pending,status,sender,date:schedule?.date||'',time:schedule?.time||''};
+ }).filter(entry=>(statusFilter==='all'||entry.status===statusFilter)&&(!query||
+   norm(entry.event?.title||entry.invitation.title).includes(query)||norm(entry.sender).includes(query)))
+ .sort((a,b)=>Number(b.pending)-Number(a.pending)||
    (a.pending?(a.date+a.time).localeCompare(b.date+b.time):0)||(b.createdAt||0)-(a.createdAt||0));
  return `<section class="form-stack" aria-label="Convites recebidos">
  <div class="toggle-row" style="flex-wrap:wrap" role="group" aria-label="Mostrar convites">
@@ -1515,10 +1523,12 @@ function renderReceivedEventInvitations(){
  <button type="button" class="btn btn-small ${dismissed?'btn-soft':'btn-outline'}" data-action="filter-dismissed-event-invites" data-value="dismissed" aria-pressed="${dismissed}">Dispensados</button>
  <button type="button" class="btn btn-outline btn-small" data-action="refresh-received-event-invites">Atualizar convites</button>
  </div>
+ <label class="field">Buscar convites<input id="received-event-invite-search" class="input" type="search" maxlength="100" placeholder="Nome do evento ou de quem enviou" value="${esc(inbox.query||'')}"></label>
+ <div class="filters" role="group" aria-label="Situação do convite">${eventInviteStatusFilters.map(([value,label])=>`<button type="button" class="filter ${statusFilter===value?'active':''}" data-action="filter-event-invite-status" data-value="${value}" aria-pressed="${statusFilter===value}">${label}</button>`).join('')}</div>
  ${inbox.partial?'<p class="tip" role="status">Algumas conversas não puderam ser consultadas.</p>':''}
- ${!entries.length&&!inbox.partial?(dismissed?'<p class="tip">Nenhum convite dispensado.</p>':'<p class="tip">Nenhum convite recebido pelo chat.</p>'):''}
+ ${!entries.length&&!inbox.partial?`<p class="tip" role="status">${query||statusFilter!=='all'?'Nenhum convite encontrado.':dismissed?'Nenhum convite dispensado.':'Nenhum convite recebido pelo chat.'}</p>`:''}
  ${entries.slice(0,inbox.limit).map(entry=>`<article class="card form-stack" style="padding:14px;overflow-wrap:anywhere">
- <p class="mini muted">Enviado por ${esc(member(entry.peer)?.name||entry.thread.names?.[entry.peer]||'Pessoa')}</p>
+ <p class="mini muted">Enviado por ${esc(entry.sender)}</p>
  ${renderEventInvitation(entry.invitation,entry.event,!dismissed,true)}
  <button type="button" class="btn btn-outline btn-small" data-action="open-received-event-invite" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
  <button type="button" class="btn btn-outline btn-small" data-action="${dismissed?'restore-event-invite':'dismiss-event-invite'}" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}" ${state.updatingDismissedEventInvite?'disabled':''}>${dismissed?'Restaurar convite':'Dispensar convite'}</button>
@@ -3733,6 +3743,13 @@ async function onAction(btn) {
     if(state.receivedEventInvites)state.receivedEventInvites.limit=25;
     render();
     return;
+  case 'filter-event-invite-status':
+    if(state.receivedEventInvites&&eventInviteStatusFilters.some(([value])=>value===btn.dataset.value)){
+      state.receivedEventInvites.status=btn.dataset.value;
+      state.receivedEventInvites.limit=25;
+      render();
+    }
+    return;
   case 'dismiss-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,true);return;
   case 'restore-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,false);return;
   case 'refresh-received-event-invites':
@@ -4707,6 +4724,12 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='received-event-invite-search'&&state.receivedEventInvites){
+   state.receivedEventInvites.query=event.target.value;
+   state.receivedEventInvites.limit=25;
+   render();
+   return;
+ }
  if(event.target.id==='event-chat-share-search'){
    const panel=state.eventChatShares.get(state.selectedEvent);
    if(state.modal==='event-chat-share'&&panel){panel.query=event.target.value;render();}
