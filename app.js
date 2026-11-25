@@ -67,7 +67,7 @@ const state = {
   savedComments:new Map(), savedCommentWatches:new Map(),
   myCommentActivity:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', eventRoom:null, homeEventRooms:new Map(),
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', savedEventSearches:new Map(), savedEventSearchesLoaded:false, eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -413,6 +413,10 @@ function startSession() {
     state.notificationReads=new Set(mergeNotificationReads(snapshot.data()?.keys,[...readSync.pending]));
   },'leitura dos avisos');
   void syncNotificationReads();
+  subscribe(col('members',me(),'savedEventSearches'),snapshot=>{
+    state.savedEventSearches=new Map(docs(snapshot).map(search=>[search.id,search]));
+    state.savedEventSearchesLoaded=true;
+  },'buscas salvas de eventos');
   subscribe(col('members',me(),'eventHobbyAlerts'),snapshot=>{
     state.eventHobbyAlerts=new Map(snapshot.docs.map(doc=>[doc.id,doc.data()]));state.eventHobbyAlertsLoaded=true;
   },'alertas por hobby');
@@ -459,7 +463,7 @@ async function init() {
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
-      state.eventFormat='';state.eventCityFilter='';state.eventRoom=null;
+      state.eventFormat='';state.eventCityFilter='';state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
@@ -1611,6 +1615,25 @@ function renderSentEventInvitations(){
 function activeEventInvitationList(){
  return state.eventFilter==='sent-invites'?state.sentEventInvites:state.eventFilter==='invites'?state.receivedEventInvites:null;
 }
+function currentEventSearch(){
+ return {query:state.eventSearch.trim(),hobby:state.eventHobby,community:state.eventCommunity,
+   format:state.eventFormat,city:state.eventCityFilter};
+}
+function renderSavedEventSearches(){
+ const entries=[...state.savedEventSearches.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+ const canSave=Object.values(currentEventSearch()).some(Boolean);
+ return modalWrap('Minhas buscas',`<div class="form-stack">
+ ${!state.savedEventSearchesLoaded?'<p class="tip" role="status">Carregando buscas salvas…</p>':`
+ ${entries.map(entry=>`<div class="card toggle-row" style="padding:10px;flex-wrap:wrap;justify-content:space-between">
+ <button type="button" class="btn btn-soft btn-small" data-action="apply-event-search" data-id="${esc(entry.id)}">${esc(entry.name)}</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="delete-event-search" data-id="${esc(entry.id)}" aria-label="Remover busca ${esc(entry.name)}" ${state.busy?'disabled':''}>Remover</button></div>`).join('')}
+ ${!entries.length?'<p class="mini muted">Nenhuma busca salva.</p>':''}`}
+ ${canSave?`<form id="save-event-search-form" class="form-stack" data-draft="true" data-draft-key="save-event-search-form">
+ <label class="field">Nome para a busca atual<input class="input" name="name" maxlength="60" required placeholder="Ex.: Fotografia em Petrópolis"></label>
+ <button type="submit" class="btn btn-primary" ${state.busy||!state.savedEventSearchesLoaded?'disabled':''}>Salvar busca atual</button>
+ </form>`:'<p class="mini muted">Selecione filtros na agenda para salvar uma busca.</p>'}
+ </div>`);
+}
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
@@ -1672,12 +1695,14 @@ function renderEvents(now=new Date()) {
  ${alerts}${filters}
  ${eventFilter==='mine'?`<div class="filters" role="group" aria-label="Visualização dos meus eventos">${[['list','Lista'],['week','Semana']].map(([id,label])=>`<button id="event-agenda-${id}" class="filter ${state.eventAgendaView===id?'active':''}" data-action="event-agenda-view" data-value="${id}" aria-pressed="${state.eventAgendaView===id}">${label}</button>`).join('')}</div>`:''}
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
- <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
- <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
- <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
+ <div><button type="button" class="btn btn-outline btn-small" data-action="saved-event-searches">Minhas buscas</button></div>
+ <label class="field">Buscar eventos<input type="search" class="input" id="event-search" maxlength="150" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
+ <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${state.eventHobby&&!hobbies.includes(state.eventHobby)?`<option value="${esc(state.eventHobby)}" selected>${esc(state.eventHobby)}</option>`:''}${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
+ <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${state.eventCommunity&&!eventGroups.some(group=>group.id===state.eventCommunity)?`<option value="${esc(state.eventCommunity)}" selected>${esc(communities.get(state.eventCommunity)?.name||'Comunidade indisponível')}</option>`:''}${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <label class="field">Formato<select class="select" id="event-format-filter"><option value="">Todos os formatos</option>${eventFormatOptions(state.eventFormat)}</select></label>
  <label class="field">Cidade<select id="event-city-filter" class="select">
  <option value="">Todas as cidades</option><option value="mine" ${cityFilter==='mine'?'selected':''}>Minha cidade</option>
+ ${cityFilter.startsWith('city:')&&!cityOptions.has(city)?`<option value="${esc(cityFilter)}" selected>${esc(city)}</option>`:''}
  ${sortedCities.map(([key,label])=>`<option value="city:${esc(key)}" ${cityFilter==='city:'+key?'selected':''}>${esc(label)}</option>`).join('')}
  </select></label>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
@@ -2953,6 +2978,7 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='saved-event-searches')return renderSavedEventSearches();
  if(state.modal==='event-hobby-alerts')return renderEventHobbyAlerts();
  if(state.modal==='event-chat-share')return renderEventChatShare();
  if(state.modal==='delete-direct-message'){
@@ -3940,6 +3966,21 @@ async function onAction(btn) {
   }
   case 'refresh-event-history':await loadPersonalHistory();return;
   case 'upcoming-events':state.eventFilter='upcoming';render();return;
+  case 'saved-event-searches':openModal('saved-event-searches');return;
+  case 'apply-event-search':{
+    const entry=state.savedEventSearches.get(id);
+    if(state.modal!=='saved-event-searches'||!entry)return;
+    state.eventSearch=entry.query;state.eventHobby=entry.hobby;state.eventCommunity=entry.community;
+    state.eventFormat=entry.format;state.eventCityFilter=entry.city;
+    closeModal();
+    return;
+  }
+  case 'delete-event-search':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.modal!=='saved-event-searches'||!state.savedEventSearches.has(id))return;
+    await firebase.deleteDoc(ref('members',uid,'savedEventSearches',id));
+    if(me()===uid)showToast('Busca removida.');
+  });return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';state.eventCityFilter='';render();return;
   case 'retry-event-room':await loadEventRoom(true);return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openPostComposer();return;
@@ -5044,6 +5085,14 @@ document.addEventListener('submit',async(event)=>{
     const name=val('name');if(name.length<3)return;
     await firebase.addDoc(col('groups'),{name,hobby:val('hobby'),description:val('description'),location:val('location'),createdBy:me(),members:[me()],createdAt:now()});
     closeModal();state.groupView='mine';setTab('groups');showToast('Comunidade criada com sucesso!');
+  });return;
+  case 'save-event-search-form':await attempt(async()=>{
+    const uid=me(),name=val('name'),search=currentEventSearch();
+    if(!uid||state.modal!=='saved-event-searches'||!state.savedEventSearchesLoaded||!name||name.length>60||!Object.values(search).some(Boolean))return;
+    await firebase.addDoc(col('members',uid,'savedEventSearches'),{name,...search});
+    if(me()!==uid)return;
+    clearSubmittedDraft(form.id,form.id,'name',data.name);
+    showToast('Busca salva.');
   });return;
   case 'event-hobby-alert-form':await attempt(async()=>{
     const uid=me(),hobby=val('hobby'),scope=val('scope');
