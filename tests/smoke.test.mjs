@@ -17,6 +17,30 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('private message drafts save text and the reply independently for each account and peer', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    const storage=new Map();
+    localStorage.getItem=key=>storage.get(key);
+    localStorage.setItem=(key,value)=>storage.set(key,value);
+    localStorage.removeItem=key=>storage.delete(key);
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directReply={id:'original'};
+    saveCurrentPrivateMessageDraft('Texto <privado>');
+  `,context);
+  assert.equal(vm.runInContext('readPrivateMessageDraft(privateMessageDraftKey()).replyTo',context),'original');
+  assert.match(vm.runInContext('renderMessages()',context),/value="Texto &lt;privado&gt;"/);
+  assert.equal(vm.runInContext("readPrivateMessageDraft(privateMessageDraftKey('other'))",context),null);
+  assert.equal(vm.runInContext("state.user={uid:'different'};readPrivateMessageDraft(privateMessageDraftKey())",context),null);
+  vm.runInContext("state.user={uid:'owner'}",context);
+  await vm.runInContext("onAction({dataset:{action:'cancel-direct-reply'}})",context);
+  assert.equal(vm.runInContext('readPrivateMessageDraft(privateMessageDraftKey()).replyTo',context),'');
+  assert.equal(vm.runInContext('readPrivateMessageDraft(privateMessageDraftKey()).message',context),'Texto <privado>');
+  vm.runInContext("saveCurrentPrivateMessageDraft('')",context);
+  assert.equal(vm.runInContext('readPrivateMessageDraft(privateMessageDraftKey())',context),null);
+});
+
 test('private replies quote messages from the same conversation and can be cancelled', async () => {
   const context=appContext();
   vm.runInContext(`
