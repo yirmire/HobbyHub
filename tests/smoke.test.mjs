@@ -17,6 +17,23 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('archived conversations return to the unread list when a newer message arrives', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.threads=[{id:'owner_peer',participants:['owner','peer']}];
+    state.privateReadAt.set('owner_peer',10);
+    state.latestInboundAt.set('owner_peer',10);
+    state.archivedDirectThreads.set('owner_peer',10);
+  `,context);
+  assert.doesNotMatch(vm.runInContext('renderMessages()',context),/data-action="open-dm"/);
+  assert.match(vm.runInContext("state.directThreadFilter='archived';renderMessages()",context),/data-action="open-dm" data-id="peer"/);
+  const empty=vm.runInContext("state.latestInboundAt.set('owner_peer',11);renderMessages()",context);
+  assert.match(empty,/Nenhuma conversa arquivada/);
+  const unread=vm.runInContext("state.directThreadFilter='unread';renderMessages()",context);
+  assert.match(unread,/chat-unread[^>]+data-action="open-dm" data-id="peer"/);
+});
+
 test('a personal unread marker restores a read conversation until it is opened again', async () => {
   const context=appContext();
   vm.runInContext(`

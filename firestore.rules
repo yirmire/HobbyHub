@@ -301,6 +301,15 @@ service cloud.firestore {
         allow get: if isMe(uid);
         allow create, update: if isMe(uid) && validPinnedThreads();
       }
+      match /privateArchive/{threadId} {
+        function validArchiveMarker() {
+          let data = request.resource.data;
+          return data.keys().hasOnly(['lastInboundAt'])
+            && data.lastInboundAt is int && data.lastInboundAt >= 0;
+        }
+        allow read, delete: if isMe(uid);
+        allow create, update: if isMe(uid) && threadMember(appId, threadId) && validArchiveMarker();
+      }
       match /privateUnread/{threadId} {
         function validUnreadMarker() {
           return request.resource.data.keys().hasOnly(['unread'])
