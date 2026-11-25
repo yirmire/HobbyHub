@@ -18,6 +18,30 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('saved search news counts matching events and sorts them from the next date', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.savedEventSearchesLoaded=true;
+    state.savedEventSearches.set('photo',{id:'photo',name:'Fotografia',query:'',hobby:'Fotografia',
+      community:'',format:'',city:'',alertSince:{toMillis:()=>100}});
+    state.events=[
+      {id:'late',title:'Encontro distante',hobby:'Fotografia',date:'2099-05-20',time:'10:00',createdAt:300},
+      {id:'early',title:'Encontro próximo',hobby:'Fotografia',date:'2099-05-05',time:'11:00',createdAt:200},
+      {id:'old',title:'Anúncio anterior',hobby:'Fotografia',date:'2099-05-01',time:'11:00',createdAt:99}
+    ];
+    state.modal='saved-event-searches';
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/2 eventos novos/);
+  await vm.runInContext("onAction({dataset:{action:'view-saved-event-search-news',id:'photo'}})",context);
+  const news=vm.runInContext('renderModal()',context);
+  assert.match(news,/Encontro próximo[\s\S]*Encontro distante/);
+  assert.doesNotMatch(news,/Anúncio anterior/);
+  assert.match(news,/data-action="view-event" data-id="early"/);
+  await vm.runInContext("onAction({dataset:{action:'back-saved-event-search-news'}})",context);
+  assert.equal(vm.runInContext('state.modal',context),'saved-event-searches');
+  assert.match(vm.runInContext('renderNotifications()',context),/data-action="view-saved-event-search-news" data-id="photo"/);
+});
+
 test('saved search alerts match the agenda filters and do not duplicate hobby alerts', () => {
   const context=appContext();
   vm.runInContext(`
