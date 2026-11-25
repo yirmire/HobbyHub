@@ -10,7 +10,8 @@ function appContext(handlers = {}) {
   const context = vm.createContext({
     console, Date, URL, URLSearchParams, TextEncoder, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
-    window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0 },
+    window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0,
+      location: new URL('https://example.test/HobbyHub/') },
     document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
   });
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
