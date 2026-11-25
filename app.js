@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -131,6 +131,8 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ state.receivedEventInvites=null;
+ if(state.eventFilter==='invites')state.eventFilter='upcoming';
  state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;
  state.directMessageEditor=null;
@@ -341,7 +343,12 @@ function startSession() {
   },'eventos');
   subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
-    (s)=>{state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));watchLatestIncomingMessages();},'conversas privadas');
+    (s)=>{
+      const previous=state.threads.map(thread=>thread.id).sort().join(',');
+      state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      watchLatestIncomingMessages();
+      if(state.tab==='events'&&state.eventFilter==='invites'&&previous!==state.threads.map(thread=>thread.id).sort().join(','))void loadReceivedEventInvitations();
+    },'conversas privadas');
   subscribe(ref('members',me(),'chatPreferences','pinned'),snapshot=>{
     state.pinnedDirectThreads=pinnedDirectThreads(snapshot);
   },'conversas fixadas');
@@ -1440,10 +1447,65 @@ function renderEventWeek(days,events){
  <p class="tip">O arquivo inclui os encontros confirmados da semana. Consulte o HobbyHub para ver alterações posteriores.</p></div>`:''}
  ${sections||'<p class="tip">Nenhum encontro confirmado nesta semana com os filtros atuais.</p>'}</div>`;
 }
+async function loadReceivedEventInvitations(){
+ const uid=me();
+ if(!uid)return;
+ const inbox={entries:[],limit:25,loading:true,partial:false};
+ state.receivedEventInvites=inbox;
+ render();
+ const active=()=>me()===uid&&state.receivedEventInvites===inbox;
+ const threads=state.threads.filter(thread=>thread.participants?.includes(uid));
+ for(let index=0;index<threads.length&&active();index+=6){
+   await Promise.all(threads.slice(index,index+6).map(async thread=>{
+     const peer=thread.participants.find(id=>id!==uid);
+     if(!peer||thread.id!==threadId(uid,peer))return;
+     try{
+       const query=firebase.query(directMessagesCol(thread.id),firebase.orderBy('text'),
+         firebase.startAt(eventChatPrefix),firebase.endAt(eventChatPrefix+'\uf8ff'));
+       const snapshot=await firebase.getDocs(query);
+       if(!active())return;
+       for(const doc of snapshot.docs){
+         const message=doc.data();
+         const invitation=message.senderId===peer&&!message.deletedAt&&directEventInvitation(message.text);
+         if(invitation)inbox.entries.push({invitation,peer,thread,id:doc.id,createdAt:message.createdAt});
+       }
+     }catch{inbox.partial=true;}
+   }));
+ }
+ if(!active())return;
+ inbox.loading=false;
+ render();
+}
+function renderReceivedEventInvitations(){
+ const inbox=state.receivedEventInvites;
+ if(!inbox||inbox.loading)return '<p class="tip" role="status">Carregando convites recebidos…</p>';
+ const uid=me(),day=today(),events=new Map(state.events.map(event=>[event.id,event]));
+ const entries=inbox.entries.map(entry=>{
+   const event=events.get(entry.invitation.id);
+   const schedule=event&&viewerEventSchedule(event);
+   const pending=Boolean(event&&!event.cancelled&&schedule.date>=day&&
+     !event.attendees?.includes(uid)&&!event.waitlist?.includes(uid));
+   return {...entry,event,pending,date:schedule?.date||'',time:schedule?.time||''};
+ }).sort((a,b)=>Number(b.pending)-Number(a.pending)||
+   (a.pending?(a.date+a.time).localeCompare(b.date+b.time):0)||(b.createdAt||0)-(a.createdAt||0));
+ return `<section class="form-stack" aria-label="Convites recebidos">
+ <button type="button" class="btn btn-outline btn-small" data-action="refresh-received-event-invites">Atualizar convites</button>
+ ${inbox.partial?'<p class="tip" role="status">Algumas conversas não puderam ser consultadas.</p>':''}
+ ${!entries.length&&!inbox.partial?'<p class="tip">Nenhum convite recebido pelo chat.</p>':''}
+ ${entries.slice(0,inbox.limit).map(entry=>`<article class="card form-stack" style="padding:14px;overflow-wrap:anywhere">
+ <p class="mini muted">Enviado por ${esc(member(entry.peer)?.name||entry.thread.names?.[entry.peer]||'Pessoa')}</p>
+ ${renderEventInvitation(entry.invitation,entry.event,true,true)}
+ <button type="button" class="btn btn-outline btn-small" data-action="open-received-event-invite" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
+ </article>`).join('')}
+ ${entries.length>inbox.limit?'<button type="button" class="btn btn-soft" data-action="more-received-event-invites">Ver mais convites</button>':''}
+ </section>`;
+}
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
  const eventFilter=state.eventFilter;
+ const filters=`<div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
+ if(eventFilter==='invites')return filters+renderReceivedEventInvitations();
  const weekly=eventFilter==='mine'&&state.eventAgendaView==='week';
  const days=weekly?eventWeek(now,state.eventWeekOffset):[];
  const query=norm(state.eventSearch);
@@ -1482,7 +1544,7 @@ function renderEvents(now=new Date()) {
    :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
  return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- <div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>
+ ${filters}
  ${eventFilter==='mine'?`<div class="filters" role="group" aria-label="Visualização dos meus eventos">${[['list','Lista'],['week','Semana']].map(([id,label])=>`<button id="event-agenda-${id}" class="filter ${state.eventAgendaView===id?'active':''}" data-action="event-agenda-view" data-value="${id}" aria-pressed="${state.eventAgendaView===id}">${label}</button>`).join('')}</div>`:''}
  <div class="card form-stack" style="padding:16px;margin:0 0 16px">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
@@ -1840,7 +1902,7 @@ function renderEventInvitation(invitation,event,received=false,listed=false){
  return `<div class="form-stack">
  <strong>${esc(event?.title||invitation.title)}</strong>
  ${schedule?`<span>${esc(!listed&&event.cancelled?'Evento cancelado':[dateLabel(schedule.date),schedule.time].filter(Boolean).join(' · '))}</span>`:''}
- ${listed?`<span class="pill">${status}</span>`:received&&event?eventInvitationRsvp(event,schedule):''}
+ ${(received&&event?eventInvitationRsvp(event,schedule):'')||(listed?`<span class="pill">${status}</span>`:'')}
  ${event?`<button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(invitation.id)}">Ver evento</button>`:`<a class="btn btn-soft btn-small" href="${esc(invitation.url)}">Ver evento</a>`}
  </div>`;
 }
@@ -3211,7 +3273,10 @@ function setTab(tab){
  if(tab!=='saved')state.savedSelection=null;
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
- if(tab==='events')void loadPersonalHistory();
+ if(tab==='events'){
+   if(state.eventFilter==='invites')void loadReceivedEventInvitations();
+   else void loadPersonalHistory();
+ }
  if(tab==='home')loadHomeEventRooms();
  window.scrollTo({top:0,behavior:'instant'});
 }
@@ -3637,7 +3702,20 @@ async function onAction(btn) {
     });
     if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail')await loadEventQuestions(event.id);
   });return;
-  case 'event-filter':state.eventFilter=btn.dataset.value;render();await loadPersonalHistory();return;
+  case 'refresh-received-event-invites':
+    if(state.tab==='events'&&state.eventFilter==='invites')await loadReceivedEventInvitations();
+    return;
+  case 'more-received-event-invites':
+    if(state.receivedEventInvites){state.receivedEventInvites.limit+=25;render();}
+    return;
+  case 'open-received-event-invite':
+    if(state.receivedEventInvites?.entries.some(entry=>entry.peer===btn.dataset.value&&entry.id===id))await startDirect(btn.dataset.value,id);
+    return;
+  case 'event-filter':
+    state.eventFilter=btn.dataset.value;
+    if(state.eventFilter==='invites')await loadReceivedEventInvitations();
+    else{render();await loadPersonalHistory();}
+    return;
   case 'event-agenda-view':state.eventAgendaView=btn.dataset.value==='week'?'week':'list';render();return;
   case 'event-week':{
     const direction=btn.dataset.value;
