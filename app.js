@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -131,6 +131,7 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ state.directMessageEditor=null;
  state.allSavedDirect=null;
  stopDirectSavedMessages();
  for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
@@ -1873,6 +1874,11 @@ function renderAllSavedDirectMessages(panel){
  ${results.length>panel.limit?'<button type="button" class="btn btn-outline" data-action="more-all-saved-direct">Ver mais mensagens</button>':''}`}
  </section>`;
 }
+const directMessageEditWindow=15*60*1000;
+function canEditDirectMessage(message,at=now()){
+ return Boolean(message&&message.senderId===me()&&Number.isFinite(message.createdAt)&&
+   message.createdAt<=at&&at<message.createdAt+directMessageEditWindow);
+}
 function renderMessages() {
  if(state.allSavedDirect)return renderAllSavedDirectMessages(state.allSavedDirect);
  const community=state.chatMode!=='direct';
@@ -1943,7 +1949,7 @@ function renderMessages() {
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span>${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
@@ -2510,6 +2516,17 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='edit-direct-message'){
+   const editor=state.directMessageEditor;
+   const message=state.directMessages.find(item=>item.id===editor?.id);
+   if(!canEditDirectMessage(message))return modalWrap('Editar mensagem','<p>O prazo para editar esta mensagem terminou.</p>');
+   return modalWrap('Editar mensagem',`<form id="edit-direct-message-form" data-draft="true" class="form-stack">
+   <label class="field">Mensagem<textarea class="textarea" name="text" rows="4" maxlength="1500" required>${esc(editor.text)}</textarea></label>
+   <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="close">Cancelar</button>
+   <button type="submit" class="btn btn-primary" ${state.busy?'disabled':''}>Salvar edição</button></div>
+   </form>`);
+ }
+
  if(state.modal==='my-comment-activity')return renderMyCommentActivity();
  if(state.modal==='edit-saved-note'){
    const id=state.savedNotePostId;
@@ -2980,6 +2997,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.directMessageEditor=null;
  state.myCommentActivity=null;
  state.savedNotePostId=null;
  state.editingSavedCollectionId=null;
@@ -3913,6 +3931,14 @@ async function onAction(btn) {
     render();
     return;
   case 'set-direct-reaction':await setDirectReaction(id,btn.dataset.value);return;
+  case 'edit-direct-message':{
+    if(state.chatMode!=='direct'||!state.chatTarget||state.blockedIds.includes(state.chatTarget.uid))return;
+    const message=state.directMessages.find(item=>item.id===id);
+    if(!canEditDirectMessage(message)){showToast('O prazo para editar esta mensagem terminou.',true);return;}
+    state.directMessageEditor={id,peer:state.chatTarget.uid,text:message.text};
+    openModal('edit-direct-message');
+    return;
+  }
   case 'reply-direct-message':
     if(state.chatMode!=='direct'||!state.chatTarget||state.blockedIds.includes(state.chatTarget.uid)||!state.directMessages.some(message=>message.id===id))return;
     state.directReply={id};
@@ -4621,6 +4647,22 @@ document.addEventListener('submit',async(event)=>{
     }
     showToast(parent?'Resposta publicada!':'Comentário publicado!');
   });return;
+  case 'edit-direct-message-form':await attempt(async()=>{
+    const editor=state.directMessageEditor,uid=me(),text=val('text');
+    if(!editor||state.modal!=='edit-direct-message'||state.chatMode!=='direct'||state.chatTarget?.uid!==editor.peer||!text||text.length>1500)return;
+    if(text!==editor.text){
+      const target=firebase.doc(directMessagesCol(threadId(uid,editor.peer)),editor.id);
+      await firebase.runTransaction(db,async transaction=>{
+        const current=await transaction.get(target);
+        const message=current.data();
+        if(!canEditDirectMessage(message))throw new Error('O prazo para editar esta mensagem terminou.');
+        if(message.text!==editor.text)throw new Error('A mensagem mudou em outro dispositivo. Feche a edição e abra novamente.');
+        transaction.update(target,{text,editedAt:firebase.serverTimestamp()});
+      });
+      if(me()===uid)showToast('Mensagem editada.');
+    }
+    if(me()===uid&&state.directMessageEditor===editor&&state.modal==='edit-direct-message')closeModal();
+  },'busy','Não foi possível editar esta mensagem.');return;
   case 'message-form':await attempt(async()=>{
     const text=val('message');if(!text)return;
     const key=form.dataset.draftKey;
