@@ -1859,6 +1859,40 @@ test('post drafts are scoped by account and destination and require a choice on 
   assert.match(vm.runInContext('renderModal()',context),/id="post-form"/);
 });
 
+test('media preview loads on request, clears on edits and reports unavailable media', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    const preview={innerHTML:'',replaceChildren(){this.innerHTML='';}};
+    const status={textContent:''};
+    const form={elements:{photoUrl:{value:''},videoUrl:{value:''}},
+      querySelector:selector=>selector==='[data-media-preview]'?preview:status};
+    const button={dataset:{action:'preview-shared-media'},form};
+  `,context);
+  const action=()=>vm.runInContext('onAction(button)',context);
+  await action();
+  assert.match(vm.runInContext('status.textContent',context),/Adicione o link/);
+  vm.runInContext("form.elements.photoUrl.value='http://example.test/photo.jpg'",context);
+  await action();
+  assert.match(vm.runInContext('status.textContent',context),/HTTPS/);
+  vm.runInContext(`
+    form.elements.photoUrl.value='https://example.test/photo.jpg';
+    form.elements.videoUrl.value='https://example.test/video.mp4';
+  `,context);
+  await action();
+  const html=vm.runInContext('preview.innerHTML',context);
+  assert.match(html,/<img[^>]*loading="eager"/);
+  assert.match(html,/<video[^>]*preload="metadata"/);
+  handlers.input({target:{matches:()=>true,form:vm.runInContext('form',context)}});
+  assert.equal(vm.runInContext('preview.innerHTML',context),'');
+  assert.equal(vm.runInContext('status.textContent',context),'');
+  const notice={hidden:true};
+  let removed=false;
+  handlers.error({target:{matches:()=>true,tagName:'IMG',nextElementSibling:notice,remove(){removed=true;}}});
+  assert.equal(notice.hidden,false);
+  assert.match(notice.textContent,/A foto não carregou/);
+  assert.equal(removed,true);
+});
+
 test('shared media renders direct HTTPS images and videos and survives a media-only draft', () => {
   const context=appContext(),stored=new Map();
   context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)};
