@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -131,6 +131,7 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;
  state.directMessageEditor=null;
  closeAllSavedDirectMessages();
@@ -1831,18 +1832,71 @@ function eventChatRecipients(){
 }
 function renderEventChatShare(){
  const event=state.events.find(item=>item.id===state.selectedEvent);
- if(!event||event.cancelled)return modalWrap('Compartilhar no chat','<p>Este evento não está disponível.</p>');
+ const panel=state.eventChatShares.get(state.selectedEvent);
+ if(!event||event.cancelled||!panel)return modalWrap('Compartilhar no chat','<p>Este evento não está disponível.</p>');
  const recipients=eventChatRecipients();
  const back=`<button type="button" class="btn btn-outline" data-action="view-event" data-id="${esc(event.id)}">Voltar ao evento</button>`;
- if(!recipients.length)return modalWrap('Compartilhar no chat',`<div class="form-stack"><p>Abra uma conversa privada com a pessoa antes de enviar o convite.</p>${back}</div>`);
- return modalWrap('Compartilhar no chat',`<form id="event-chat-share-form" class="form-stack" data-draft="true">
+ if(!recipients.length&&!panel.deliveries.size)return modalWrap('Compartilhar no chat',`<div class="form-stack"><p>Abra uma conversa privada com a pessoa antes de enviar o convite.</p>${back}</div>`);
+ const term=norm(panel.query);
+ const options=recipients.filter(item=>!panel.deliveries.has(item.peer)&&(!term||norm(item.name).includes(term)));
+ const sent=[...panel.deliveries.values()].filter(item=>item.status==='sent');
+ const failed=[...panel.deliveries.values()].filter(item=>item.status==='failed');
+ return modalWrap('Compartilhar no chat',`<form id="event-chat-share-form" class="form-stack">
  <p>${esc(event.title)}</p>
- <label class="field">Conversa privada<select class="select" name="peer" required>
- <option value="">Escolha uma pessoa</option>
- ${recipients.map(item=>`<option value="${esc(item.peer)}">${esc(item.name)}</option>`).join('')}
- </select></label>
+ <label class="field">Buscar conversa pelo nome<input type="search" id="event-chat-share-search" class="input" value="${esc(panel.query)}" maxlength="100" autocomplete="off"></label>
+ <div class="form-stack" role="group" aria-label="Conversas privadas" style="max-height:35vh;overflow:auto;padding:4px">
+ ${options.map(item=>`<button type="button" class="btn ${panel.selected.has(item.peer)?'btn-soft':'btn-outline'}" data-action="select-event-chat-recipient" data-id="${esc(item.peer)}" aria-pressed="${panel.selected.has(item.peer)}" ${panel.sending?'disabled':''}>${esc(item.name)}</button>`).join('')}
+ ${!options.length?'<p class="mini muted">Nenhuma conversa disponível neste filtro.</p>':''}
+ </div>
+ <div role="status">
+ <p class="mini muted">${panel.sending?'Enviando convites…':`${panel.selected.size} selecionada${panel.selected.size===1?'':'s'}`}</p>
+ ${sent.length?`<p class="mini">Enviados para ${esc(sent.map(item=>item.name).join(', '))}.</p>`:''}
+ ${failed.length?`<p class="mini">Envio pendente para ${esc(failed.map(item=>item.name).join(', '))}.</p>`:''}
+ </div>
  <div class="toggle-row" style="flex-wrap:wrap">${back}
- <button type="submit" class="btn btn-primary" ${state.sharingEventInChat?'disabled':''}>Enviar convite</button></div></form>`);
+ ${failed.length?`<button type="button" class="btn btn-outline" data-action="retry-event-chat-share" ${panel.sending?'disabled':''}>Tentar pendentes novamente</button>`:''}
+ <button type="submit" class="btn btn-primary" ${panel.sending||!panel.selected.size?'disabled':''}>Enviar convite</button></div></form>`);
+}
+async function sendEventChatInvites(retry=false){
+ const uid=me(),id=state.selectedEvent,panel=state.eventChatShares.get(id);
+ const event=state.events.find(item=>item.id===id);
+ if(!uid||state.modal!=='event-chat-share'||!event||event.cancelled||!panel||panel.sending)return;
+ const recipients=new Map(eventChatRecipients().map(item=>[item.peer,item]));
+ const selected=retry?[...panel.deliveries.values()].filter(item=>item.status==='failed'):[...panel.selected]
+   .map(peer=>recipients.get(peer)).filter(Boolean);
+ if(!selected.length)return;
+ const text=eventChatMessage(event);
+ if(text.length>1500){showToast('O convite é longo demais para enviar no chat.',true);return;}
+ panel.sending=true;
+ const active=()=>me()===uid&&state.eventChatShares.get(id)===panel;
+ for(const item of selected){
+   panel.selected.delete(item.peer);
+   item.status='sending';
+   panel.deliveries.set(item.peer,item);
+ }
+ render();
+ try{
+   for(let offset=0;offset<selected.length&&active();offset+=5){
+     await Promise.all(selected.slice(offset,offset+5).map(async item=>{
+       try{
+         if(!recipients.has(item.peer))throw new Error('Conversa indisponível');
+         item.target??=firebase.doc(directMessagesCol(item.thread));
+         item.payload??={senderId:uid,senderName:myName(),text,createdAt:now()};
+         try{await firebase.setDoc(item.target,item.payload);}
+         catch(error){
+           const snapshot=await firebase.getDoc(item.target);
+           const saved=snapshot.data();
+           if(saved?.senderId!==uid||saved.text!==item.payload.text)throw error;
+         }
+         item.status='sent';
+       }catch{item.status='failed';}
+     }));
+     if(active()&&state.modal==='event-chat-share'&&state.selectedEvent===id)render();
+   }
+ }finally{
+   panel.sending=false;
+   if(active()&&state.modal==='event-chat-share'&&state.selectedEvent===id)render();
+ }
 }
 function directQuote(message){
  return message?`<button type="button" class="btn btn-soft btn-small" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere" data-action="jump-direct-message" data-id="${esc(message.id)}"><strong>${message.senderId===me()?'Você':esc(state.chatTarget?.name||'Participante')}</strong><br>${esc(message.deletedAt?'Mensagem apagada':short(message.text,120))}</button>`:'';
@@ -3616,8 +3670,22 @@ async function onAction(btn) {
     showToast('Evento cancelado.');
   });return;
   case 'share-event-in-chat':
-    if(state.modal==='event-detail'&&state.events.some(event=>event.id===state.selectedEvent&&!event.cancelled))openModal('event-chat-share');
+    if(state.modal==='event-detail'&&state.events.some(event=>event.id===state.selectedEvent&&!event.cancelled)){
+      if(!state.eventChatShares.has(state.selectedEvent)){
+        state.eventChatShares.set(state.selectedEvent,{query:'',selected:new Set(),deliveries:new Map(),sending:false});
+      }
+      openModal('event-chat-share');
+    }
     return;
+  case 'select-event-chat-recipient':{
+    const panel=state.eventChatShares.get(state.selectedEvent);
+    if(state.modal!=='event-chat-share'||!panel||panel.sending||panel.deliveries.has(id)||!eventChatRecipients().some(item=>item.peer===id))return;
+    if(panel.selected.has(id))panel.selected.delete(id);
+    else panel.selected.add(id);
+    render();
+    return;
+  }
+  case 'retry-event-chat-share':await sendEventChatInvites(true);return;
   case 'copy-event-link':
     if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
     return;
@@ -4464,6 +4532,11 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='event-chat-share-search'){
+   const panel=state.eventChatShares.get(state.selectedEvent);
+   if(state.modal==='event-chat-share'&&panel){panel.query=event.target.value;render();}
+   return;
+ }
  if(event.target.id==='all-saved-direct-search'&&state.allSavedDirect){
    state.allSavedDirect.query=event.target.value;state.allSavedDirect.limit=25;render();return;
  }
@@ -4807,18 +4880,7 @@ document.addEventListener('submit',async(event)=>{
     }
     if(me()===uid&&state.directMessageEditor===editor&&state.modal==='edit-direct-message')closeModal();
   },'busy','Não foi possível editar esta mensagem.');return;
-  case 'event-chat-share-form':await attempt(async()=>{
-    const uid=me();
-    const event=state.events.find(item=>item.id===state.selectedEvent);
-    const recipient=eventChatRecipients().find(item=>item.peer===val('peer'));
-    if(!uid||state.modal!=='event-chat-share'||!event||event.cancelled||!recipient)return;
-    const text=eventChatMessage(event);
-    if(text.length>1500)throw new Error('O convite é longo demais para enviar no chat.');
-    await firebase.addDoc(directMessagesCol(recipient.thread),{senderId:uid,senderName:myName(),text,createdAt:now()});
-    if(me()!==uid)return;
-    if(state.modal==='event-chat-share'&&state.selectedEvent===event.id)openEventDetail(event.id);
-    showToast('Convite enviado no chat.');
-  },'sharingEventInChat','Não foi possível enviar o convite a esta conversa.');return;
+  case 'event-chat-share-form':await sendEventChatInvites();return;
   case 'message-form':await attempt(async()=>{
     const text=val('message');if(!text)return;
     const key=form.dataset.draftKey;
