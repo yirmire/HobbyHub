@@ -87,7 +87,7 @@ const state = {
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
-  pinnedDirectThreads:[], directThreadFilter:'all', manualUnreadThreads:new Set(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
+  pinnedDirectThreads:[], directThreadFilter:'all', manualUnreadThreads:new Set(), archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -172,6 +172,37 @@ function watchLatestIncomingMessages() {
    state.inboundUnsubs.set(thread.id,unsubscribe);
  }
 }
+function isArchivedDirectThread(id){
+ return state.archivedDirectThreads.has(id)&&
+   (state.latestInboundAt.get(id)||0)<=state.archivedDirectThreads.get(id);
+}
+function showCommunityChat(mode){
+ state.chatMode=mode;state.chatTarget=null;
+ state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+ if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
+ state.directMessages=[];
+ render();
+}
+async function toggleArchivedDirectThread(){
+ const uid=me(),peer=state.chatTarget?.uid;
+ if(!uid||!peer||state.chatMode!=='direct')return;
+ const id=threadId(uid,peer);
+ if(!state.threads.some(thread=>thread.id===id))return;
+ const archived=isArchivedDirectThread(id);
+ const lastInboundAt=state.directMessages.reduce((latest,message)=>
+   message.senderId!==uid?Math.max(latest,message.createdAt||0):latest,state.latestInboundAt.get(id)||0);
+ await attempt(async()=>{
+   const marker=ref('members',uid,'privateArchive',id);
+   if(archived)await firebase.deleteDoc(marker);
+   else await firebase.setDoc(marker,{lastInboundAt:Math.ceil(lastInboundAt)});
+   if(me()!==uid)return;
+   if(state.chatMode==='direct'&&state.chatTarget?.uid===peer){
+     if(archived)state.directThreadFilter='all';
+     else showCommunityChat('community');
+   }
+   showToast(archived?'Conversa desarquivada.':'Conversa arquivada.');
+ },'changingDirectArchive');
+}
 function unreadThread(id) {
  return state.manualUnreadThreads.has(id)||(state.latestInboundAt.get(id)||0)>(state.privateReadAt.get(id)||0);
 }
@@ -254,6 +285,9 @@ function startSession() {
   subscribe(ref('members',me(),'chatPreferences','pinned'),snapshot=>{
     state.pinnedDirectThreads=pinnedDirectThreads(snapshot);
   },'conversas fixadas');
+  subscribe(col('members',me(),'privateArchive'),snapshot=>{
+    state.archivedDirectThreads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().lastInboundAt]));
+  },'conversas arquivadas');
   subscribe(col('members',me(),'privateUnread'),snapshot=>{
     state.manualUnreadThreads=new Set(snapshot.docs.map(doc=>doc.id));
   },'conversas marcadas como não lidas');
@@ -366,7 +400,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
-      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.manualUnreadThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
+      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.manualUnreadThreads.clear();state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
         if(me()!==user.uid)return;
@@ -1682,14 +1716,18 @@ function renderMessages() {
  const savedDraft=community?null:readPrivateMessageDraft(privateMessageDraftKey());
  const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
  const unreadOnly=state.directThreadFilter==='unread';
- const threads=state.threads.filter(thread=>!unreadOnly||unreadThread(thread.id)).sort(compareDirectThreads);
+ const archiveOnly=state.directThreadFilter==='archived';
+ const threads=state.threads.filter(thread=>isArchivedDirectThread(thread.id)===archiveOnly&&
+   (!unreadOnly||unreadThread(thread.id))).sort(compareDirectThreads);
  return `<div class="card chat-shell"><div class="chat-list"><h3>Conversas</h3>
  <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
  <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
  <div class="toggle-row" style="flex-wrap:wrap;margin:8px 0" role="group" aria-label="Filtrar conversas privadas">
- <button class="btn ${unreadOnly?'btn-outline':'btn-soft'} btn-small" data-action="filter-direct-threads" data-value="all" aria-pressed="${!unreadOnly}">Todas</button>
+ <button class="btn ${unreadOnly||archiveOnly?'btn-outline':'btn-soft'} btn-small" data-action="filter-direct-threads" data-value="all" aria-pressed="${!unreadOnly&&!archiveOnly}">Todas</button>
  <button class="btn ${unreadOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="unread" aria-pressed="${unreadOnly}">Não lidas</button>
+ <button class="btn ${archiveOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="archived" aria-pressed="${archiveOnly}">Arquivadas</button>
  </div>
+ ${archiveOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa arquivada.</p>':''}
  ${unreadOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa não lida.</p>':''}
  ${threads.map(t=>{
  const other=(t.participants||[]).find(id=>id!==me());if(!other)return '';
@@ -1703,7 +1741,8 @@ function renderMessages() {
  ${!community&&state.chatTarget?`<div class="toggle-row" style="flex-wrap:wrap;padding:6px">
  <button class="btn btn-soft btn-small" data-action="toggle-direct-search" aria-expanded="${Boolean(searching)}">${searching?'Fechar busca':'Buscar na conversa'}</button>
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-pinned-direct-thread" ${state.changingPinnedDirectThread?'disabled':''}>${state.pinnedDirectThreads.includes(activeThread)?'Desafixar conversa':'Fixar conversa'}</button>`:''}
- ${state.threads.some(thread=>thread.id===activeThread)&&!state.manualUnreadThreads.has(activeThread)?`<button class="btn btn-soft btn-small" data-action="mark-direct-unread" ${state.markingDirectUnread?'disabled':''}>Marcar como não lida</button>`:''}
+ ${state.threads.some(thread=>thread.id===activeThread)&&!isArchivedDirectThread(activeThread)&&!state.manualUnreadThreads.has(activeThread)?`<button class="btn btn-soft btn-small" data-action="mark-direct-unread" ${state.markingDirectUnread?'disabled':''}>Marcar como não lida</button>`:''}
+ ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-direct-archive" ${state.changingDirectArchive?'disabled':''}>${isArchivedDirectThread(activeThread)?'Desarquivar conversa':'Arquivar conversa'}</button>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${searching?renderDirectSearchMatches(matches,searching.limit):`
@@ -3595,9 +3634,10 @@ async function onAction(btn) {
   });return;
   case 'open-dm':await startDirect(id);return;
   case 'filter-direct-threads':
-    state.directThreadFilter=btn.dataset.value==='unread'?'unread':'all';
+    state.directThreadFilter=['unread','archived'].includes(btn.dataset.value)?btn.dataset.value:'all';
     render();
     return;
+  case 'toggle-direct-archive':await toggleArchivedDirectThread();return;
   case 'mark-direct-unread':await markDirectThreadUnread();return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
   case 'toggle-direct-search':
@@ -3646,7 +3686,7 @@ async function onAction(btn) {
       showToast('Pessoa bloqueada.');
     }
   },'updatingBlock');return;
-  case 'chat-community':state.chatMode=btn.dataset.value==='global'?'global':'community';state.chatTarget=null;state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}state.directMessages=[];render();return;
+  case 'chat-community':showCommunityChat(btn.dataset.value==='global'?'global':'community');return;
   case 'comments':openComments(id);return;
   case 'my-comment-activity':
     if(me()){
