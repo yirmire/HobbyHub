@@ -138,6 +138,30 @@ await request(sender, 'PATCH', reactionPath, 403, reactionMap([[sender.localId, 
 await request(sender, 'PATCH', `${thread}/messages/hello`, 403, { ...message, ...reactionMap([recipientReaction]), text: {stringValue:'Texto alterado'} });
 await request(sender, 'PATCH', reactionPath, 200, reactionMap([[sender.localId, '😂'], recipientReaction]));
 await request(sender, 'PATCH', reactionPath, 200, reactionMap([recipientReaction]));
+const oldMessage = {...message,createdAt:{integerValue:String(Date.now()-901000)}};
+await request(sender, 'POST', `${thread}/messages?documentId=old`, 200, oldMessage);
+async function editDirectMessage(user,id,expected,extraFields={}) {
+  const endpoint=base.split('/documents/')[0]+'/documents:commit';
+  const response=await fetch(endpoint,{
+    method:'POST',
+    headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
+    body:JSON.stringify({writes:[{
+      update:{name:`${base.split('/v1/')[1]}/${thread}/messages/${id}`,fields:{text:{stringValue:'Texto corrigido'},...extraFields}},
+      updateMask:{fieldPaths:['text',...Object.keys(extraFields)]},
+      updateTransforms:[{fieldPath:'editedAt',setToServerValue:'REQUEST_TIME'}],
+      currentDocument:{exists:true}
+    }]})
+  });
+  assert.equal(response.status,expected,await response.text());
+}
+await editDirectMessage(recipient,'hello',403);
+await editDirectMessage(sender,'old',403);
+await editDirectMessage(sender,'hello',403,{replyTo:{stringValue:'old'}});
+await editDirectMessage(sender,'hello',200);
+const edited=await request(recipient,'GET',`${thread}/messages/hello`,200);
+assert.equal(edited.fields.text.stringValue,'Texto corrigido');
+assert.ok(edited.fields.editedAt.timestampValue);
+assert.equal(edited.fields.reactions.mapValue.fields[recipient.localId].stringValue,'❤️');
 const block = `${blocked}/${recipient.localId}`;
 const blockFields = { createdAt: { integerValue: String(Date.now()) } };
 await request(recipient, 'POST', `${blocked}?documentId=${recipient.localId}`, 403, blockFields);
