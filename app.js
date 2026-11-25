@@ -67,7 +67,7 @@ const state = {
   savedComments:new Map(), savedCommentWatches:new Map(),
   myCommentActivity:null,
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
-  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', savedEventSearches:new Map(), savedEventSearchesLoaded:false, eventRoom:null, homeEventRooms:new Map(),
+  eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', eventFiltersOpen:false, savedEventSearches:new Map(), savedEventSearchesLoaded:false, eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
   chatMode:'community', chatTarget:null, mobileChatOpen:false, mobileChatOptions:false, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
@@ -464,7 +464,7 @@ async function init() {
       state.followedPostsFilter='all';
       state.reportTarget=null;state.selectedGroup=null;state.groupsLoaded=false;state.modalReturnFocus=null;
       state.eventGroupId=null;state.eventTemplate=null;state.selectedEvent=null;state.eventsLoaded=false;state.eventConflict=null;
-      state.eventFormat='';state.eventCityFilter='';state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
+      state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
       state.groupView='mine';state.groupHobby='';state.groupCity='';
@@ -963,7 +963,7 @@ function renderEventNotices() {
 function renderLayout() {
  if(!state.profile)return `<div class="splash"><span class="splash-mark">✳</span><h1>HobbyHub</h1><p>Preparando seu perfil...</p>${state.alerts.length?`<div class="error-banner">${esc(state.alerts[0])}</div><button data-action="logout" class="btn btn-outline">Sair da conta</button>`:''}</div>`;
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
- return `<div class="layout ${state.tab==='messages'&&state.mobileChatOpen&&!state.allSavedDirect?'mobile-chat-detail':''}">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
+ return `<div class="layout ${state.tab==='events'?'event-agenda-layout':''} ${state.tab==='messages'&&state.mobileChatOpen&&!state.allSavedDirect?'mobile-chat-detail':''}">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
  ${titleBar()}<label class="mobile-search">${icon('search')}<input id="mobile-search" aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
 }
@@ -1694,10 +1694,12 @@ function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
  const eventFilter=state.eventFilter;
- const filters=`<div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['sent-invites','Convites enviados'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
- const alerts='<div style="margin:0 0 12px"><button type="button" class="btn btn-outline btn-small" data-action="event-hobby-alerts">Alertas por hobby</button></div>';
- if(eventFilter==='invites')return alerts+filters+renderReceivedEventInvitations();
- if(eventFilter==='sent-invites')return alerts+filters+renderSentEventInvitations();
+ const filters=`<div class="filters event-agenda-tabs" id="event-agenda-tabs" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['sent-invites','Convites enviados'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
+ const alerts=`<div class="toggle-row event-agenda-actions">
+ <button type="button" class="btn btn-primary btn-small event-mobile-create" data-action="event">${icon('plus')} Criar evento</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="event-hobby-alerts">Alertas por hobby</button></div>`;
+ if(eventFilter==='invites')return filters+alerts+renderReceivedEventInvitations();
+ if(eventFilter==='sent-invites')return filters+alerts+renderSentEventInvitations();
  const weekly=eventFilter==='mine'&&state.eventAgendaView==='week';
  const days=weekly?eventWeek(now,state.eventWeekOffset):[];
  const query=norm(state.eventSearch);
@@ -1718,7 +1720,8 @@ function renderEvents(now=new Date()) {
    if(!cityOptions.has(key)||event.city)cityOptions.set(key,label);
  }
  const sortedCities=[...cityOptions].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'));
- const filtering=Boolean(query||state.eventHobby||state.eventCommunity||state.eventFormat||cityFilter);
+ const filterCount=[state.eventHobby,state.eventCommunity,state.eventFormat,cityFilter].filter(Boolean).length;
+ const filtering=Boolean(query||filterCount);
  const events=state.events.filter(event=>{
    const schedule=viewerEventSchedule(event);
    const group=communities.get(event.groupId);
@@ -1744,12 +1747,16 @@ function renderEvents(now=new Date()) {
    :eventFilter==='saved'?empty('🔖','Você ainda não salvou nenhum evento','Salve um encontro para voltar aos detalhes mais tarde.','Ver próximos eventos','upcoming-events')
    :eventFilter==='waitlist'?empty('🗓️','Você não está em nenhuma lista de espera','Ao entrar na fila de um evento lotado, acompanhe sua posição por aqui.','Ver próximos eventos','upcoming-events')
    :empty('🗓️','Nada marcado ainda','Seja a primeira pessoa a transformar uma conversa em um encontro.','Criar evento','event');
- return `<div class="hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
- ${alerts}${filters}
+ return `<div class="hero event-agenda-hero" style="min-height:200px;background:linear-gradient(115deg,#fe956e,#ed7099)"><span class="hero-overline">SAIA DO FEED, VIVA A EXPERIÊNCIA</span><h2>Conexões que saem da tela.</h2><p>Crie um encontro de leitura, uma caminhada ou uma sessão de games.</p><button class="btn btn-white btn-small" data-action="event">${icon('plus')} Criar evento</button></div>
+ ${filters}${alerts}
  ${eventFilter==='mine'?`<div class="filters" role="group" aria-label="Visualização dos meus eventos">${[['list','Lista'],['week','Semana']].map(([id,label])=>`<button id="event-agenda-${id}" class="filter ${state.eventAgendaView===id?'active':''}" data-action="event-agenda-view" data-value="${id}" aria-pressed="${state.eventAgendaView===id}">${label}</button>`).join('')}</div>`:''}
- <div class="card form-stack" style="padding:16px;margin:0 0 16px">
- <div><button type="button" class="btn btn-outline btn-small" data-action="saved-event-searches">Minhas buscas</button></div>
+ <div class="card form-stack event-agenda-search">
  <label class="field">Buscar eventos<input type="search" class="input" id="event-search" maxlength="150" placeholder="Nome, local ou cidade da comunidade" value="${esc(state.eventSearch)}"></label>
+ <div class="toggle-row event-agenda-actions">
+ <button type="button" class="btn btn-outline btn-small" data-action="saved-event-searches">Minhas buscas</button>
+ <button type="button" class="btn btn-outline btn-small event-mobile-filter-toggle" data-action="toggle-event-filters" aria-expanded="${state.eventFiltersOpen}" aria-controls="event-extra-filters">Filtros${filterCount?' ('+filterCount+')':''}</button>
+ </div>
+ <div id="event-extra-filters" class="form-stack event-extra-filters ${state.eventFiltersOpen?'is-open':''}">
  <div class="field-grid"><label class="field">Hobby<select class="select" id="event-hobby"><option value="">Todos os hobbies</option>${state.eventHobby&&!hobbies.includes(state.eventHobby)?`<option value="${esc(state.eventHobby)}" selected>${esc(state.eventHobby)}</option>`:''}${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.eventHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
  <label class="field">Comunidade<select class="select" id="event-community"><option value="">Todas as comunidades</option>${state.eventCommunity&&!eventGroups.some(group=>group.id===state.eventCommunity)?`<option value="${esc(state.eventCommunity)}" selected>${esc(communities.get(state.eventCommunity)?.name||'Comunidade indisponível')}</option>`:''}${eventGroups.map(group=>`<option value="${esc(group.id)}" ${state.eventCommunity===group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label></div>
  <label class="field">Formato<select class="select" id="event-format-filter"><option value="">Todos os formatos</option>${eventFormatOptions(state.eventFormat)}</select></label>
@@ -1758,6 +1765,7 @@ function renderEvents(now=new Date()) {
  ${cityFilter.startsWith('city:')&&!cityOptions.has(city)?`<option value="${esc(cityFilter)}" selected>${esc(city)}</option>`:''}
  ${sortedCities.map(([key,label])=>`<option value="city:${esc(key)}" ${cityFilter==='city:'+key?'selected':''}>${esc(label)}</option>`).join('')}
  </select></label>
+ </div>
  <div class="toggle-row"><span class="mini muted">${events.length} ${events.length===1?'evento encontrado':'eventos encontrados'}</span>${filtering?'<button type="button" class="text-action" data-action="clear-event-filters">Limpar filtros</button>':''}</div>
  </div>
  ${eventFilter==='history'&&state.personalHistory.loading?'<p class="tip" role="status">Conferindo seus registros de presença…</p>':''}
@@ -3473,6 +3481,7 @@ function render() {
  const previousModal=container.querySelector('.modal');
  const modalView=previousModal?.dataset.view,modalScroll=previousModal?.scrollTop;
  const cursor=active&&typeof active.selectionStart==='number'?{start:active.selectionStart,end:active.selectionEnd}:null;
+ const eventTabsScroll=document.getElementById('event-agenda-tabs')?.scrollLeft||0;
  const chatLog=document.getElementById('chat-log');const wasNearBottom=chatLog?chatLog.scrollHeight-chatLog.scrollTop-chatLog.clientHeight<75:false;
  const chatScroll=chatLog?.scrollTop||0;const pageScroll=window.scrollY;
  captureDrafts();document.body.classList.toggle('dark',state.dark);
@@ -3504,6 +3513,7 @@ function render() {
    if(cursor&&typeof next.setSelectionRange==='function')try{next.setSelectionRange(cursor.start,cursor.end);}catch{}
  }
  if(sameDialog)nextModal.scrollTop=modalScroll;
+ const eventTabs=document.getElementById('event-agenda-tabs');if(eventTabs)eventTabs.scrollLeft=eventTabsScroll;
  const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
@@ -4067,6 +4077,10 @@ async function onAction(btn) {
     if(me()===uid)showToast('Busca removida.');
   });return;
   case 'clear-event-filters':state.eventSearch='';state.eventHobby='';state.eventCommunity='';state.eventFormat='';state.eventCityFilter='';render();return;
+  case 'toggle-event-filters':
+    state.eventFiltersOpen=!state.eventFiltersOpen;
+    render();
+    return;
   case 'retry-event-room':await loadEventRoom(true);return;
   case 'compose':state.composingGroup=null;state.composingIntroduction=false;state.composingRecapId=null;openPostComposer();return;
   case 'continue-post-draft':

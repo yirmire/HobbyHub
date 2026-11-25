@@ -77,3 +77,16 @@
  .chat-options:not(.is-open){display:none}
  .chat-options.is-open{max-height:30dvh;overflow:auto;border-bottom:1px solid var(--line)}
 }
+.event-agenda-search{padding:16px;margin:0 0 16px}
+.event-agenda-actions{flex-wrap:wrap;margin-bottom:8px}
+.event-mobile-create,.event-mobile-filter-toggle{display:none}
+@media(max-width:850px){
+ .event-agenda-layout .mobile-search,.event-agenda-layout .page-actions,.event-agenda-hero{display:none}
+ .event-agenda-layout .page-head{margin-bottom:10px}
+ .event-agenda-tabs{flex-wrap:nowrap;max-width:100%;overflow-x:auto;padding-block:4px}
+ .event-agenda-tabs .filter{flex:none;white-space:nowrap;min-height:40px}
+ .event-agenda-search{padding:12px;gap:8px}
+ .event-agenda-search .event-agenda-actions{margin-bottom:0}
+ .event-mobile-create,.event-mobile-filter-toggle{display:inline-flex;align-items:center;min-height:40px}
+ .event-extra-filters:not(.is-open){display:none}
+}
