@@ -756,7 +756,7 @@ function notificationItems(){
    const created=newEventAlertTime(event,day);
    if(!Number.isFinite(created))continue;
    const group=state.groups.find(item=>item.id===event.groupId);
-   const search=savedSearchAlerts.find(item=>created>=item.since&&eventMatchesSearch(event,item,group));
+   const search=savedSearchAlerts.find(item=>matchesSavedSearchAlert(event,item,created,group));
    if(!search&&!(Number.isFinite(since)&&created>=since&&matchesHobbyEventAlert(event,alert)))continue;
    items.push({type:'event-hobby-alert',eventId:event.id,eventTitle:event.title,actorId:event.createdBy,
      groupId:event.groupId,createdAt:created,key:'event-hobby-alert:'+event.id,searchName:search?.name,searchId:search?.id});
@@ -1639,13 +1639,17 @@ function newEventAlertTime(event,day){
  return typeof event.createdAt==='number'?event.createdAt:event.createdAt?.toMillis?.();
 }
 function savedSearchAlert(search){
- return {...search,query:norm(search.query),since:search.alertSince.toMillis()};
+ return {...search,query:norm(search.query),since:search.alertSince.toMillis(),
+   reviewedAt:search.reviewedAt?.toMillis?.()??-Infinity};
+}
+function matchesSavedSearchAlert(event,search,created,group){
+ return created>=search.since&&created>search.reviewedAt&&eventMatchesSearch(event,search,group);
 }
 function savedEventSearchNews(search){
  if(!search?.alertSince)return [];
  const alert=savedSearchAlert(search),day=today();
- return state.events.filter(event=>newEventAlertTime(event,day)>=alert.since&&
-   eventMatchesSearch(event,alert,state.groups.find(group=>group.id===event.groupId)));
+ return state.events.filter(event=>matchesSavedSearchAlert(event,alert,newEventAlertTime(event,day),
+   state.groups.find(group=>group.id===event.groupId)));
 }
 function renderSavedEventSearchNews(){
  const panel=state.savedEventSearchNews;
@@ -1654,6 +1658,7 @@ function renderSavedEventSearchNews(){
  return modalWrap('Novidades da busca',`<div class="form-stack">
  <button type="button" class="text-action" data-action="back-saved-event-search-news">${panel?.previous==='notifications'?'Voltar às notificações':'Voltar a Minhas buscas'}</button>
  ${search?`<h3>${esc(search.name)}</h3>`:''}
+ ${events.length?`<button type="button" class="btn btn-outline btn-small" data-action="review-saved-event-search-news" ${state.busy?'disabled':''}>Marcar novidades como vistas</button>`:''}
  ${!events.length?'<p class="tip" role="status">Nenhum evento novo nesta busca.</p>':''}
  ${events.slice(0,panel?.limit||25).map(event=>`<article class="card form-stack" style="padding:12px">
  <strong>${esc(event.title)}</strong>
@@ -4032,6 +4037,13 @@ async function onAction(btn) {
   case 'more-saved-event-search-news':
     if(state.modal==='saved-event-search-news'&&state.savedEventSearchNews){state.savedEventSearchNews.limit+=25;render();}
     return;
+  case 'review-saved-event-search-news':await attempt(async()=>{
+    const uid=me(),panel=state.savedEventSearchNews;
+    const search=state.savedEventSearches.get(panel?.id);
+    if(!uid||state.modal!=='saved-event-search-news'||!search?.alertSince||!savedEventSearchNews(search).length)return;
+    await firebase.updateDoc(ref('members',uid,'savedEventSearches',panel.id),{reviewedAt:firebase.serverTimestamp()});
+    if(me()===uid)showToast('Novidades marcadas como vistas.');
+  });return;
   case 'apply-event-search':{
     const entry=state.savedEventSearches.get(id);
     if(state.modal!=='saved-event-searches'||!entry)return;

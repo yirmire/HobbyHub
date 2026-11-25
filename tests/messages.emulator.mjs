@@ -53,22 +53,26 @@ const savedEventSearchFields=Object.fromEntries(Object.entries({
 await request(recipient,'PATCH',savedEventSearchPath,403,{...savedEventSearchFields,format:{stringValue:'invalid'}});
 await request(sender,'PATCH',savedEventSearchPath,403,savedEventSearchFields);
 await request(recipient,'PATCH',savedEventSearchPath,200,savedEventSearchFields);
-async function enableSavedSearchAlert(user,expected){
+async function setSavedSearchTimestamp(user,field,expected){
   const response=await fetch(base.split('/documents/')[0]+'/documents:commit',{
     method:'POST',
     headers:{'content-type':'application/json',authorization:`Bearer ${user.idToken}`},
     body:JSON.stringify({writes:[{
       transform:{document:`${base.split('/v1/')[1]}/${savedEventSearchPath}`,
-        fieldTransforms:[{fieldPath:'alertSince',setToServerValue:'REQUEST_TIME'}]},
+        fieldTransforms:[{fieldPath:field,setToServerValue:'REQUEST_TIME'}]},
       currentDocument:{exists:true}
     }]})
   });
   assert.equal(response.status,expected,await response.text());
 }
-await enableSavedSearchAlert(sender,403);
-await enableSavedSearchAlert(recipient,200);
+await setSavedSearchTimestamp(sender,'alertSince',403);
+await setSavedSearchTimestamp(recipient,'reviewedAt',403);
+await setSavedSearchTimestamp(recipient,'alertSince',200);
+await setSavedSearchTimestamp(sender,'reviewedAt',403);
+await setSavedSearchTimestamp(recipient,'reviewedAt',200);
 const enabledSearch=await request(recipient,'GET',savedEventSearchPath,200);
 assert.ok(enabledSearch.fields.alertSince.timestampValue);
+assert.ok(enabledSearch.fields.reviewedAt.timestampValue);
 await request(recipient,'PATCH',savedEventSearchPath+'?updateMask.fieldPaths=name',403,{name:{stringValue:'Outro nome'}});
 await request(recipient,'PATCH',savedEventSearchPath+'?updateMask.fieldPaths=alertSince',200,{});
 await request(recipient,'GET',savedEventSearchPath,200);
