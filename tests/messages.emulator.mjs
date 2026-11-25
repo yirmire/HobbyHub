@@ -320,6 +320,10 @@ const updated = await request(recipient, 'PATCH', `${profile}?updateMask.fieldPa
   photoUrl: { stringValue: photoUrl }
 });
 assert.equal(updated.fields.photoUrl.stringValue, photoUrl);
+const photoDescriptionPath=`${profile}?updateMask.fieldPaths=photoDescription`;
+await request(recipient,'PATCH',photoDescriptionPath,200,{photoDescription:{stringValue:'Uma horta ao amanhecer'}});
+await request(sender,'PATCH',photoDescriptionPath,403,{photoDescription:{stringValue:'Outra descrição'}});
+await request(recipient,'PATCH',photoDescriptionPath,403,{photoDescription:{stringValue:'x'.repeat(301)}});
 await request(sender, 'PATCH', `${profile}?updateMask.fieldPaths=photoUrl`, 403, {
   photoUrl: { stringValue: 'https://example.test/outra.jpg' }
 });
@@ -599,16 +603,20 @@ await request(recipient,'DELETE',privateCollection,200);
 assert.equal((await request(recipient,'GET',savedMembership,200)).fields.collectionIds.arrayValue.values[1].stringValue,'another');
 const editable='public/data/posts/editable-post';
 await request(sender,'POST','public/data/posts?documentId=editable-post',200,welcome);
-const photoOnly={...welcome,content:str(''),photoUrl:str('https://example.test/photo.jpg')};
+const photoOnly={...welcome,content:str(''),photoUrl:str('https://example.test/photo.jpg'),photoDescription:str('Céu ao amanhecer')};
 await request(sender,'POST','public/data/posts?documentId=photo-only',200,photoOnly);
 await request(sender,'POST','public/data/posts?documentId=community-video',200,{
-  ...welcome,groupId:str('welcome-group'),content:str(''),videoUrl:str('https://example.test/video.mp4')
+  ...welcome,groupId:str('welcome-group'),content:str(''),videoUrl:str('https://example.test/video.mp4'),videoDescription:str('Como fotografar o amanhecer')
+});
+await request(sender,'POST','public/data/posts?documentId=orphan-description',403,{...welcome,photoDescription:str('Descrição sem foto')});
+await request(sender,'POST','public/data/posts?documentId=long-video-summary',403,{
+  ...welcome,videoUrl:str('https://example.test/video.mp4'),videoDescription:str('x'.repeat(801))
 });
 await request(sender,'POST','public/data/posts?documentId=invalid-media',403,{...photoOnly,photoUrl:str('http://example.test/photo.jpg')});
 await request(sender,'POST','public/data/posts?documentId=empty-post',403,{...welcome,content:str('  ')});
 const editMedia={
   update:{name:documents+'public/data/posts/photo-only',fields:{videoUrl:str('https://example.test/video.mp4')}},
-  updateMask:{fieldPaths:['photoUrl','videoUrl']},updateTransforms:stamp('editedAt')
+  updateMask:{fieldPaths:['photoUrl','videoUrl','photoDescription']},updateTransforms:stamp('editedAt')
 };
 await moderate(recipient,[editMedia],403);
 await moderate(sender,[editMedia],200);
