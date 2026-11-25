@@ -1926,7 +1926,7 @@ test('event chat invitations show the event and use only eligible private conver
   await vm.runInContext("onAction({dataset:{action:'share-event-in-chat'}})",context);
   const modal=vm.runInContext('renderModal()',context);
   assert.match(modal,/event-chat-share-form/);
-  assert.match(modal,/<option value="peer">Ana/);
+  assert.match(modal,/data-id="peer" aria-pressed="false"[^>]*>Ana/);
   assert.doesNotMatch(modal,/Contato bloqueado/);
   const card=vm.runInContext('renderDirectMessageText(eventChatMessage(state.events[0]))',context);
   assert.match(card,/Caminhada &lt;local&gt;/);
@@ -1935,6 +1935,39 @@ test('event chat invitations show the event and use only eligible private conver
   assert.doesNotMatch(card,/private\.example/);
   const foreign=vm.runInContext('renderDirectMessageText("Convite para evento: Caminhada\\nhttps://foreign.example/#event=walk")',context);
   assert.doesNotMatch(foreign,/<a |<button/);
+});
+
+test('multiple event invitations retry only failed recipients with the same message identifier', async () => {
+  const handlers={};
+  const context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.events=[{id:'walk',title:'Caminhada'}];
+    state.selectedEvent='walk';state.modal='event-detail';
+    state.threads=[
+      {id:'ana_owner',participants:['owner','ana'],names:{ana:'Ana'}},
+      {id:'joao_owner',participants:['owner','joao'],names:{joao:'João'}}
+    ];
+    const writes=[];
+    let allowed=false,sequence=0;
+    firebase={collection:(_db,...path)=>path.join('/'),doc:path=>path+'/'+(++sequence),
+      setDoc:async target=>{writes.push(target);if(target.includes('joao_owner')&&!allowed)throw Error('denied');},
+      getDoc:async()=>({data:()=>undefined})};
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'share-event-in-chat'}})",context);
+  await vm.runInContext("onAction({dataset:{action:'select-event-chat-recipient',id:'ana'}})",context);
+  handlers.input({target:{id:'event-chat-share-search',value:'JOAO'}});
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/data-id="ana"/);
+  assert.match(vm.runInContext('renderModal()',context),/1 selecionada/);
+  await vm.runInContext("onAction({dataset:{action:'select-event-chat-recipient',id:'joao'}})",context);
+  await vm.runInContext('sendEventChatInvites()',context);
+  const partial=vm.runInContext('renderModal()',context);
+  assert.match(partial,/Enviados para Ana/);
+  assert.match(partial,/Envio pendente para João/);
+  await vm.runInContext("allowed=true;onAction({dataset:{action:'retry-event-chat-share'}})",context);
+  assert.equal(vm.runInContext('writes.length',context),3);
+  assert.equal(vm.runInContext('writes[1]===writes[2]',context),true);
+  assert.match(vm.runInContext('renderModal()',context),/Enviados para Ana, João/);
 });
 
 test('Google Calendar prefills the confirmed event and keeps the private room URL in HobbyHub', () => {
