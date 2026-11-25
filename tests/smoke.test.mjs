@@ -1910,6 +1910,34 @@ test('online event time zones preserve the same instant across local dates, conf
   assert.equal(vm.runInContext(`viewerEventSchedule({...event,time:'23:30',endTime:''}).time`,context),expected.toTimeString().slice(0,5));
 });
 
+test('the event inbox lists only received invitations and puts upcoming unanswered events first', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='events';state.eventFilter='invites';
+    state.threads=[{id:'peer_reader',participants:['reader','peer'],names:{peer:'Lia'}}];
+    state.events=[
+      {id:'done',title:'Confirmado',date:'2099-05-01',time:'12:00',attendees:['reader']},
+      {id:'later',title:'Mais tarde',date:'2099-05-09',time:'12:00',attendees:[]},
+      {id:'early',title:'Mais cedo',date:'2099-05-03',time:'12:00',attendees:[]},
+      {id:'sent',title:'Meu convite',date:'2099-05-01',time:'12:00'}
+    ];
+    firebase={collection:(_db,...parts)=>parts.join('/'),orderBy:value=>value,startAt:value=>value,endAt:value=>value,
+      query:(path,...constraints)=>({path,constraints}),
+      getDocs:async query=>{
+        if(!query.path.endsWith('/peer_reader/messages')||query.constraints[1]!==eventChatPrefix)throw Error('Consulta incorreta');
+        return {docs:state.events.map((event,index)=>({id:event.id+'-msg',
+          data:()=>({senderId:event.id==='sent'?'reader':'peer',text:eventChatMessage(event),createdAt:100-index})}))};
+      }};
+  `,context);
+  await vm.runInContext('loadReceivedEventInvitations()',context);
+  const html=vm.runInContext('renderEvents()',context);
+  assert.match(html,/Mais cedo[\s\S]*Mais tarde[\s\S]*Confirmado/);
+  assert.match(html,/Enviado por Lia/);
+  assert.match(html,/data-action="open-received-event-invite" data-id="early-msg" data-value="peer"/);
+  assert.match(html,/data-action="rsvp" data-value="invitation" data-id="early"/);
+  assert.doesNotMatch(html,/Meu convite/);
+});
+
 test('shared events list private invitations in recent order with current statuses and source shortcuts', async () => {
   const context=appContext();
   vm.runInContext(`
