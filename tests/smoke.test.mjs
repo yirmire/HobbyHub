@@ -17,6 +17,24 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('pinned private conversations appear before unread and recent conversations', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'pin',name:'Lia'};
+    state.threads=[
+      {id:'owner_recent',participants:['owner','recent'],createdAt:100},
+      {id:'owner_unread',participants:['owner','unread'],createdAt:3},
+      {id:'owner_pin',participants:['owner','pin'],createdAt:1}
+    ];
+    state.latestInboundAt.set('owner_unread',4);
+    state.pinnedDirectThreads=['owner_pin'];
+    renderMessages()
+  `,context);
+  assert.match(html,/data-id="pin"[\s\S]*data-id="unread"[\s\S]*data-id="recent"/);
+  assert.match(html,/Desafixar conversa/);
+});
+
 test('private message drafts save text and the reply independently for each account and peer', async () => {
   const context=appContext();
   vm.runInContext(`

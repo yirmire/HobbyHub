@@ -47,6 +47,18 @@ await request(sender, 'POST', `dm_threads?documentId=${threadId}`, 200, {
 await request(recipient, 'GET', thread, 200);
 await request(other, 'GET', thread, 403);
 
+const pins = `public/data/members/${sender.localId}/chatPreferences/pinned`;
+const pinnedIds = (...ids) => ({ threadIds: { arrayValue: { values: ids.map(stringValue => ({stringValue})) } } });
+await request(sender, 'GET', pins, 404);
+await request(sender, 'PATCH', pins, 200, pinnedIds(threadId));
+await request(recipient, 'GET', pins, 403);
+await request(recipient, 'PATCH', pins, 403, pinnedIds());
+await request(sender, 'PATCH', pins, 403, pinnedIds(threadId, threadId));
+await request(sender, 'PATCH', pins, 403, pinnedIds(threadId, 'two', 'three', 'four'));
+await request(sender, 'PATCH', pins, 403, pinnedIds('unknown'));
+await request(other, 'PATCH', `public/data/members/${other.localId}/chatPreferences/pinned`, 403, pinnedIds(threadId));
+await request(sender, 'PATCH', pins, 200, pinnedIds());
+
 const message = {
   senderId: { stringValue: sender.localId },
   text: { stringValue: 'Olá, HobbyHub!' },
