@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, directSearch:null, directHistoryAnchor:null, directReply:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, directSearch:null, directLinksLimit:0, directHistoryAnchor:null, directReply:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -178,7 +178,7 @@ function isArchivedDirectThread(id){
 }
 function showCommunityChat(mode){
  state.chatMode=mode;state.chatTarget=null;
- state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+ state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
  state.directMessages=[];
  render();
@@ -369,7 +369,7 @@ async function init() {
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
       state.posts=[];state.groups=[];state.events=[];state.members=[];state.messages=[];state.directMessages=[];
-      state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+      state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';
@@ -1628,6 +1628,42 @@ function renderDirectSearch(query,count){
  <p class="mini muted" role="status">${norm(query)?(count?`${count} ${count===1?'mensagem encontrada':'mensagens encontradas'}`:'Nenhuma mensagem encontrada.'):'Digite uma palavra ou frase.'}</p>
  </div>`;
 }
+function directMessageLinks(messages){
+ const links=[];
+ for(let index=messages.length-1;index>=0;index--){
+   const message=messages[index];
+   for(const [candidate] of String(message.text||'').matchAll(/https?:\/\/[^\s<>"'`]+/gi)){
+     let address=candidate.replace(/[.,!?;:…]+$/u,'');
+     for(const [opening,closing] of [['(',')'],['[',']'],['{','}']]){
+       const opened=address.split(opening).length-1;
+       let closed=address.split(closing).length-1;
+       while(closed>opened&&address.endsWith(closing)){
+         address=address.slice(0,-1);
+         closed--;
+       }
+     }
+     try{
+       const url=new URL(address);
+       if(!['https:','http:'].includes(url.protocol)||url.username||url.password)continue;
+       links.push({url,message});
+     }catch{}
+   }
+ }
+ return links;
+}
+function renderDirectLinks(messages,limit){
+ const links=directMessageLinks(messages);
+ if(!links.length)return '<p class="mini muted" role="status">Nenhum link compartilhado nesta conversa.</p>';
+ return `${links.slice(0,limit).map(({url,message})=>`<div class="card" style="padding:10px;overflow-wrap:anywhere">
+ <strong>${esc(url.hostname)}</strong>
+ <p class="mini muted">${esc(url.href)}</p>
+ <p class="mini muted">${message.senderId===me()?'Enviado':'Recebido'} · ${when(message.createdAt)}</p>
+ <div class="toggle-row" style="flex-wrap:wrap">
+ <a class="btn btn-soft btn-small" href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">Abrir link</a>
+ <button type="button" class="btn btn-outline btn-small" data-action="jump-direct-message" data-id="${esc(message.id)}">Ir à mensagem</button>
+ </div></div>`).join('')}
+ ${links.length>limit?'<button type="button" class="btn btn-soft" data-action="more-direct-links">Ver mais links</button>':''}`;
+}
 function renderDirectSearchMatches(results,limit){
  return `${results.slice(0,limit).map(message=>`<button class="btn btn-outline" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere" data-action="jump-direct-message" data-id="${esc(message.id)}">${esc(short(message.text,180))}<small style="display:block">${when(message.createdAt)}</small></button>`).join('')}
  ${results.length>limit?'<button class="btn btn-soft" data-action="more-direct-matches">Ver mais resultados</button>':''}`;
@@ -1635,6 +1671,7 @@ function renderDirectSearchMatches(results,limit){
 function showDirectMessage(id){
  if(!state.directMessages.some(message=>message.id===id))return;
  state.directSearch=null;
+ state.directLinksLimit=0;
  state.directHistoryAnchor=id;
  render();
  const row=document.getElementById('direct-message-'+id);
@@ -1707,6 +1744,7 @@ function renderMessages() {
  const end=anchor<0?messages.length:Math.min(messages.length,Math.max(150,anchor+75));
  const start=Math.max(0,end-150);
  const searching=!community&&state.chatTarget&&state.directSearch;
+ const showingLinks=!community&&state.chatTarget&&state.directLinksLimit>0;
  const matches=searching?directSearchResults(messages,searching.query):[];
  const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
  const blocked=!community&&state.blockedIds.includes(state.chatTarget?.uid);
@@ -1752,12 +1790,13 @@ function renderMessages() {
  <div class="chat-panel"><div class="chat-panel-head">${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div>${community?'':blockButton(state.chatTarget?.uid)}</div>
  ${!community&&state.chatTarget?`<div class="toggle-row" style="flex-wrap:wrap;padding:6px">
  <button class="btn btn-soft btn-small" data-action="toggle-direct-search" aria-expanded="${Boolean(searching)}">${searching?'Fechar busca':'Buscar na conversa'}</button>
+ <button class="btn btn-soft btn-small" data-action="toggle-direct-links" aria-expanded="${Boolean(showingLinks)}">${showingLinks?'Fechar links':'Links compartilhados'}</button>
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-pinned-direct-thread" ${state.changingPinnedDirectThread?'disabled':''}>${state.pinnedDirectThreads.includes(activeThread)?'Desafixar conversa':'Fixar conversa'}</button>`:''}
  ${state.threads.some(thread=>thread.id===activeThread)&&!isArchivedDirectThread(activeThread)&&!state.manualUnreadThreads.has(activeThread)?`<button class="btn btn-soft btn-small" data-action="mark-direct-unread" ${state.markingDirectUnread?'disabled':''}>Marcar como não lida</button>`:''}
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-direct-archive" ${state.changingDirectArchive?'disabled':''}>${isArchivedDirectThread(activeThread)?'Desarquivar conversa':'Arquivar conversa'}</button>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
- <div id="chat-log" class="chat-log">${searching?renderDirectSearchMatches(matches,searching.limit):`
+ <div id="chat-log" class="chat-log">${showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
  ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}</span>${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
@@ -2812,7 +2851,7 @@ function closeModal(){
  state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){
- if(tab!=='messages'){state.directSearch=null;state.directReactionPicker=null;}
+ if(tab!=='messages'){state.directSearch=null;state.directLinksLimit=0;state.directReactionPicker=null;}
  if(tab!=='saved')state.savedSelection=null;
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
@@ -2846,7 +2885,7 @@ async function startDirect(uid){
    if(me()!==sender)return;
    if(state.messageUnsub)state.messageUnsub();
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
-   state.directSearch=null;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
+   state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
    const replyTo=readPrivateMessageDraft(privateMessageDraftKey(uid))?.replyTo;
    if(replyTo)state.directReply={id:replyTo};
    state.directMessages=[];state.tab='messages';state.modal=null;state.drafts.clear();
@@ -3653,10 +3692,26 @@ async function onAction(btn) {
   case 'mark-direct-unread':await markDirectThreadUnread();return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
   case 'toggle-direct-search':
+    state.directLinksLimit=0;
     state.directSearch=state.directSearch?null:{query:'',limit:20};
     render();
     document.getElementById('direct-search')?.focus();
     return;
+  case 'toggle-direct-links':
+    if(state.chatMode!=='direct'||!state.chatTarget)return;
+    state.directSearch=null;
+    state.directLinksLimit=state.directLinksLimit?0:25;
+    render();
+    if(state.directLinksLimit){const log=document.getElementById('chat-log');if(log)log.scrollTop=0;}
+    return;
+  case 'more-direct-links':{
+    if(!state.directLinksLimit)return;
+    const scroll=document.getElementById('chat-log')?.scrollTop||0;
+    state.directLinksLimit+=25;
+    render();
+    const log=document.getElementById('chat-log');if(log)log.scrollTop=scroll;
+    return;
+  }
   case 'more-direct-matches':
     if(state.directSearch){state.directSearch.limit+=20;render();}
     return;
