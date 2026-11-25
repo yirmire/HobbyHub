@@ -17,6 +17,23 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('removed direct messages hide their content and disappear from saved messages and links', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};state.chatMode='direct';state.chatTarget={uid:'peer',name:'Lia'};
+    state.directMessages=[
+      {id:'deleted',senderId:'owner',createdAt:now()-100,text:'https://secret.example',deletedAt:{}},
+      {id:'reply',senderId:'peer',createdAt:now()-50,text:'Entendido',replyTo:'deleted'}
+    ];
+    state.directSavedIds=new Set(['deleted']);
+  `,context);
+  const chat=vm.runInContext('renderMessages()',context);
+  assert.equal((chat.match(/Mensagem apagada/g)||[]).length,2);
+  assert.doesNotMatch(chat,/secret\.example|data-action="delete-direct-message" data-id="deleted"/);
+  assert.match(vm.runInContext("state.directLinksLimit=25;renderMessages()",context),/Nenhum link compartilhado/);
+  assert.match(vm.runInContext("state.directLinksLimit=0;state.directSavedLimit=25;renderMessages()",context),/Nenhuma mensagem salva/);
+});
+
 test('only the sender can edit a recent direct message and edited messages are labeled', () => {
   const context=appContext();
   const html=vm.runInContext(`
@@ -78,7 +95,8 @@ test('the combined saved-message list fetches personal markers and searches name
         return {docs:[{id:path.includes('archive_owner')?'first':'second'}]};
       },
       getDoc:async path=>({exists:()=>true,data:()=>path.endsWith('/first')
-        ?{text:'Endereço da feira',createdAt:1}:{text:'Confirmado',createdAt:2}})
+        ?{text:'Endereço da feira',createdAt:1}:{text:'Confirmado',createdAt:2}}),
+      onSnapshot:(path,update)=>{if(path.endsWith('/first'))state.savedFirstUpdate=update;return ()=>{};}
     };
   `,context);
   await vm.runInContext('openAllSavedDirectMessages()',context);
@@ -89,6 +107,8 @@ test('the combined saved-message list fetches personal markers and searches name
   assert.doesNotMatch(byName,/Confirmado/);
   handlers.input({target:{id:'all-saved-direct-search',value:'endereco'}});
   assert.match(vm.runInContext('renderMessages()',context),/Endereço da feira/);
+  vm.runInContext('state.savedFirstUpdate({data:()=>({deletedAt:{},text:""})})',context);
+  assert.doesNotMatch(vm.runInContext('renderMessages()',context),/Endereço da feira/);
 });
 
 test('saved private messages show only personal markers and can jump to their source', async () => {
