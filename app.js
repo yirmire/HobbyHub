@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -131,8 +131,8 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
- state.receivedEventInvites=null;state.dismissedEventInviteIds.clear();state.showDismissedEventInvites=false;
- if(state.eventFilter==='invites')state.eventFilter='upcoming';
+ state.receivedEventInvites=null;state.sentEventInvites=null;state.dismissedEventInviteIds.clear();state.showDismissedEventInvites=false;
+ if(['invites','sent-invites'].includes(state.eventFilter))state.eventFilter='upcoming';
  state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;
  state.directMessageEditor=null;
@@ -347,7 +347,7 @@ function startSession() {
       const previous=state.threads.map(thread=>thread.id).sort().join(',');
       state.threads=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       watchLatestIncomingMessages();
-      if(state.tab==='events'&&state.eventFilter==='invites'&&previous!==state.threads.map(thread=>thread.id).sort().join(','))void loadReceivedEventInvitations();
+      if(state.tab==='events'&&['invites','sent-invites'].includes(state.eventFilter)&&previous!==state.threads.map(thread=>thread.id).sort().join(','))void loadEventInvitations();
     },'conversas privadas');
   subscribe(ref('members',me(),'chatPreferences','pinned'),snapshot=>{
     state.pinnedDirectThreads=pinnedDirectThreads(snapshot);
@@ -1450,14 +1450,15 @@ function renderEventWeek(days,events){
  <p class="tip">O arquivo inclui os encontros confirmados da semana. Consulte o HobbyHub para ver alterações posteriores.</p></div>`:''}
  ${sections||'<p class="tip">Nenhum encontro confirmado nesta semana com os filtros atuais.</p>'}</div>`;
 }
-async function loadReceivedEventInvitations(){
+async function loadEventInvitations(sent=state.eventFilter==='sent-invites'){
  const uid=me();
  if(!uid)return;
- const previous=state.receivedEventInvites;
+ const key=sent?'sentEventInvites':'receivedEventInvites';
+ const previous=state[key];
  const inbox={entries:[],limit:25,loading:true,partial:false,query:previous?.query||'',status:previous?.status||'all'};
- state.receivedEventInvites=inbox;
+ state[key]=inbox;
  render();
- const active=()=>me()===uid&&state.receivedEventInvites===inbox;
+ const active=()=>me()===uid&&state[key]===inbox;
  const threads=state.threads.filter(thread=>thread.participants?.includes(uid));
  for(let index=0;index<threads.length&&active();index+=6){
    await Promise.all(threads.slice(index,index+6).map(async thread=>{
@@ -1470,7 +1471,7 @@ async function loadReceivedEventInvitations(){
        if(!active())return;
        for(const doc of snapshot.docs){
          const message=doc.data();
-         const invitation=message.senderId===peer&&!message.deletedAt&&directEventInvitation(message.text);
+         const invitation=message.senderId===(sent?uid:peer)&&!message.deletedAt&&directEventInvitation(message.text);
          if(invitation)inbox.entries.push({invitation,peer,thread,id:doc.id,createdAt:message.createdAt});
        }
      }catch{inbox.partial=true;}
@@ -1521,7 +1522,7 @@ function renderReceivedEventInvitations(){
  <div class="toggle-row" style="flex-wrap:wrap" role="group" aria-label="Mostrar convites">
  <button type="button" class="btn btn-small ${dismissed?'btn-outline':'btn-soft'}" data-action="filter-dismissed-event-invites" data-value="active" aria-pressed="${!dismissed}">Recebidos</button>
  <button type="button" class="btn btn-small ${dismissed?'btn-soft':'btn-outline'}" data-action="filter-dismissed-event-invites" data-value="dismissed" aria-pressed="${dismissed}">Dispensados</button>
- <button type="button" class="btn btn-outline btn-small" data-action="refresh-received-event-invites">Atualizar convites</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="refresh-event-invitations">Atualizar convites</button>
  </div>
  <label class="field">Buscar convites<input id="received-event-invite-search" class="input" type="search" maxlength="100" placeholder="Nome do evento ou de quem enviou" value="${esc(inbox.query||'')}"></label>
  <div class="filters" role="group" aria-label="Situação do convite">${eventInviteStatusFilters.map(([value,label])=>`<button type="button" class="filter ${statusFilter===value?'active':''}" data-action="filter-event-invite-status" data-value="${value}" aria-pressed="${statusFilter===value}">${label}</button>`).join('')}</div>
@@ -1530,18 +1531,43 @@ function renderReceivedEventInvitations(){
  ${entries.slice(0,inbox.limit).map(entry=>`<article class="card form-stack" style="padding:14px;overflow-wrap:anywhere">
  <p class="mini muted">Enviado por ${esc(entry.sender)}</p>
  ${renderEventInvitation(entry.invitation,entry.event,!dismissed,true)}
- <button type="button" class="btn btn-outline btn-small" data-action="open-received-event-invite" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="open-event-invitation-chat" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
  <button type="button" class="btn btn-outline btn-small" data-action="${dismissed?'restore-event-invite':'dismiss-event-invite'}" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}" ${state.updatingDismissedEventInvite?'disabled':''}>${dismissed?'Restaurar convite':'Dispensar convite'}</button>
  </article>`).join('')}
- ${entries.length>inbox.limit?'<button type="button" class="btn btn-soft" data-action="more-received-event-invites">Ver mais convites</button>':''}
+ ${entries.length>inbox.limit?'<button type="button" class="btn btn-soft" data-action="more-event-invitations">Ver mais convites</button>':''}
  </section>`;
+}
+function renderSentEventInvitations(){
+ const outbox=state.sentEventInvites;
+ if(!outbox||outbox.loading)return '<p class="tip" role="status">Carregando convites enviados…</p>';
+ const events=new Map(state.events.map(event=>[event.id,event])),query=norm(outbox.query);
+ const entries=outbox.entries.map(entry=>({...entry,event:events.get(entry.invitation.id),
+   recipient:member(entry.peer)?.name||entry.thread.names?.[entry.peer]||'Pessoa'
+ })).filter(entry=>!query||norm(entry.event?.title||entry.invitation.title).includes(query)||norm(entry.recipient).includes(query))
+ .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+ return `<section class="form-stack" aria-label="Convites enviados">
+ <label class="field">Buscar convites<input id="sent-event-invite-search" class="input" type="search" maxlength="100" placeholder="Nome do evento ou da pessoa convidada" value="${esc(outbox.query)}"></label>
+ <div><button type="button" class="btn btn-outline btn-small" data-action="refresh-event-invitations">Atualizar convites</button></div>
+ ${outbox.partial?'<p class="tip" role="status">Algumas conversas não puderam ser consultadas.</p>':''}
+ ${!entries.length&&!outbox.partial?`<p class="tip" role="status">${query?'Nenhum convite encontrado.':'Nenhum convite enviado pelo chat.'}</p>`:''}
+ ${entries.slice(0,outbox.limit).map(entry=>`<article class="card form-stack" style="padding:14px;overflow-wrap:anywhere">
+ <p class="mini muted">Enviado para ${esc(entry.recipient)}${entry.createdAt?' · '+esc(new Date(entry.createdAt).toLocaleString('pt-BR')):''}</p>
+ ${renderEventInvitation(entry.invitation,entry.event)}
+ <button type="button" class="btn btn-outline btn-small" data-action="open-event-invitation-chat" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
+ </article>`).join('')}
+ ${entries.length>outbox.limit?'<button type="button" class="btn btn-soft" data-action="more-event-invitations">Ver mais convites</button>':''}
+ </section>`;
+}
+function activeEventInvitationList(){
+ return state.eventFilter==='sent-invites'?state.sentEventInvites:state.eventFilter==='invites'?state.receivedEventInvites:null;
 }
 function renderEvents(now=new Date()) {
  const day=localDateKey(now);
  const time=now.toTimeString().slice(0,5);
  const eventFilter=state.eventFilter;
- const filters=`<div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
+ const filters=`<div class="filters" role="group" aria-label="Agenda de eventos">${[['upcoming','Próximos'],['invites','Convites recebidos'],['sent-invites','Convites enviados'],['recommended','Para você'],['mine','Meus eventos'],['saved','Salvos'],['history','Histórico'],['waitlist','Lista de espera'],['past','Encerrados'],['all','Todos']].map(([id,title])=>`<button id="event-filter-${id}" class="filter ${eventFilter===id?'active':''}" aria-pressed="${eventFilter===id}" data-action="event-filter" data-value="${id}">${title}</button>`).join('')}</div>`;
  if(eventFilter==='invites')return filters+renderReceivedEventInvitations();
+ if(eventFilter==='sent-invites')return filters+renderSentEventInvitations();
  const weekly=eventFilter==='mine'&&state.eventAgendaView==='week';
  const days=weekly?eventWeek(now,state.eventWeekOffset):[];
  const query=norm(state.eventSearch);
@@ -3310,7 +3336,7 @@ function setTab(tab){
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
  if(tab==='events'){
-   if(state.eventFilter==='invites')void loadReceivedEventInvitations();
+   if(['invites','sent-invites'].includes(state.eventFilter))void loadEventInvitations();
    else void loadPersonalHistory();
  }
  if(tab==='home')loadHomeEventRooms();
@@ -3752,18 +3778,18 @@ async function onAction(btn) {
     return;
   case 'dismiss-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,true);return;
   case 'restore-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,false);return;
-  case 'refresh-received-event-invites':
-    if(state.tab==='events'&&state.eventFilter==='invites')await loadReceivedEventInvitations();
+  case 'refresh-event-invitations':
+    if(state.tab==='events'&&['invites','sent-invites'].includes(state.eventFilter))await loadEventInvitations();
     return;
-  case 'more-received-event-invites':
-    if(state.receivedEventInvites){state.receivedEventInvites.limit+=25;render();}
+  case 'more-event-invitations':
+    {const list=activeEventInvitationList();if(list){list.limit+=25;render();}}
     return;
-  case 'open-received-event-invite':
-    if(state.receivedEventInvites?.entries.some(entry=>entry.peer===btn.dataset.value&&entry.id===id))await startDirect(btn.dataset.value,id);
+  case 'open-event-invitation-chat':
+    if(activeEventInvitationList()?.entries.some(entry=>entry.peer===btn.dataset.value&&entry.id===id))await startDirect(btn.dataset.value,id);
     return;
   case 'event-filter':
     state.eventFilter=btn.dataset.value;
-    if(state.eventFilter==='invites')await loadReceivedEventInvitations();
+    if(['invites','sent-invites'].includes(state.eventFilter))await loadEventInvitations();
     else{render();await loadPersonalHistory();}
     return;
   case 'event-agenda-view':state.eventAgendaView=btn.dataset.value==='week'?'week':'list';render();return;
@@ -4724,6 +4750,12 @@ window.addEventListener('online',()=>void syncNotificationReads());
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('input',(event)=>{
+ if(event.target.id==='sent-event-invite-search'&&state.sentEventInvites){
+   state.sentEventInvites.query=event.target.value;
+   state.sentEventInvites.limit=25;
+   render();
+   return;
+ }
  if(event.target.id==='received-event-invite-search'&&state.receivedEventInvites){
    state.receivedEventInvites.query=event.target.value;
    state.receivedEventInvites.limit=25;
