@@ -25,14 +25,20 @@ test('muting a private conversation changes the navigation badge but keeps it in
     state.latestInboundAt.set('owner_peer',10);state.directThreadFilter='unread';
     render=()=>{};showToast=()=>{};
     firebase={doc:(_db,...parts)=>parts.join('/'),
-      setDoc:async path=>{state.mutePath=path;state.mutedDirectThreads.add('owner_peer');},
+      setDoc:async (path,data)=>{state.mutePath=path;state.mutedDirectThreads.set('owner_peer',data.until??0);},
       deleteDoc:async path=>{state.unmutePath=path;state.mutedDirectThreads.clear();}};
   `,context);
   assert.match(vm.runInContext("unreadBadge('messages')",context),/1 conversa não lida/);
   await vm.runInContext("onAction({dataset:{action:'toggle-direct-mute'}})",context);
+  assert.match(vm.runInContext('renderMessages()',context),/1 hora[\s\S]*8 horas[\s\S]*Até reativar manualmente/);
+  await vm.runInContext("onAction({dataset:{action:'set-direct-mute-duration',value:'1h'}})",context);
   assert.equal(vm.runInContext("unreadBadge('messages')",context),'');
   assert.match(vm.runInContext('renderMessages()',context),/data-id="peer"[\s\S]*Reativar contador/);
   assert.match(vm.runInContext('state.mutePath',context),/members\/owner\/privateMuted\/owner_peer$/);
+  assert.equal(vm.runInContext("directThreadMuted('owner_peer',state.mutedDirectThreads.get('owner_peer'))",context),false);
+  vm.runInContext("const expires=state.mutedDirectThreads.get('owner_peer');state.mutedDirectThreads.set('owner_peer',Date.now()-1);",context);
+  assert.match(vm.runInContext("unreadBadge('messages')",context),/1 conversa não lida/);
+  vm.runInContext("state.mutedDirectThreads.set('owner_peer',expires)",context);
   await vm.runInContext("onAction({dataset:{action:'toggle-direct-mute'}})",context);
   assert.equal(vm.runInContext('state.mutePath===state.unmutePath',context),true);
   assert.match(vm.runInContext("unreadBadge('messages')",context),/1 conversa não lida/);

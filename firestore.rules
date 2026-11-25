@@ -321,8 +321,11 @@ service cloud.firestore {
       }
       match /privateMuted/{threadId} {
         function validMutedThread() {
-          return request.resource.data.keys().hasOnly(['muted'])
-            && request.resource.data.muted == true;
+          let data = request.resource.data;
+          return data.keys().hasOnly(['muted', 'until'])
+            && data.muted == true
+            && (!('until' in data) || (data.until is int && data.until > request.time.toMillis()
+              && data.until <= request.time.toMillis() + 28860000));
         }
         allow read, delete: if isMe(uid);
         allow create, update: if isMe(uid) && threadMember(appId, threadId) && validMutedThread();

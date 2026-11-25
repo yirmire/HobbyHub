@@ -54,6 +54,11 @@ await request(sender, 'GET', muted, 200);
 await request(recipient, 'GET', muted, 403);
 await request(recipient, 'DELETE', muted, 403);
 await request(sender, 'PATCH', muted, 403, {muted:{booleanValue:false}});
+const timedMute = hours => ({...muteMarker,until:{integerValue:String(Date.now()+hours*3600000)}});
+await request(sender, 'PATCH', muted, 200, timedMute(1));
+await request(sender, 'PATCH', muted, 200, timedMute(8));
+await request(sender, 'PATCH', muted, 403, timedMute(9));
+await request(sender, 'PATCH', muted, 403, timedMute(-1));
 await request(other, 'PATCH', `public/data/members/${other.localId}/privateMuted/${threadId}`, 403, muteMarker);
 await request(sender, 'DELETE', muted, 200);
 

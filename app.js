@@ -87,7 +87,7 @@ const state = {
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
-  pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Set(), archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
+  pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Map(), directMuteMenu:null, directMuteTimer:null, archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
 };
@@ -179,6 +179,7 @@ function isArchivedDirectThread(id){
    (state.latestInboundAt.get(id)||0)<=state.archivedDirectThreads.get(id);
 }
 function showCommunityChat(mode){
+ state.directMuteMenu=null;
  stopDirectSavedMessages();
  state.chatMode=mode;state.chatTarget=null;
  state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
@@ -206,17 +207,46 @@ async function toggleArchivedDirectThread(){
    showToast(archived?'Conversa desarquivada.':'Conversa arquivada.');
  },'changingDirectArchive');
 }
-async function toggleMutedDirectThread(){
+const directMuteDurations=new Map([['1h',3600000],['8h',28800000],['manual',0]]);
+function directThreadMuted(id,at=now()){
+ const until=state.mutedDirectThreads.get(id);
+ return until===0||until>at;
+}
+function scheduleDirectMuteRefresh(){
+ clearTimeout(state.directMuteTimer);
+ const at=now();
+ let expires=Infinity;
+ for(const until of state.mutedDirectThreads.values()){
+   if(until>at)expires=Math.min(expires,until);
+ }
+ if(Number.isFinite(expires))state.directMuteTimer=setTimeout(()=>{
+   scheduleDirectMuteRefresh();
+   render();
+ },expires-at);
+}
+async function toggleMutedDirectThread(duration){
  const uid=me(),peer=state.chatTarget?.uid;
  if(!uid||!peer||state.chatMode!=='direct')return;
  const id=threadId(uid,peer);
  if(!state.threads.some(thread=>thread.id===id))return;
- const muted=state.mutedDirectThreads.has(id);
+ const muted=directThreadMuted(id);
+ if(!muted&&!duration){
+   state.directMuteMenu=state.directMuteMenu===id?null:id;
+   render();
+   return;
+ }
+ if(duration&&(!directMuteDurations.has(duration)||state.directMuteMenu!==id||muted))return;
  await attempt(async()=>{
    const marker=ref('members',uid,'privateMuted',id);
    if(muted)await firebase.deleteDoc(marker);
-   else await firebase.setDoc(marker,{muted:true});
-   if(me()===uid)showToast(muted?'Contador da conversa reativado.':'Conversa silenciada.');
+   else{
+     const ms=directMuteDurations.get(duration);
+     await firebase.setDoc(marker,{muted:true,...(ms?{until:now()+ms}:{})});
+   }
+   if(me()===uid){
+     if(state.directMuteMenu===id)state.directMuteMenu=null;
+     showToast(muted?'Contador da conversa reativado.':'Conversa silenciada.');
+   }
  },'changingDirectMute');
 }
 function unreadThread(id) {
@@ -305,7 +335,8 @@ function startSession() {
     state.archivedDirectThreads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().lastInboundAt]));
   },'conversas arquivadas');
   subscribe(col('members',me(),'privateMuted'),snapshot=>{
-    state.mutedDirectThreads=new Set(snapshot.docs.map(doc=>doc.id));
+    state.mutedDirectThreads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().until??0]));
+    scheduleDirectMuteRefresh();
   },'conversas silenciadas');
   subscribe(col('members',me(),'privateUnread'),snapshot=>{
     state.manualUnreadThreads=new Set(snapshot.docs.map(doc=>doc.id));
@@ -419,7 +450,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
-      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
+      state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
         if(me()!==user.uid)return;
@@ -793,7 +824,7 @@ function renderNotificationSettings(){
  <button class="text-action" data-action="notifications">Voltar aos avisos</button></div>`);
 }
 function unreadBadge(tab) {
- const count=tab==='messages'?state.threads.filter(thread=>!state.mutedDirectThreads.has(thread.id)&&unreadThread(thread.id)).length:0;
+ const count=tab==='messages'?state.threads.filter(thread=>!directThreadMuted(thread.id)&&unreadThread(thread.id)).length:0;
  return count?`<span class="unread-count"><span aria-hidden="true">${count>99?'99+':count}</span><span class="sr-only">${count} ${count===1?'conversa não lida':'conversas não lidas'}</span></span>`:'';
 }
 function renderSidebar() {
@@ -1892,7 +1923,7 @@ function renderMessages() {
  ${threads.map(({thread:t,peer:other,profile:p,name})=>{
  const isActive=!community&&state.chatTarget?.uid===other;
  const unread=unreadThread(t.id);
- return `<button class="chat-contact ${isActive?'active':''} ${unread?'chat-unread':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${state.pinnedDirectThreads.includes(t.id)?'<span aria-hidden="true">📌 </span><span class="sr-only">Fixada. </span>':''}${esc(short(name,19))}${state.mutedDirectThreads.has(t.id)?'<span aria-hidden="true"> 🔕</span><span class="sr-only"> Silenciada.</span>':''}</span>${unread?'<span class="unread-dot"><span class="sr-only">Não lida</span></span>':''}</button>`;
+ return `<button class="chat-contact ${isActive?'active':''} ${unread?'chat-unread':''}" data-action="open-dm" data-id="${esc(other)}">${avatar(p||{avatar:'💬'})}<span>${state.pinnedDirectThreads.includes(t.id)?'<span aria-hidden="true">📌 </span><span class="sr-only">Fixada. </span>':''}${esc(short(name,19))}${directThreadMuted(t.id)?'<span aria-hidden="true"> 🔕</span><span class="sr-only"> Silenciada.</span>':''}</span>${unread?'<span class="unread-dot"><span class="sr-only">Não lida</span></span>':''}</button>`;
  }).join('')}
  <p class="tip" style="margin-top:25px;font-size:10px">Para começar uma nova conversa privada, encontre alguém em Explorar.</p>
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
@@ -1904,7 +1935,10 @@ function renderMessages() {
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-pinned-direct-thread" ${state.changingPinnedDirectThread?'disabled':''}>${state.pinnedDirectThreads.includes(activeThread)?'Desafixar conversa':'Fixar conversa'}</button>`:''}
  ${state.threads.some(thread=>thread.id===activeThread)&&!isArchivedDirectThread(activeThread)&&!state.manualUnreadThreads.has(activeThread)?`<button class="btn btn-soft btn-small" data-action="mark-direct-unread" ${state.markingDirectUnread?'disabled':''}>Marcar como não lida</button>`:''}
  ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-direct-archive" ${state.changingDirectArchive?'disabled':''}>${isArchivedDirectThread(activeThread)?'Desarquivar conversa':'Arquivar conversa'}</button>`:''}
- ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-direct-mute" ${state.changingDirectMute?'disabled':''}>${state.mutedDirectThreads.has(activeThread)?'Reativar contador':'Silenciar conversa'}</button>`:''}
+ ${state.threads.some(thread=>thread.id===activeThread)?`<button class="btn btn-soft btn-small" data-action="toggle-direct-mute" aria-expanded="${state.directMuteMenu===activeThread}" ${state.changingDirectMute?'disabled':''}>${directThreadMuted(activeThread)?'Reativar contador':'Silenciar conversa'}</button>`:''}
+ ${activeThread&&state.directMuteMenu===activeThread&&!directThreadMuted(activeThread)?`<div class="toggle-row" style="flex-wrap:wrap" role="group" aria-label="Duração do silenciamento">
+ ${[['1h','1 hora'],['8h','8 horas'],['manual','Até reativar manualmente']].map(([value,label])=>`<button type="button" class="btn btn-outline btn-small" data-action="set-direct-mute-duration" data-value="${value}" ${state.changingDirectMute?'disabled':''}>${label}</button>`).join('')}
+ </div>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
@@ -2996,7 +3030,7 @@ async function startDirect(uid,messageId=''){
    if(me()!==sender)return;
    stopDirectSavedMessages();
    if(state.messageUnsub)state.messageUnsub();
-   state.allSavedDirect=null;
+   state.allSavedDirect=null;state.directMuteMenu=null;
    state.chatMode='direct';state.chatTarget={uid,name:p?.name||'Pessoa da comunidade'};
    state.directSearch=null;state.directLinksLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
    const replyTo=readPrivateMessageDraft(privateMessageDraftKey(uid))?.replyTo;
@@ -3825,6 +3859,7 @@ async function onAction(btn) {
     render();
     return;
   case 'toggle-direct-mute':await toggleMutedDirectThread();return;
+  case 'set-direct-mute-duration':await toggleMutedDirectThread(btn.dataset.value);return;
   case 'toggle-direct-archive':await toggleArchivedDirectThread();return;
   case 'mark-direct-unread':await markDirectThreadUnread();return;
   case 'toggle-pinned-direct-thread':await togglePinnedDirectThread();return;
