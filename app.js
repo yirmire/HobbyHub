@@ -1798,6 +1798,52 @@ async function setDirectReaction(id,emoji){
    if(me()===uid&&state.chatTarget?.uid===peer&&state.directReactionPicker===id)state.directReactionPicker=null;
  },'changingDirectReaction','Não foi possível alterar a reação nesta conversa.');
 }
+const eventChatPrefix='Convite para evento: ';
+function eventChatMessage(event){
+ const title=String(event.title||'Evento').replace(/\s+/g,' ').trim();
+ return eventChatPrefix+title+'\n'+contentLink('event',event.id);
+}
+function renderDirectMessageText(text){
+ if(typeof text!=='string'||!text.startsWith(eventChatPrefix))return esc(text);
+ const [title,address,...extra]=text.split('\n');
+ if(!address||extra.length)return esc(text);
+ try{
+   const link=new URL(address);
+   if(!link.hash.startsWith('#event='))return esc(text);
+   const id=decodeURIComponent(link.hash.slice(7));
+   if(!id||link.href!==contentLink('event',id))return esc(text);
+   const event=state.events.find(item=>item.id===id);
+   const schedule=event&&viewerEventSchedule(event);
+   return `<div class="form-stack">
+   <strong>${esc(event?.title||title.slice(eventChatPrefix.length))}</strong>
+   ${schedule?`<span>${esc(event.cancelled?'Evento cancelado':[dateLabel(schedule.date),schedule.time].filter(Boolean).join(' · '))}</span>`:''}
+   ${event?`<button type="button" class="btn btn-soft btn-small" data-action="view-event" data-id="${esc(id)}">Ver evento</button>`:`<a class="btn btn-soft btn-small" href="${esc(link.href)}">Ver evento</a>`}
+   </div>`;
+ }catch{return esc(text);}
+}
+function eventChatRecipients(){
+ const uid=me();
+ return state.threads.filter(thread=>thread.participants?.includes(uid)).flatMap(thread=>{
+   const peer=thread.participants.find(id=>id!==uid);
+   if(!peer||state.blockedIds.includes(peer)||thread.id!==threadId(uid,peer))return [];
+   return [{peer,thread:thread.id,name:member(peer)?.name||thread.names?.[peer]||'Pessoa'}];
+ }).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+}
+function renderEventChatShare(){
+ const event=state.events.find(item=>item.id===state.selectedEvent);
+ if(!event||event.cancelled)return modalWrap('Compartilhar no chat','<p>Este evento não está disponível.</p>');
+ const recipients=eventChatRecipients();
+ const back=`<button type="button" class="btn btn-outline" data-action="view-event" data-id="${esc(event.id)}">Voltar ao evento</button>`;
+ if(!recipients.length)return modalWrap('Compartilhar no chat',`<div class="form-stack"><p>Abra uma conversa privada com a pessoa antes de enviar o convite.</p>${back}</div>`);
+ return modalWrap('Compartilhar no chat',`<form id="event-chat-share-form" class="form-stack" data-draft="true">
+ <p>${esc(event.title)}</p>
+ <label class="field">Conversa privada<select class="select" name="peer" required>
+ <option value="">Escolha uma pessoa</option>
+ ${recipients.map(item=>`<option value="${esc(item.peer)}">${esc(item.name)}</option>`).join('')}
+ </select></label>
+ <div class="toggle-row" style="flex-wrap:wrap">${back}
+ <button type="submit" class="btn btn-primary" ${state.sharingEventInChat?'disabled':''}>Enviar convite</button></div></form>`);
+}
 function directQuote(message){
  return message?`<button type="button" class="btn btn-soft btn-small" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere" data-action="jump-direct-message" data-id="${esc(message.id)}"><strong>${message.senderId===me()?'Você':esc(state.chatTarget?.name||'Participante')}</strong><br>${esc(message.deletedAt?'Mensagem apagada':short(message.text,120))}</button>`:'';
 }
@@ -1987,7 +2033,7 @@ function renderMessages() {
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${esc(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text)}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${!community&&!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!community&&!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${!community&&m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${!community&&m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton(community?'communityMessage':'privateMessage',m.id,'mensagem'):''}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
@@ -2554,6 +2600,7 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='event-chat-share')return renderEventChatShare();
  if(state.modal==='delete-direct-message'){
    const message=state.directMessages.find(item=>item.id===state.directMessageEditor?.id);
    if(!canEditDirectMessage(message))return modalWrap('Apagar para todos','<p>Esta mensagem já foi apagada ou o prazo terminou.</p>');
@@ -2716,7 +2763,7 @@ function renderModal() {
    return modalWrap(event.title,`${eventCard(event,false,true)}
    ${event.revision>0?`<ul class="tip" style="padding-left:28px">${eventChangeDescriptions(event).map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}
    ${group&&!joined&&event.cancelled!==true&&event.date>=today()?`<div class="card" style="margin:12px 0;padding:12px"><p>Participe de ${esc(group.name)} para confirmar presença.</p><button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar da comunidade</button></div>`:''}
-   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${eventRecapButton(event)}${eventCalendarButton(event)}${googleCalendarButton(event)}</div>
+   <div class="toggle-row" style="margin-top:14px;flex-wrap:wrap"><button class="btn btn-outline btn-small" data-action="copy-event-link" data-id="${esc(event.id)}">Copiar link do evento</button>${!event.cancelled?'<button type="button" class="btn btn-outline btn-small" data-action="share-event-in-chat">Compartilhar no chat</button>':''}${eventRecapButton(event)}${eventCalendarButton(event)}${googleCalendarButton(event)}</div>
    ${renderEventRoom(event)}
    ${canExportEventCalendar(event)?'<p class="tip" style="margin-top:12px">Abra o arquivo .ics baixado para salvar o evento no seu calendário.</p>':''}
    ${canRepeatEvent(event)?`<button class="btn btn-primary btn-small" data-action="repeat-event" data-id="${esc(event.id)}">Repetir evento</button>`:''}
@@ -3568,6 +3615,9 @@ async function onAction(btn) {
     await firebase.updateDoc(ref('events',id),{cancelled:true,revision:firebase.increment(1),scheduleChangedAt:firebase.serverTimestamp()});
     showToast('Evento cancelado.');
   });return;
+  case 'share-event-in-chat':
+    if(state.modal==='event-detail'&&state.events.some(event=>event.id===state.selectedEvent&&!event.cancelled))openModal('event-chat-share');
+    return;
   case 'copy-event-link':
     if(state.events.some(event=>event.id===id))await copyContentLink(contentLink('event',id),'Link do evento copiado!','Copie o link do evento:');
     return;
@@ -4757,6 +4807,18 @@ document.addEventListener('submit',async(event)=>{
     }
     if(me()===uid&&state.directMessageEditor===editor&&state.modal==='edit-direct-message')closeModal();
   },'busy','Não foi possível editar esta mensagem.');return;
+  case 'event-chat-share-form':await attempt(async()=>{
+    const uid=me();
+    const event=state.events.find(item=>item.id===state.selectedEvent);
+    const recipient=eventChatRecipients().find(item=>item.peer===val('peer'));
+    if(!uid||state.modal!=='event-chat-share'||!event||event.cancelled||!recipient)return;
+    const text=eventChatMessage(event);
+    if(text.length>1500)throw new Error('O convite é longo demais para enviar no chat.');
+    await firebase.addDoc(directMessagesCol(recipient.thread),{senderId:uid,senderName:myName(),text,createdAt:now()});
+    if(me()!==uid)return;
+    if(state.modal==='event-chat-share'&&state.selectedEvent===event.id)openEventDetail(event.id);
+    showToast('Convite enviado no chat.');
+  },'sharingEventInChat','Não foi possível enviar o convite a esta conversa.');return;
   case 'message-form':await attempt(async()=>{
     const text=val('message');if(!text)return;
     const key=form.dataset.draftKey;
