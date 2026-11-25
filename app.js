@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -131,7 +131,7 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
- state.receivedEventInvites=null;
+ state.receivedEventInvites=null;state.dismissedEventInviteIds.clear();state.showDismissedEventInvites=false;
  if(state.eventFilter==='invites')state.eventFilter='upcoming';
  state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.mobileChatListScroll=0;
@@ -355,6 +355,9 @@ function startSession() {
   subscribe(col('members',me(),'privateArchive'),snapshot=>{
     state.archivedDirectThreads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().lastInboundAt]));
   },'conversas arquivadas');
+  subscribe(col('members',me(),'dismissedEventInvites'),snapshot=>{
+    state.dismissedEventInviteIds=new Set(snapshot.docs.map(doc=>doc.id));
+  },'convites dispensados');
   subscribe(col('members',me(),'privateMuted'),snapshot=>{
     state.mutedDirectThreads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().until??0]));
     scheduleDirectMuteRefresh();
@@ -1476,11 +1479,29 @@ async function loadReceivedEventInvitations(){
  inbox.loading=false;
  render();
 }
+function receivedInviteMarkerId(entry){
+ return entry.thread.id+':'+entry.id;
+}
+async function updateDismissedEventInvite(id,peer,dismiss){
+ const uid=me(),inbox=state.receivedEventInvites;
+ if(!uid||state.tab!=='events'||state.eventFilter!=='invites'||!inbox)return;
+ const entry=inbox.entries.find(item=>item.id===id&&item.peer===peer);
+ if(!entry)return;
+ const markerId=receivedInviteMarkerId(entry);
+ if(state.dismissedEventInviteIds.has(markerId)===dismiss)return;
+ await attempt(async()=>{
+   const marker=ref('members',uid,'dismissedEventInvites',markerId);
+   if(dismiss)await firebase.setDoc(marker,{threadId:entry.thread.id,messageId:id});
+   else await firebase.deleteDoc(marker);
+   if(me()===uid)showToast(dismiss?'Convite dispensado.':'Convite restaurado.');
+ },'updatingDismissedEventInvite');
+}
 function renderReceivedEventInvitations(){
  const inbox=state.receivedEventInvites;
  if(!inbox||inbox.loading)return '<p class="tip" role="status">Carregando convites recebidos…</p>';
  const uid=me(),day=today(),events=new Map(state.events.map(event=>[event.id,event]));
- const entries=inbox.entries.map(entry=>{
+ const dismissed=state.showDismissedEventInvites;
+ const entries=inbox.entries.filter(entry=>state.dismissedEventInviteIds.has(receivedInviteMarkerId(entry))===dismissed).map(entry=>{
    const event=events.get(entry.invitation.id);
    const schedule=event&&viewerEventSchedule(event);
    const pending=Boolean(event&&!event.cancelled&&schedule.date>=day&&
@@ -1489,13 +1510,18 @@ function renderReceivedEventInvitations(){
  }).sort((a,b)=>Number(b.pending)-Number(a.pending)||
    (a.pending?(a.date+a.time).localeCompare(b.date+b.time):0)||(b.createdAt||0)-(a.createdAt||0));
  return `<section class="form-stack" aria-label="Convites recebidos">
+ <div class="toggle-row" style="flex-wrap:wrap" role="group" aria-label="Mostrar convites">
+ <button type="button" class="btn btn-small ${dismissed?'btn-outline':'btn-soft'}" data-action="filter-dismissed-event-invites" data-value="active" aria-pressed="${!dismissed}">Recebidos</button>
+ <button type="button" class="btn btn-small ${dismissed?'btn-soft':'btn-outline'}" data-action="filter-dismissed-event-invites" data-value="dismissed" aria-pressed="${dismissed}">Dispensados</button>
  <button type="button" class="btn btn-outline btn-small" data-action="refresh-received-event-invites">Atualizar convites</button>
+ </div>
  ${inbox.partial?'<p class="tip" role="status">Algumas conversas não puderam ser consultadas.</p>':''}
- ${!entries.length&&!inbox.partial?'<p class="tip">Nenhum convite recebido pelo chat.</p>':''}
+ ${!entries.length&&!inbox.partial?(dismissed?'<p class="tip">Nenhum convite dispensado.</p>':'<p class="tip">Nenhum convite recebido pelo chat.</p>'):''}
  ${entries.slice(0,inbox.limit).map(entry=>`<article class="card form-stack" style="padding:14px;overflow-wrap:anywhere">
  <p class="mini muted">Enviado por ${esc(member(entry.peer)?.name||entry.thread.names?.[entry.peer]||'Pessoa')}</p>
- ${renderEventInvitation(entry.invitation,entry.event,true,true)}
+ ${renderEventInvitation(entry.invitation,entry.event,!dismissed,true)}
  <button type="button" class="btn btn-outline btn-small" data-action="open-received-event-invite" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}">Abrir conversa original</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="${dismissed?'restore-event-invite':'dismiss-event-invite'}" data-id="${esc(entry.id)}" data-value="${esc(entry.peer)}" ${state.updatingDismissedEventInvite?'disabled':''}>${dismissed?'Restaurar convite':'Dispensar convite'}</button>
  </article>`).join('')}
  ${entries.length>inbox.limit?'<button type="button" class="btn btn-soft" data-action="more-received-event-invites">Ver mais convites</button>':''}
  </section>`;
@@ -3702,6 +3728,13 @@ async function onAction(btn) {
     });
     if(me()===uid&&state.selectedEvent===event.id&&state.modal==='event-detail')await loadEventQuestions(event.id);
   });return;
+  case 'filter-dismissed-event-invites':
+    state.showDismissedEventInvites=btn.dataset.value==='dismissed';
+    if(state.receivedEventInvites)state.receivedEventInvites.limit=25;
+    render();
+    return;
+  case 'dismiss-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,true);return;
+  case 'restore-event-invite':await updateDismissedEventInvite(id,btn.dataset.value,false);return;
   case 'refresh-received-event-invites':
     if(state.tab==='events'&&state.eventFilter==='invites')await loadReceivedEventInvitations();
     return;
