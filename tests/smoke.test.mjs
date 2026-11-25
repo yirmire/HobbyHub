@@ -17,6 +17,33 @@ function appContext(handlers = {}) {
   return context;
 }
 
+test('unread conversation filter keeps unread pins first and leaves the active chat open after reading', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};
+    state.chatMode='direct';state.chatTarget={uid:'pin',name:'Lia'};
+    state.threads=[
+      {id:'owner_read',participants:['owner','read'],createdAt:100},
+      {id:'owner_unread',participants:['owner','unread'],createdAt:3},
+      {id:'owner_pin',participants:['owner','pin'],createdAt:1}
+    ];
+    state.latestInboundAt.set('owner_unread',4);
+    state.latestInboundAt.set('owner_pin',2);
+    state.pinnedDirectThreads=['owner_pin','owner_read'];
+  `,context);
+  await vm.runInContext("onAction({dataset:{action:'filter-direct-threads',value:'unread'}})",context);
+  const filtered=vm.runInContext('renderMessages()',context);
+  assert.match(filtered,/data-value="unread" aria-pressed="true"/);
+  assert.match(filtered,/data-action="open-dm" data-id="pin"[\s\S]*data-action="open-dm" data-id="unread"/);
+  assert.doesNotMatch(filtered,/data-action="open-dm" data-id="read"/);
+  const afterReading=vm.runInContext("state.privateReadAt.set('owner_pin',2);state.privateReadAt.set('owner_unread',4);renderMessages()",context);
+  assert.doesNotMatch(afterReading,/data-action="open-dm"/);
+  assert.match(afterReading,/Nenhuma conversa não lida/);
+  assert.match(afterReading,/<strong>Lia<\/strong>/);
+  await vm.runInContext("onAction({dataset:{action:'filter-direct-threads',value:'all'}})",context);
+  assert.match(vm.runInContext('renderMessages()',context),/data-action="open-dm" data-id="read"/);
+});
+
 test('pinned private conversations appear before unread and recent conversations', () => {
   const context=appContext();
   const html=vm.runInContext(`
