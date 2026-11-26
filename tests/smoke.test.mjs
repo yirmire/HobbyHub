@@ -1951,6 +1951,41 @@ test('pinned groups appear first in both views and only joined groups can be pin
   assert.deepEqual(writes[1][1],{});
 });
 
+test('group news counts unseen posts and only advances the selected group marker', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.groupNewsReadsLoaded=true;
+    state.groupNewsReads.set('art',10);
+    state.blockedIds=['blocked'];
+    state.groups=[{id:'art',name:'Arte',members:['reader']},{id:'books',name:'Livros',members:['reader']}];
+    state.posts=[
+      {createdAt:10,groupId:'art',userId:'author'},{createdAt:21,groupId:'art',userId:'author'},
+      {createdAt:22,groupId:'art',userId:'author'},{createdAt:30,groupId:'art',userId:'reader'},
+      {createdAt:40,groupId:'art',userId:'blocked'},{createdAt:35,groupId:'books',userId:'author'}
+    ];
+    const writes=[];
+    let remote=50;
+    firebase={doc:(_db,...path)=>path.join('/'),runTransaction:async (_db,work)=>work({
+      get:async()=>({data:()=>({seenThrough:remote})}),set:(path,data)=>writes.push({path,data})
+    })};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderGroups()',context),/2 novas publicações/);
+  assert.match(vm.runInContext('renderGroupNews()',context),/Arte \(2 novas\)/);
+  const mark=()=>vm.runInContext("onAction({dataset:{action:'mark-group-news',id:'art'}})",context);
+  await mark();
+  assert.equal(vm.runInContext('writes.length',context),0);
+  vm.runInContext('remote=10',context);
+  await mark();
+  assert.match(vm.runInContext('writes[0].path',context),/members\/reader\/groupNewsReads\/art$/);
+  assert.equal(vm.runInContext('writes[0].data.seenThrough',context),22);
+  vm.runInContext("state.groupNewsReads.set('art',22);state.groupNewsGroup='art'",context);
+  const html=vm.runInContext('renderGroupNews()',context);
+  assert.doesNotMatch(html,/data-action="mark-group-news"/);
+  assert.match(html,/Livros \(1 nova\)/);
+});
+
 test('group news can show just favorites without filtering the home preview', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
