@@ -1936,6 +1936,7 @@ function mediaUrl(value) {
 }
 const sharedMediaFieldsLimits={photoUrl:1500,videoUrl:1500,photoDescription:300,videoDescription:800,captionsUrl:1500};
 const maxCaptionBytes=256*1024;
+const pendingCaptionTracks=new WeakMap();
 
 function renderSharedMedia(entry,context,preview=false){
  const photo=mediaUrl(entry.photoUrl),video=mediaUrl(entry.videoUrl);
@@ -1944,9 +1945,11 @@ function renderSharedMedia(entry,context,preview=false){
  const photoDescription=(typeof entry.photoDescription==='string'&&entry.photoDescription.trim())||'Foto compartilhada '+context;
  return `<div class="profile-media">${photo?`<img src="${esc(photo)}" alt="${esc(photoDescription)}" loading="${preview?'eager':'lazy'}" referrerpolicy="no-referrer" data-shared-media><p class="tip" data-media-error role="status" hidden></p>`:''}
  ${photo&&preview&&entry.photoDescription?`<p class="post-copy">Descrição da foto: ${esc(photoDescription)}</p>`:''}
- ${video?`<div role="group" aria-label="Vídeo compartilhado ${context}"><video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Reproduzir vídeo" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p>
+ ${video?`<div role="group" aria-label="Vídeo compartilhado ${context}" data-video-panel><video src="${esc(video)}" controls playsinline preload="${preview?'metadata':'none'}" aria-label="Reproduzir vídeo" data-shared-media></video><p class="tip" data-media-error role="status" hidden></p>
  ${entry.videoDescription?`<p class="post-copy">Resumo do vídeo: ${esc(entry.videoDescription)}</p>`:''}
- ${captions?`<button class="btn btn-outline btn-small" type="button" data-action="load-video-captions" data-url="${esc(captions)}">${preview?'Testar legendas':'Ativar legendas'}</button><p class="mini muted" data-caption-status role="status"></p>`:''}
+ ${captions?`<button class="btn btn-outline btn-small" type="button" data-action="load-video-captions" data-url="${esc(captions)}">${preview?'Testar legendas':'Ativar legendas'}</button><p class="mini muted" data-caption-status role="status"></p>
+ <button class="btn btn-outline btn-small" type="button" data-action="toggle-video-transcript" data-url="${esc(captions)}" aria-expanded="false">Ler transcrição</button>
+ <p class="mini muted" data-transcript-status role="status"></p><div data-video-transcript hidden></div>`:''}
  <a href="${esc(video)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a></div>`:''}</div>`;
 }
 function renderProfileMedia(profile){
@@ -2006,25 +2009,11 @@ async function readVideoCaptions(url){
  if(!/^WEBVTT(?:[ \t][^\r\n]*)?(?:\r\n|[\r\n])/.test(text))throw new Error('Arquivo de legendas inválido.');
  return text;
 }
-async function loadVideoCaptions(button){
- const panel=button.parentElement,status=panel.querySelector('[data-caption-status]');
- const video=panel.querySelector('video');
- if(!video){
-   status.textContent='Use um link de vídeo que carregue para testar as legendas.';
-   return;
- }
- const loadedTrack=video.querySelector('track');
- if(loadedTrack){
-   loadedTrack.track.mode='showing';
-   status.textContent='Legendas ativadas. Use os controles do vídeo para desativá-las.';
-   return;
- }
- button.disabled=true;
- status.textContent='Carregando legendas…';
+async function attachCaptionTrack(video,url){
  let track,source;
  try{
-   const captions=await readVideoCaptions(button.dataset.url);
-   if(!video.isConnected)return;
+   const captions=await readVideoCaptions(url);
+   if(!video.isConnected)throw new Error('Player fechado.');
    source=URL.createObjectURL(new Blob([captions],{type:'text/vtt'}));
    track=document.createElement('track');
    track.kind='captions';
@@ -2035,17 +2024,103 @@ async function loadVideoCaptions(button){
      track.addEventListener('load',()=>{clearTimeout(timeout);resolve();},{once:true});
      track.addEventListener('error',()=>{clearTimeout(timeout);reject();},{once:true});
      video.append(track);
-     track.track.mode='showing';
+     track.track.mode='hidden';
    });
    if(!track.track.cues?.length)throw new Error('Nenhuma legenda encontrada.');
-   status.textContent='Legendas ativadas. Use os controles do vídeo para desativá-las.';
- } catch {
+   return track.track;
+ } catch(error) {
    track?.remove();
-   status.textContent='As legendas não carregaram. Confira se o link dá acesso direto a um arquivo .vtt de até 256 KB.';
+   throw error;
  } finally {
    if(source)URL.revokeObjectURL(source);
+ }
+}
+async function videoCaptionTrack(video,url){
+ const pending=pendingCaptionTracks.get(video);
+ if(pending)return pending;
+ const loaded=video.querySelector('track')?.track;
+ if(loaded){
+   if(loaded.mode==='disabled')loaded.mode='hidden';
+   return loaded;
+ }
+ const request=attachCaptionTrack(video,url);
+ pendingCaptionTracks.set(video,request);
+ try{return await request;}
+ finally{pendingCaptionTracks.delete(video);}
+}
+async function loadVideoCaptions(button){
+ const panel=button.parentElement,status=panel.querySelector('[data-caption-status]');
+ const video=panel.querySelector('video');
+ if(!video||video.error){
+   status.textContent='Use um link de vídeo que carregue para testar as legendas.';
+   return;
+ }
+ button.disabled=true;
+ status.textContent='Carregando legendas…';
+ try{
+   const track=await videoCaptionTrack(video,button.dataset.url);
+   track.mode='showing';
+   status.textContent='Legendas ativadas. Use os controles do vídeo para desativá-las.';
+ } catch {
+   status.textContent='As legendas não carregaram. Confira se o link dá acesso direto a um arquivo .vtt de até 256 KB.';
+ } finally {
    button.disabled=false;
  }
+}
+function transcriptTime(time){
+ const seconds=Math.floor(time);
+ const minutes=Math.floor(seconds/60);
+ const tail=[minutes%60,seconds%60].map(value=>String(value).padStart(2,'0')).join(':');
+ return minutes>=60?Math.floor(minutes/60)+':'+tail:tail;
+}
+function renderVideoTranscript(cues,canSeek){
+ const lines=Array.from(cues||[],cue=>{
+   const text=cue.getCueAsHTML().textContent.trim();
+   if(!text||!Number.isFinite(cue.startTime)||cue.startTime<0)return '';
+   const timestamp=transcriptTime(cue.startTime);
+   const marker=canSeek
+     ?`<button class="text-action" type="button" data-action="seek-video-transcript" data-time="${cue.startTime}" aria-label="Ir para ${timestamp} no vídeo">${timestamp}</button>`
+     :`<span class="muted">${timestamp}</span>`;
+   return `<li>${marker} <span class="post-copy">${esc(text)}</span></li>`;
+ }).filter(Boolean);
+ return lines.length?`<ol aria-label="Transcrição do vídeo">${lines.join('')}</ol>`:'';
+}
+async function toggleVideoTranscript(button){
+ const panel=button.parentElement,transcript=panel.querySelector('[data-video-transcript]');
+ const status=panel.querySelector('[data-transcript-status]'),video=panel.querySelector('video');
+ if(!transcript.hidden){
+   transcript.hidden=true;
+   button.textContent='Ler transcrição';
+   button.setAttribute('aria-expanded','false');
+   status.textContent='';
+   return;
+ }
+ button.disabled=true;
+ status.textContent='Carregando a transcrição…';
+ try{
+   const track=await videoCaptionTrack(video,button.dataset.url);
+   const html=renderVideoTranscript(track.cues,!video.error);
+   if(!html)throw new Error('Nenhum trecho de texto encontrado.');
+   transcript.innerHTML=html;
+   transcript.hidden=false;
+   button.textContent='Ocultar transcrição';
+   button.setAttribute('aria-expanded','true');
+   status.textContent='Transcrição disponível.';
+ } catch {
+   status.textContent='A transcrição não carregou. Confira o link do arquivo de legendas.';
+ } finally {
+   button.disabled=false;
+ }
+}
+function seekVideoTranscript(button){
+ const panel=button.closest('[data-video-panel]');
+ const video=panel.querySelector('video'),time=Number(button.dataset.time);
+ if(!video||video.error||!Number.isFinite(time)||time<0){
+   panel.querySelector('[data-transcript-status]').textContent='O vídeo está indisponível para ir a este trecho.';
+   return;
+ }
+ video.currentTime=time;
+ video.focus();
 }
 function blockButton(uid) {
  if(!uid||uid===me())return '';
@@ -4077,6 +4152,8 @@ async function onAction(btn) {
  switch(action){
   case 'preview-shared-media':previewSharedMedia(btn.form);return;
   case 'load-video-captions':await loadVideoCaptions(btn);return;
+  case 'toggle-video-transcript':await toggleVideoTranscript(btn);return;
+  case 'seek-video-transcript':seekVideoTranscript(btn);return;
   case 'reload':window.location.reload();return;
   case 'toggle-auth':state.authMode=state.authMode==='login'?'register':'login';state.drafts.clear();render();return;
   case 'forgot-password':state.authMode='reset';state.drafts.clear();render();return;
@@ -5196,7 +5273,8 @@ document.addEventListener('error',(event)=>{
    ?'A foto não carregou. Confira se o link abre a imagem diretamente.'
    :'O vídeo não carregou. Confira se o link abre o arquivo de vídeo diretamente.';
  status.hidden=false;
- media.remove();
+ if(media.tagName==='VIDEO'&&media.parentElement.querySelector('[data-video-transcript]'))media.style.display='none';
+ else media.remove();
 },true);
 
 document.addEventListener('input',(event)=>{

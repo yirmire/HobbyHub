@@ -1920,6 +1920,39 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('video transcript reads the caption track without playing, and timestamps seek the player', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    const cues=[
+      {startTime:5.25,getCueAsHTML:()=>({textContent:'Primeiro trecho <exemplo>'})},
+      {startTime:3661,getCueAsHTML:()=>({textContent:'Último trecho'})}
+    ];
+    const track={mode:'disabled',cues};
+    const video={paused:true,currentTime:0,querySelector:()=>({track}),focus(){this.focused=true;}};
+    const transcript={hidden:true};
+    const status={textContent:''};
+    const panel={querySelector:selector=>({'[data-video-transcript]':transcript,'[data-transcript-status]':status,video}[selector])};
+    const toggle={parentElement:panel,dataset:{},setAttribute(_name,value){this.expanded=value;}};
+    const marker={closest:()=>panel,dataset:{time:'5.25'}};
+  `,context);
+  await vm.runInContext('toggleVideoTranscript(toggle)',context);
+  const html=vm.runInContext('transcript.innerHTML',context);
+  assert.match(html,/data-time="5.25" aria-label="Ir para 00:05 no vídeo"/);
+  assert.match(html,/Primeiro trecho &lt;exemplo&gt;/);
+  assert.match(html,/1:01:01/);
+  assert.equal(vm.runInContext('toggle.expanded',context),'true');
+  assert.equal(vm.runInContext('track.mode',context),'hidden');
+  vm.runInContext('seekVideoTranscript(marker)',context);
+  assert.equal(vm.runInContext('video.currentTime',context),5.25);
+  assert.equal(vm.runInContext('video.paused && video.focused',context),true);
+  await vm.runInContext('toggleVideoTranscript(toggle)',context);
+  assert.equal(vm.runInContext('transcript.hidden',context),true);
+  assert.equal(vm.runInContext('toggle.expanded',context),'false');
+  vm.runInContext('video.error=true',context);
+  await vm.runInContext('toggleVideoTranscript(toggle)',context);
+  assert.doesNotMatch(vm.runInContext('transcript.innerHTML',context),/seek-video-transcript/);
+});
+
 test('shared media renders direct HTTPS images and videos and survives a media-only draft', () => {
   const context=appContext(),stored=new Map();
   context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)};
