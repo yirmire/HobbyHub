@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -477,7 +477,7 @@ async function init() {
       state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
-      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupHobby='';state.groupCity='';
+      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventAgendaView='list';state.eventWeekOffset=0;
       state.eventReads.clear();state.eventReadsLoaded=false;
@@ -1137,14 +1137,17 @@ function renderExplore() {
 function comparePinnedGroups(first,second){
  return Number(state.pinnedGroupIds.has(second))-Number(state.pinnedGroupIds.has(first));
 }
+function isUnseenGroupPost(post,uid,blocked,currentTime){
+ return state.groupNewsReadsLoaded&&post.groupId&&post.userId!==uid&&!blocked.has(post.userId)
+   &&Number.isFinite(post.createdAt)&&post.createdAt<=currentTime
+   &&post.createdAt>(state.groupNewsReads.get(post.groupId)||0);
+}
 function groupUnreadNews(){
  const unread=new Map();
  if(!state.groupNewsReadsLoaded)return unread;
  const uid=me(),blocked=new Set(state.blockedIds),currentTime=now();
  for(const post of state.posts){
-   if(!post.groupId||post.userId===uid||blocked.has(post.userId)
-      ||!Number.isFinite(post.createdAt)||post.createdAt>currentTime
-      ||post.createdAt<=(state.groupNewsReads.get(post.groupId)||0))continue;
+   if(!isUnseenGroupPost(post,uid,blocked,currentTime))continue;
    const entry=unread.get(post.groupId)||{count:0,latest:0};
    entry.count++;
    entry.latest=Math.max(entry.latest,post.createdAt);
@@ -1189,10 +1192,12 @@ const favoriteGroupNews='favorites/all';
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
  const favoritesOnly=!compact&&state.groupNewsGroup===favoriteGroupNews;
+ const unseenOnly=!compact&&state.groupNewsUnseenOnly;
  const selected=!compact&&groups.has(state.groupNewsGroup)?state.groupNewsGroup:'';
- const blocked=new Set(state.blockedIds);
+ const blocked=new Set(state.blockedIds),uid=me(),currentTime=now();
  const posts=state.posts.filter(post=>groups.has(post.groupId)&&(!selected||post.groupId===selected)
-   &&(!favoritesOnly||state.pinnedGroupIds.has(post.groupId))&&!blocked.has(post.userId))
+   &&(!favoritesOnly||state.pinnedGroupIds.has(post.groupId))&&!blocked.has(post.userId)
+   &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime)))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
@@ -1201,8 +1206,12 @@ function renderGroupNews(compact=false){
  if(favoritesOnly&&!posts.length){
    const hasFavorites=[...groups.keys()].some(id=>state.pinnedGroupIds.has(id));
    if(!state.pinnedGroupsLoaded)emptyMessage='Carregando seus grupos favoritos…';
-   else if(hasFavorites)emptyMessage='Ainda não há publicações nos seus grupos favoritos.';
+   else if(hasFavorites)emptyMessage=unseenOnly?'Nenhuma publicação não vista nos seus favoritos.':'Ainda não há publicações nos seus grupos favoritos.';
    else emptyMessage='Para ver novidades aqui, fixe um grupo em Minhas comunidades.';
+ }
+ if(unseenOnly&&!posts.length){
+   if(!state.groupNewsReadsLoaded)emptyMessage='Carregando as novidades não vistas…';
+   else if(!favoritesOnly)emptyMessage=selected?'Nenhuma publicação não vista neste grupo.':'Nenhuma publicação não vista nos seus grupos.';
  }
  return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Novidades dos meus grupos">
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
@@ -1212,6 +1221,7 @@ function renderGroupNews(compact=false){
    const count=unread.get(id)?.count;
    return [id,count?`${group.name} (${count} ${count===1?'nova':'novas'})`:group.name];
  })),selected,comparePinnedGroups)}</select></label>`:''}
+ ${!compact&&groups.size?`<div><button type="button" class="filter ${unseenOnly?'active':''}" data-action="toggle-group-news-unseen" aria-pressed="${unseenOnly}">Só não vistas</button></div>`:''}
  ${selected?groupNewsReadControls(groups.get(selected),unread.get(selected)?.count):''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
@@ -4246,7 +4256,8 @@ async function onAction(btn) {
   case 'feed':state.feed=btn.dataset.value;render();return;
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
-  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';setTab('groups');return;
+  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;setTab('groups');return;
+  case 'toggle-group-news-unseen':state.groupNewsUnseenOnly=!state.groupNewsUnseenOnly;state.groupNewsLimit=20;render();return;
   case 'mark-group-news':await attempt(async()=>{
     const uid=me();
     if(!uid||!state.groups.some(group=>group.id===id&&group.members?.includes(uid)))return;
