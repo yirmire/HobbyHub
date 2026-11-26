@@ -425,6 +425,15 @@ await request(sender,'GET',pinnedGroup,200);
 await request(recipient,'GET',pinnedGroup,403);
 await request(recipient,'DELETE',pinnedGroup,403);
 await request(sender,'DELETE',pinnedGroup,200);
+const groupNewsRead=`public/data/members/${sender.localId}/groupNewsReads/welcome-group`;
+const seenThrough=integerValue=>({seenThrough:{integerValue:String(integerValue)}});
+await request(recipient,'PATCH',`public/data/members/${recipient.localId}/groupNewsReads/welcome-group`,403,seenThrough(100));
+await request(sender,'PATCH',groupNewsRead,403,seenThrough(0));
+await request(sender,'PATCH',groupNewsRead,200,seenThrough(100));
+await request(sender,'PATCH',groupNewsRead,200,seenThrough(200));
+await request(sender,'PATCH',groupNewsRead,403,seenThrough(100));
+await request(recipient,'GET',groupNewsRead,403);
+assert.equal((await request(sender,'GET',groupNewsRead,200)).fields.seenThrough.integerValue,'200');
 const welcome = {
   userId: str(sender.localId), userName: str('Pessoa de teste'), content: str('Boas-vindas!'),
   hobby: str('Fotografia'), location: str('Brasil'), likes: { arrayValue: { values: [] } },
