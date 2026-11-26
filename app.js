@@ -85,6 +85,7 @@ const state = {
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, eventHobbyAlerts:new Map(), eventHobbyAlertsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
   pinnedGroupIds:new Set(), pinnedGroupsLoaded:false, changingPinnedGroup:false,
+  groupNewsReads:new Map(), groupNewsReadsLoaded:false, markingGroupNews:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
@@ -432,6 +433,10 @@ function startSession() {
     state.pinnedGroupIds=new Set(snapshot.docs.map(doc=>doc.id));
     state.pinnedGroupsLoaded=true;
   },'grupos fixados');
+  subscribe(col('members',me(),'groupNewsReads'),snapshot=>{
+    state.groupNewsReads=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().seenThrough]));
+    state.groupNewsReadsLoaded=true;
+  },'novidades vistas dos grupos');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -483,6 +488,7 @@ async function init() {
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.eventHobbyAlerts.clear();state.eventHobbyAlertsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
       state.pinnedGroupIds.clear();state.pinnedGroupsLoaded=false;state.changingPinnedGroup=false;
+      state.groupNewsReads.clear();state.groupNewsReadsLoaded=false;state.markingGroupNews=false;
       state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
@@ -1131,13 +1137,33 @@ function renderExplore() {
 function comparePinnedGroups(first,second){
  return Number(state.pinnedGroupIds.has(second))-Number(state.pinnedGroupIds.has(first));
 }
-function groupCard(g, activity) {
+function groupUnreadNews(){
+ const unread=new Map();
+ if(!state.groupNewsReadsLoaded)return unread;
+ const uid=me(),blocked=new Set(state.blockedIds);
+ for(const post of state.posts){
+   if(!post.groupId||post.userId===uid||blocked.has(post.userId)
+      ||!Number.isFinite(post.createdAt)||post.createdAt<=(state.groupNewsReads.get(post.groupId)||0))continue;
+   const entry=unread.get(post.groupId)||{count:0,latest:0};
+   entry.count++;
+   entry.latest=Math.max(entry.latest,post.createdAt);
+   unread.set(post.groupId,entry);
+ }
+ return unread;
+}
+function groupNewsReadControls(group,count){
+ if(!count)return '';
+ return `<div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${count} ${count===1?'nova publicação':'novas publicações'}</span>
+ <button type="button" class="text-action" data-action="mark-group-news" data-id="${esc(group.id)}" aria-label="Marcar novidades de ${esc(group.name)} como vistas" ${state.markingGroupNews?'disabled':''}>Marcar como vistas</button></div>`;
+}
+function groupCard(g, activity,unreadCount=0) {
  const joined=(g.members||[]).includes(me());
  const pinAction=state.pinnedGroupIds.has(g.id)?'Desafixar':'Fixar';
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
  <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
  ${joined&&state.groupRoles.get(g.id)==='pending'?'<span class="pill">Convite para moderar</span>':''}
  ${joined&&state.pinnedGroupsLoaded?`<button type="button" class="text-action" data-action="toggle-pinned-group" data-id="${esc(g.id)}" aria-label="${pinAction} ${esc(g.name)}" ${state.changingPinnedGroup?'disabled':''}>${pinAction} grupo</button>`:''}
+ ${joined?groupNewsReadControls(g,unreadCount):''}
  ${activity?.post?`<div><small class="muted">Publicação mais recente</small><br><button class="text-action" data-action="comments" data-id="${esc(activity.post.id)}">${esc(short(activity.post.content,75))}</button></div>`:''}
  ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
@@ -1169,6 +1195,7 @@ function renderGroupNews(compact=false){
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
+ const unread=compact?null:groupUnreadNews();
  let emptyMessage=selected?'Ainda não há publicações para mostrar neste grupo.':'As publicações das comunidades de que você participa vão aparecer aqui.';
  if(favoritesOnly&&!posts.length){
    const hasFavorites=[...groups.keys()].some(id=>state.pinnedGroupIds.has(id));
@@ -1180,7 +1207,11 @@ function renderGroupNews(compact=false){
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
  ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
  ${!compact&&(groups.size||favoritesOnly)?`<label class="field" for="group-news-group">Por grupo<select class="select" id="group-news-group">
- <option value="">Todos os meus grupos</option><option value="${favoriteGroupNews}" ${favoritesOnly?'selected':''}>Só favoritos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected,comparePinnedGroups)}</select></label>`:''}
+ <option value="">Todos os meus grupos</option><option value="${favoriteGroupNews}" ${favoritesOnly?'selected':''}>Só favoritos</option>${searchOptions(new Map([...groups].map(([id,group])=>{
+   const count=unread.get(id)?.count;
+   return [id,count?`${group.name} (${count} ${count===1?'nova':'novas'})`:group.name];
+ })),selected,comparePinnedGroups)}</select></label>`:''}
+ ${selected?groupNewsReadControls(groups.get(selected),unread.get(selected)?.count):''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -1208,9 +1239,10 @@ function renderGroups(){
    && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city))));
  if(!discovering)list.sort((a,b)=>comparePinnedGroups(a.id,b.id));
  const activity=discovering?null:groupHighlights(list);
+ const unread=discovering?null:groupUnreadNews();
  return header+` ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
- ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id))).join('')}</div>`:discovering?empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
+ ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id),unread?.get(group.id)?.count)).join('')}</div>`:discovering?empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
 const EVENT_OFFER_MS=3600000;
 function eventSeatOffer(event,uid=me()){
@@ -4214,6 +4246,18 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
   case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';setTab('groups');return;
+  case 'mark-group-news':await attempt(async()=>{
+    const uid=me();
+    if(!uid||!state.groups.some(group=>group.id===id&&group.members?.includes(uid)))return;
+    const latest=groupUnreadNews().get(id)?.latest;
+    if(!latest)return;
+    const target=ref('members',uid,'groupNewsReads',id);
+    await firebase.runTransaction(db,async transaction=>{
+      const current=await transaction.get(target);
+      if(latest>(current.data()?.seenThrough||0))transaction.set(target,{seenThrough:latest});
+    });
+    if(me()===uid)showToast('Novidades marcadas como vistas.');
+  },'markingGroupNews');return;
   case 'toggle-pinned-group':await attempt(async()=>{
     const uid=me();
     if(!uid||!state.pinnedGroupsLoaded||!state.groups.some(group=>group.id===id&&group.members?.includes(uid)))return;
