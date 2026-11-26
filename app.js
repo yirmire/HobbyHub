@@ -84,6 +84,7 @@ const state = {
   pollWatches:new Map(), pollNoticeTimer:null,
   notifications:[], notificationSettings:{}, notificationSettingsLoaded:false, eventHobbyAlerts:new Map(), eventHobbyAlertsLoaded:false, reportNotices:new Map(), reportNoticeUnsubs:new Map(), notificationReads:new Set(),
   mutedCommunityIds:new Set(), mutedCommunitiesLoaded:false,
+  pinnedGroupIds:new Set(), pinnedGroupsLoaded:false, changingPinnedGroup:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
   invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
@@ -427,6 +428,10 @@ function startSession() {
   subscribe(col('members',me(),'mutedCommunities'),snapshot=>{
     state.mutedCommunityIds=new Set(snapshot.docs.map(doc=>doc.id));state.mutedCommunitiesLoaded=true;
   },'comunidades silenciadas');
+  subscribe(col('members',me(),'pinnedGroups'),snapshot=>{
+    state.pinnedGroupIds=new Set(snapshot.docs.map(doc=>doc.id));
+    state.pinnedGroupsLoaded=true;
+  },'grupos fixados');
   subscribe(col('members',me(),'testimonials'),(s)=>{state.receivedTestimonials=docs(s);},'depoimentos');
   subscribe(col('members',me(),'eventReads'),snapshot=>{
     for(const doc of snapshot.docs){
@@ -477,6 +482,7 @@ async function init() {
       state.groupRemoval=null;state.moderationHistory=null;
       state.moderationQueue=null;state.notifications=[];state.notificationSettings={};state.notificationSettingsLoaded=false;state.eventHobbyAlerts.clear();state.eventHobbyAlertsLoaded=false;state.groupPolls=null;state.pollDetail=null;
       state.mutedCommunityIds.clear();state.mutedCommunitiesLoaded=false;
+      state.pinnedGroupIds.clear();state.pinnedGroupsLoaded=false;state.changingPinnedGroup=false;
       state.notificationFilter='all';state.feedbackAdmin=false;state.feedbackAdminRole=null;state.productFeedbackQueue=null;
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
@@ -1073,8 +1079,8 @@ function personCard(p) {
  const shared=(p.hobbies||[]).find(h=>(state.profile?.hobbies||[]).some(mine=>norm(mine)===norm(h)));
  return `<article class="card person-card">${avatar(p)}<div class="person-data"><h3><button class="text-action" data-action="person" data-id="${esc(p.uid)}">${esc(p.name)}</button></h3><p>${icon('map')} ${esc(p.location || 'Brasil')}</p><p>${esc(short(p.bio||'Uma pessoa apaixonada por hobbies.',60))}</p>${shared?`<p>Também gosta de ${esc(shared)}</p>`:''}${locate(p.location)?'<p>Da sua cidade</p>':''}</div><div style="display:grid;gap:6px"><button class="btn btn-small ${followed?'btn-outline':'btn-soft'}" data-action="follow" data-id="${esc(p.uid)}">${followed?'Seguindo':'+ Seguir'}</button><button class="btn btn-small btn-ghost" data-action="open-dm" data-id="${esc(p.uid)}">${icon('chat')} Conversar</button></div></article>`;
 }
-function searchOptions(values,selected){
- return [...values].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'))
+function searchOptions(values,selected,priority){
+ return [...values].sort((a,b)=>(priority?.(a[0],b[0])||0)||a[1].localeCompare(b[1],'pt-BR'))
    .map(([key,label])=>`<option value="${esc(key)}" ${selected===key?'selected':''}>${esc(label)}</option>`).join('');
 }
 function searchPublications(query,hobby='',groupId=''){
@@ -1122,11 +1128,16 @@ function renderExplore() {
  ${groups.length?`<div class="grid-two">${groups.slice(0,4).map(group=>groupCard(group)).join('')}</div>`:empty('🪴','Nenhum grupo encontrado','Crie uma comunidade para reunir pessoas com esse interesse.','Criar grupo','group')}
  ${q?`<div class="section-head"><h2>Publicações encontradas</h2><button class="text-action" data-action="explore-view" data-value="posts">Ver busca de publicações</button></div>${posts.length?posts.map(postCard).join(''):empty('🔎','Nenhuma publicação','Tente outra palavra-chave para encontrar mais conteúdo.')}`:''}`;
 }
+function comparePinnedGroups(first,second){
+ return Number(state.pinnedGroupIds.has(second))-Number(state.pinnedGroupIds.has(first));
+}
 function groupCard(g, activity) {
  const joined=(g.members||[]).includes(me());
+ const pinAction=state.pinnedGroupIds.has(g.id)?'Desafixar':'Fixar';
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
  <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
  ${joined&&state.groupRoles.get(g.id)==='pending'?'<span class="pill">Convite para moderar</span>':''}
+ ${joined&&state.pinnedGroupsLoaded?`<button type="button" class="text-action" data-action="toggle-pinned-group" data-id="${esc(g.id)}" aria-label="${pinAction} ${esc(g.name)}" ${state.changingPinnedGroup?'disabled':''}>${pinAction} grupo</button>`:''}
  ${activity?.post?`<div><small class="muted">Publicação mais recente</small><br><button class="text-action" data-action="comments" data-id="${esc(activity.post.id)}">${esc(short(activity.post.content,75))}</button></div>`:''}
  ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
@@ -1159,7 +1170,7 @@ function renderGroupNews(compact=false){
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
  ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
  ${!compact&&groups.size?`<label class="field" for="group-news-group">Por grupo<select class="select" id="group-news-group">
- <option value="">Todos os meus grupos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected)}</select></label>`:''}
+ <option value="">Todos os meus grupos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected,comparePinnedGroups)}</select></label>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -1185,6 +1196,7 @@ function renderGroups(){
  const city=cities.has(state.groupCity)?state.groupCity:'';
  const list=groups.filter(group=>(!query||norm([group.name,group.hobby,group.description,group.location].join(' ')).includes(query))
    && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city))));
+ if(!discovering)list.sort((a,b)=>comparePinnedGroups(a.id,b.id));
  const activity=discovering?null:groupHighlights(list);
  return header+` ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
@@ -4192,6 +4204,15 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
   case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';setTab('groups');return;
+  case 'toggle-pinned-group':await attempt(async()=>{
+    const uid=me();
+    if(!uid||!state.pinnedGroupsLoaded||!state.groups.some(group=>group.id===id&&group.members?.includes(uid)))return;
+    const target=ref('members',uid,'pinnedGroups',id);
+    const pinned=state.pinnedGroupIds.has(id);
+    if(pinned)await firebase.deleteDoc(target);
+    else await firebase.setDoc(target,{});
+    if(me()===uid)showToast(pinned?'Grupo desafixado.':'Grupo fixado.');
+  },'changingPinnedGroup');return;
   case 'more-group-news':state.groupNewsLimit+=20;render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
   case 'record-event-checkin':
