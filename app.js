@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -467,7 +467,7 @@ async function init() {
       state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
-      state.groupView='mine';state.groupHobby='';state.groupCity='';
+      state.groupView='mine';state.groupNewsLimit=20;state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventAgendaView='list';state.eventWeekOffset=0;
       state.eventReads.clear();state.eventReadsLoaded=false;
@@ -1063,6 +1063,7 @@ function renderHome() {
  <div class="section-head"><h2>Explore seus interesses</h2><button class="text-action" data-action="quiz">Me surpreenda ${icon('spark')}</button></div>
  ${topicButtons(state.topic)}
  <div class="card composer-bar">${avatar(state.profile)}<button class="composer-prompt" data-action="compose">Qual hobby fez seu dia melhor hoje?</button><button class="circle-btn" data-action="compose" aria-label="Publicar">${icon('plus')}</button></div>
+ ${renderGroupNews(true)}
  <div class="section-head"><h2>Da nossa comunidade</h2><span class="pill">${feed.length} publicações</span></div>
  <div class="feed-tabs">${[['all','Para você'],['local',`Na minha cidade`],['following','Seguindo']].map(([v,label])=>`<button class="feed-tab ${state.feed===v?'active':''}" data-action="feed" data-value="${v}">${label}</button>`).join('')}</div>
  ${feed.length?feed.map(postCard).join(''):empty('🌱','Uma boa história começa aqui',state.feed==='local'?'Ainda não há publicações com o nome da sua cidade. Você pode inaugurar essa conversa.':state.feed==='following'?'Siga pessoas pela aba Explorar para ver o que elas compartilham.':'Nenhuma publicação encontrada. Faça parte do começo dessa comunidade.',state.feed==='following'?'Encontrar pessoas':'Publicar agora',state.feed==='following'?'explore':'compose')}`;
@@ -1146,7 +1147,33 @@ function groupHighlights(groups, now=new Date()) {
  }
  return activity;
 }
+function renderGroupNews(compact=false){
+ const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
+ const blocked=new Set(state.blockedIds);
+ const posts=state.posts.filter(post=>groups.has(post.groupId)&&!blocked.has(post.userId))
+   .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+ if(compact&&!posts.length)return '';
+ const limit=compact?3:state.groupNewsLimit;
+ return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Novidades dos meus grupos">
+ <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
+ ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
+ ${posts.length?posts.slice(0,limit).map(post=>{
+   const group=groups.get(post.groupId),author=authorName(post);
+   const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
+   return `<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
+     <button type="button" class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>
+     <p class="muted mini">${esc(author)}</p>
+     <p class="post-copy">${esc(short(summary,140))}</p>
+     <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa de ${esc(author)} em ${esc(group.name)}">Abrir conversa</button>
+   </article>`;
+ }).join(''):'<p class="tip">As publicações das comunidades de que você participa vão aparecer aqui.</p>'}
+ ${!compact&&posts.length>limit?'<button type="button" class="btn btn-outline btn-small" data-action="more-group-news">Ver mais publicações</button>':''}
+ </section>`;
+}
 function renderGroups(){
+ const header=`<div class="card" style="padding:25px;margin-bottom:19px;background:linear-gradient(115deg,var(--panel),var(--purple2));display:flex;align-items:center;justify-content:space-between;gap:18px"><div><div class="eyebrow">O PODER DE FAZER JUNTO</div><h2 style="font-size:21px;margin:8px 0">Seu hobby merece uma comunidade.</h2><p class="muted mini" style="margin:0">Crie um grupo, faça novas amizades e inspire outras pessoas.</p></div><button class="btn btn-primary btn-small" data-action="group">${icon('plus')} Criar grupo</button></div>
+ <div class="filters">${[['mine','Minhas comunidades'],['discover','Descobrir'],['news','Novidades']].map(([view,label])=>`<button class="filter ${state.groupView===view?'active':''}" data-action="group-view" data-value="${view}" aria-pressed="${state.groupView===view}">${label}</button>`).join('')}</div>`;
+ if(state.groupView==='news')return header+renderGroupNews();
  const discovering=state.groupView==='discover',query=norm(state.search);
  const groups=state.groups.filter(group=>Boolean(group.members?.includes(me()))!==discovering);
  const hobbies=[...new Set(groups.map(group=>group.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
@@ -1156,9 +1183,7 @@ function renderGroups(){
  const list=groups.filter(group=>(!query||norm([group.name,group.hobby,group.description,group.location].join(' ')).includes(query))
    && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city))));
  const activity=discovering?null:groupHighlights(list);
- return `<div class="card" style="padding:25px;margin-bottom:19px;background:linear-gradient(115deg,var(--panel),var(--purple2));display:flex;align-items:center;justify-content:space-between;gap:18px"><div><div class="eyebrow">O PODER DE FAZER JUNTO</div><h2 style="font-size:21px;margin:8px 0">Seu hobby merece uma comunidade.</h2><p class="muted mini" style="margin:0">Crie um grupo, faça novas amizades e inspire outras pessoas.</p></div><button class="btn btn-primary btn-small" data-action="group">${icon('plus')} Criar grupo</button></div>
- <div class="filters"><button class="filter ${!discovering?'active':''}" data-action="group-view" data-value="mine" aria-pressed="${!discovering}">Minhas comunidades</button><button class="filter ${discovering?'active':''}" data-action="group-view" data-value="discover" aria-pressed="${discovering}">Descobrir</button></div>
- ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
+ return header+` ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
  ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id))).join('')}</div>`:discovering?empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
@@ -4162,7 +4187,9 @@ async function onAction(btn) {
   case 'explore':redirectToExplore();return;
   case 'feed':state.feed=btn.dataset.value;render();return;
   case 'topic':state.topic=btn.dataset.topic;render();return;
-  case 'group-view':state.groupView=btn.dataset.value==='discover'?'discover':'mine';render();return;
+  case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
+  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;setTab('groups');return;
+  case 'more-group-news':state.groupNewsLimit+=20;render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
   case 'record-event-checkin':
   case 'undo-event-checkin':await attempt(async()=>{
