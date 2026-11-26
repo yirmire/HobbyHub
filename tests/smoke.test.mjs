@@ -1986,6 +1986,31 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('marking the news list captures only the current scope and preserves newer posts', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.groupNewsReadsLoaded=true;state.tab='groups';state.groupView='news';
+    state.groups=['art','books','photo'].map(id=>({id,name:id,members:['reader']}));
+    state.pinnedGroupIds=new Set(['art','books']);state.groupNewsGroup='favorites/all';
+    state.posts=[
+      {id:'a',groupId:'art',createdAt:15,userId:'author'},{id:'b',groupId:'books',createdAt:16,userId:'author'},
+      {id:'p',groupId:'photo',createdAt:17,userId:'author'}
+    ];
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.at(-1),runTransaction:async (_db,work)=>{
+      state.posts.push({id:'new',groupId:'art',createdAt:30,userId:'author'});
+      await work({get:async()=>({data:()=>undefined}),set:(id,data)=>writes.push([id,data.seenThrough])});
+    }};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/Marcar lista como vista \(2\)/);
+  await vm.runInContext("onAction({dataset:{action:'mark-group-news-list'}})",context);
+  assert.equal(vm.runInContext('JSON.stringify(writes)',context),'[["art",15],["books",16]]');
+  vm.runInContext("state.groupNewsReads=new Map(writes);state.groupNewsUnseenOnly=true",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/Marcar lista como vista \(1\)/);
+  assert.equal(vm.runInContext("groupUnreadNews().get('photo').count",context),1);
+});
+
 test('group navigation badge counts unread posts from joined groups and opens the unseen list', async () => {
   const context=appContext();
   vm.runInContext(`
