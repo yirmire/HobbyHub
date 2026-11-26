@@ -1920,6 +1920,45 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('group news lists the newest posts from joined groups and opens the full list', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.profile={name:'Leitora',hobbies:[]};
+    state.groups=[
+      {id:'photo',name:'Fotografia <local>',members:['reader']},
+      {id:'books',name:'Leitura',members:['reader']},
+      {id:'other',name:'Outro grupo',members:['visitor']}
+    ];
+    state.blockedIds=['blocked'];
+    const entry=(id,groupId,createdAt,userId='author')=>({id,groupId,createdAt,userId,content:id});
+    state.posts=[
+      entry('old','photo',1),entry('next','photo',20),entry('third','books',15),entry('global',null,100),
+      {...entry('media','books',30),content:'',photoUrl:'https://example.test/photo.jpg'},
+      entry('unjoined','other',99),entry('blocked-post','photo',98,'blocked')
+    ];
+    render=()=>{};
+  `,context);
+  const home=vm.runInContext('renderGroupNews(true)',context);
+  assert.match(home,/data-id="media"[\s\S]*data-id="next"[\s\S]*data-id="third"/);
+  assert.match(home,/Fotografia &lt;local&gt;/);
+  assert.match(home,/>Foto<\/p>/);
+  assert.doesNotMatch(home,/data-id="(?:old|unjoined|global|blocked-post)"/);
+  assert.match(home,/data-action="open-group-news">Ver todas/);
+  await vm.runInContext("onAction({dataset:{action:'open-group-news'}})",context);
+  assert.equal(vm.runInContext("state.tab+' '+state.groupView",context),'groups news');
+  const full=vm.runInContext('renderGroups()',context);
+  assert.match(full,/data-value="news" aria-pressed="true"/);
+  assert.match(full,/data-action="comments" data-id="old"/);
+  vm.runInContext("state.posts=Array.from({length:21},(_,i)=>entry('post-'+i,'photo',i))",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/more-group-news/);
+  await vm.runInContext("onAction({dataset:{action:'more-group-news'}})",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/data-id="post-0"/);
+  assert.doesNotMatch(vm.runInContext('renderGroupNews()',context),/more-group-news/);
+  vm.runInContext("state.groups=[]",context);
+  assert.equal(vm.runInContext('renderGroupNews(true)',context),'');
+});
+
 test('video transcript reads the caption track without playing, and timestamps seek the player', async () => {
   const context=appContext();
   vm.runInContext(`
