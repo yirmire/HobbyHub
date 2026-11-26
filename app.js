@@ -923,14 +923,22 @@ function unreadBadge(tab) {
  const count=tab==='messages'?state.threads.filter(thread=>!directThreadMuted(thread.id)&&unreadThread(thread.id)).length:0;
  return count?`<span class="unread-count"><span aria-hidden="true">${count>99?'99+':count}</span><span class="sr-only">${count} ${count===1?'conversa não lida':'conversas não lidas'}</span></span>`:'';
 }
-function renderSidebar() {
-  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span>${unreadBadge(tab)}</button>`).join('')}${notificationButton()}</nav>
+function groupNewsNavCount(){
+ const unread=groupUnreadNews();
+ return state.groups.reduce((count,group)=>count+(group.members?.includes(me())?(unread.get(group.id)?.count||0):0),0);
+}
+function navWithGroupNews(tab,button,count){
+ if(tab!=='groups'||!count)return button;
+ return `<div class="nav-group-slot">${button}<button type="button" class="group-news-shortcut unread-count" data-action="open-unseen-group-news" aria-label="Abrir ${count} ${count===1?'publicação não vista':'publicações não vistas'} dos meus grupos">${count>99?'99+':count}</button></div>`;
+}
+function renderSidebar(groupNewsCount) {
+  return `<aside class="sidebar">${brand()}<nav class="nav-items" aria-label="Menu principal">${nav.map(([tab,title,ico])=>navWithGroupNews(tab,`<button class="nav-btn ${state.tab===tab?'active':''}" data-action="tab" data-tab="${tab}">${icon(ico)} <span>${title}</span>${unreadBadge(tab)}</button>`,groupNewsCount)).join('')}${notificationButton()}</nav>
   <div class="sidebar-cta"><button class="btn btn-primary" data-action="compose">${icon('plus')} Nova publicação</button></div>
   <div class="sidebar-footer"><button data-action="theme">${icon(state.dark?'sun':'moon')} ${state.dark?'Tema claro':'Tema escuro'}</button><p>Feito para viver mais daquilo que você ama. ✨</p><small>HobbyHub © ${new Date().getFullYear()}</small></div></aside>`;
 }
-function renderBottomNav(){
+function renderBottomNav(groupNewsCount){
   const items=[['home','Início','home'],['explore','Explorar','compass'],['events','Eventos','calendar'],['compose','','plus'],['groups','Grupos','users'],['messages','Chat','chat'],['profile','Perfil','user']];
-  return `<nav class="bottom-nav" aria-label="Navegação móvel">${items.map(([tab,title,ico])=>`<button data-action="${tab==='compose'?'compose':'tab'}" ${tab!=='compose'?`data-tab="${tab}"`:'aria-label="Criar publicação"'} ${state.tab===tab?'aria-current="page"':''} class="${state.tab===tab?'active':''} ${tab==='compose'?'add-nav':''}">${icon(ico)}${title?`<span>${title}</span>`:''}${unreadBadge(tab)}</button>`).join('')}</nav>`;
+  return `<nav class="bottom-nav" aria-label="Navegação móvel">${items.map(([tab,title,ico])=>navWithGroupNews(tab,`<button data-action="${tab==='compose'?'compose':'tab'}" ${tab!=='compose'?`data-tab="${tab}"`:'aria-label="Criar publicação"'} ${state.tab===tab?'aria-current="page"':''} class="${state.tab===tab?'active':''} ${tab==='compose'?'add-nav':''}">${icon(ico)}${title?`<span>${title}</span>`:''}${unreadBadge(tab)}</button>`,groupNewsCount)).join('')}</nav>`;
 }
 function titleBar() {
  const titles={home:['Seu cantinho no mundo','Descubra algo novo hoje.'],explore:['Explorar interesses','Encontre pessoas e ideias para compartilhar.'],groups:['Suas comunidades','Um lugar para cada paixão.'],events:['Encontros & experiências','Da conversa para a vida real.'],messages:['Mensagens','Boas conexões começam com uma conversa.'],saved:['Seus favoritos','Tudo o que vale revisitar.'],profile:['Seu perfil','Sua história começa com o que você ama.']};
@@ -975,9 +983,10 @@ function renderEventNotices() {
 function renderLayout() {
  if(!state.profile)return `<div class="splash"><span class="splash-mark">✳</span><h1>HobbyHub</h1><p>Preparando seu perfil...</p>${state.alerts.length?`<div class="error-banner">${esc(state.alerts[0])}</div><button data-action="logout" class="btn btn-outline">Sair da conta</button>`:''}</div>`;
  const content={home:renderHome,explore:renderExplore,groups:renderGroups,events:renderEvents,messages:renderMessages,saved:renderSaved,profile:renderProfile};
- return `<div class="layout ${state.tab==='events'?'event-agenda-layout':''} ${state.tab==='messages'&&state.mobileChatOpen&&!state.allSavedDirect?'mobile-chat-detail':''}">${renderSidebar()}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
+ const groupNewsCount=groupNewsNavCount();
+ return `<div class="layout ${state.tab==='events'?'event-agenda-layout':''} ${state.tab==='messages'&&state.mobileChatOpen&&!state.allSavedDirect?'mobile-chat-detail':''}">${renderSidebar(groupNewsCount)}<div class="main-column"><div class="mobile-header">${brand()}<div class="toggle-row">${notificationButton(true)}<button data-action="tab" data-tab="saved" class="circle-btn" aria-label="Salvos">${icon('bookmark')}</button><button data-action="theme" class="circle-btn" aria-label="Alternar tema">${icon(state.dark?'sun':'moon')}</button></div></div>
  ${state.alerts.length?`<div class="error-banner">${icon('info')} <span>${esc(state.alerts[0])}</span></div>`:''}
- ${titleBar()}<label class="mobile-search">${icon('search')}<input id="mobile-search" aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav()}${renderModal()}`;
+ ${titleBar()}<label class="mobile-search">${icon('search')}<input id="mobile-search" aria-label="Pesquisar no HobbyHub" placeholder="Buscar pessoas, grupos e publicações..." value="${esc(state.search)}" data-live-search="true"></label>${renderEventNotices()}${(content[state.tab]||renderHome)()}</div>${renderRight()}</div>${renderBottomNav(groupNewsCount)}${renderModal()}`;
 }
 function topicButtons(selected,action='topic') {return `<div class="topics" aria-label="Interesses">${[{name:'Todos',emoji:'✨'},...TOPICS].map(t=>`<button data-action="${action}" data-topic="${esc(t.name)}" class="topic ${selected===t.name?'active':''}"><span>${t.emoji}</span> ${esc(t.name)}</button>`).join('')}</div>`;}
 function recapEventButton(post){
@@ -4256,7 +4265,8 @@ async function onAction(btn) {
   case 'feed':state.feed=btn.dataset.value;render();return;
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
-  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;setTab('groups');return;
+  case 'open-group-news':
+  case 'open-unseen-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=action==='open-unseen-group-news';setTab('groups');return;
   case 'toggle-group-news-unseen':state.groupNewsUnseenOnly=!state.groupNewsUnseenOnly;state.groupNewsLimit=20;render();return;
   case 'mark-group-news':await attempt(async()=>{
     const uid=me();
