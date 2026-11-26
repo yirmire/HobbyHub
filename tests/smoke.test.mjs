@@ -1921,7 +1921,7 @@ test('video captions require a video and load a bounded WebVTT file without cred
 });
 
 test('group news lists the newest posts from joined groups and opens the full list', async () => {
-  const context=appContext();
+  const handlers={},context=appContext(handlers);
   vm.runInContext(`
     state.user={uid:'reader'};
     state.profile={name:'Leitora',hobbies:[]};
@@ -1950,6 +1950,18 @@ test('group news lists the newest posts from joined groups and opens the full li
   const full=vm.runInContext('renderGroups()',context);
   assert.match(full,/data-value="news" aria-pressed="true"/);
   assert.match(full,/data-action="comments" data-id="old"/);
+  assert.match(full,/Por grupo<select class="select" id="group-news-group"/);
+  assert.doesNotMatch(full,/<option value="other"/);
+  handlers.change({target:{id:'group-news-group',value:'books'}});
+  const filtered=vm.runInContext('renderGroupNews()',context);
+  assert.match(filtered,/<option value="books" selected>Leitura<\/option>/);
+  assert.match(filtered,/data-id="media"[\s\S]*data-id="third"/);
+  assert.doesNotMatch(filtered,/data-id="(?:next|old)"/);
+  assert.match(vm.runInContext('renderGroupNews(true)',context),/data-id="next"/);
+  vm.runInContext("state.posts=state.posts.filter(post=>post.groupId!=='books')",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/Ainda não há publicações para mostrar neste grupo/);
+  await vm.runInContext("onAction({dataset:{action:'open-group-news'}})",context);
+  assert.equal(vm.runInContext('state.groupNewsGroup',context),'');
   vm.runInContext("state.posts=Array.from({length:21},(_,i)=>entry('post-'+i,'photo',i))",context);
   assert.match(vm.runInContext('renderGroupNews()',context),/more-group-news/);
   await vm.runInContext("onAction({dataset:{action:'more-group-news'}})",context);
