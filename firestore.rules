@@ -272,6 +272,18 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly([])
           && uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members;
       }
+      match /groupNewsReads/{groupId} {
+        function validGroupNewsRead() {
+          let data = request.resource.data;
+          return isMe(uid)
+            && uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data.members
+            && data.keys().hasOnly(['seenThrough'])
+            && data.seenThrough is number && data.seenThrough > 0 && data.seenThrough <= 9007199254740991;
+        }
+        allow read: if isMe(uid);
+        allow create: if validGroupNewsRead();
+        allow update: if validGroupNewsRead() && request.resource.data.seenThrough >= resource.data.seenThrough;
+      }
       match /notifications/{noticeId} {
         function newFollow(data) {
           let follow = /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(data.actorId)/following/$(uid);
