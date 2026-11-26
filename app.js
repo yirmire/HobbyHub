@@ -1198,19 +1198,44 @@ function groupHighlights(groups, now=new Date()) {
  return activity;
 }
 const favoriteGroupNews='favorites/all';
+function groupNewsFilter(groups,compact){
+ const filter=state.groupNewsGroup;
+ return !compact&&(filter===favoriteGroupNews||groups.has(filter))?filter:'';
+}
+function groupNewsMatches(groupId,filter){
+ return !filter||(filter===favoriteGroupNews?state.pinnedGroupIds.has(groupId):filter===groupId);
+}
+function groupNewsListReads(groups,filter,unread){
+ return [...unread].filter(([id])=>groups.has(id)&&groupNewsMatches(id,filter));
+}
+async function markGroupNewsSeen(uid,entries){
+ // Each group write checks membership in Firestore rules. Keep batches below the rules access limit.
+ for(let start=0;start<entries.length&&me()===uid;start+=10){
+   const batch=entries.slice(start,start+10).map(([id,entry])=>({
+     target:ref('members',uid,'groupNewsReads',id),latest:entry.latest
+   }));
+   await firebase.runTransaction(db,async transaction=>{
+     const current=await Promise.all(batch.map(item=>transaction.get(item.target)));
+     batch.forEach(({target,latest},index)=>{
+       if(latest>(current[index].data()?.seenThrough||0))transaction.set(target,{seenThrough:latest});
+     });
+   });
+ }
+}
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
- const favoritesOnly=!compact&&state.groupNewsGroup===favoriteGroupNews;
+ const filter=groupNewsFilter(groups,compact);
+ const favoritesOnly=filter===favoriteGroupNews;
  const unseenOnly=!compact&&state.groupNewsUnseenOnly;
- const selected=!compact&&groups.has(state.groupNewsGroup)?state.groupNewsGroup:'';
+ const selected=favoritesOnly?'':filter;
  const blocked=new Set(state.blockedIds),uid=me(),currentTime=now();
- const posts=state.posts.filter(post=>groups.has(post.groupId)&&(!selected||post.groupId===selected)
-   &&(!favoritesOnly||state.pinnedGroupIds.has(post.groupId))&&!blocked.has(post.userId)
+ const posts=state.posts.filter(post=>groups.has(post.groupId)&&groupNewsMatches(post.groupId,filter)&&!blocked.has(post.userId)
    &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime)))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
  const unread=compact?null:groupUnreadNews();
+ const unreadCount=compact?0:groupNewsListReads(groups,filter,unread).reduce((sum,[,entry])=>sum+entry.count,0);
  let emptyMessage=selected?'Ainda não há publicações para mostrar neste grupo.':'As publicações das comunidades de que você participa vão aparecer aqui.';
  if(favoritesOnly&&!posts.length){
    const hasFavorites=[...groups.keys()].some(id=>state.pinnedGroupIds.has(id));
@@ -1231,7 +1256,7 @@ function renderGroupNews(compact=false){
    return [id,count?`${group.name} (${count} ${count===1?'nova':'novas'})`:group.name];
  })),selected,comparePinnedGroups)}</select></label>`:''}
  ${!compact&&groups.size?`<div><button type="button" class="filter ${unseenOnly?'active':''}" data-action="toggle-group-news-unseen" aria-pressed="${unseenOnly}">Só não vistas</button></div>`:''}
- ${selected?groupNewsReadControls(groups.get(selected),unread.get(selected)?.count):''}
+ ${unreadCount?`<div><button type="button" class="btn btn-outline btn-small" data-action="mark-group-news-list" aria-label="Marcar lista como vista, ${unreadCount} ${unreadCount===1?'publicação':'publicações'}" ${state.markingGroupNews?'disabled':''}>Marcar lista como vista (${unreadCount})</button></div>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -4271,14 +4296,19 @@ async function onAction(btn) {
   case 'mark-group-news':await attempt(async()=>{
     const uid=me();
     if(!uid||!state.groups.some(group=>group.id===id&&group.members?.includes(uid)))return;
-    const latest=groupUnreadNews().get(id)?.latest;
-    if(!latest)return;
-    const target=ref('members',uid,'groupNewsReads',id);
-    await firebase.runTransaction(db,async transaction=>{
-      const current=await transaction.get(target);
-      if(latest>(current.data()?.seenThrough||0))transaction.set(target,{seenThrough:latest});
-    });
+    const entry=groupUnreadNews().get(id);
+    if(!entry)return;
+    await markGroupNewsSeen(uid,[[id,entry]]);
     if(me()===uid)showToast('Novidades marcadas como vistas.');
+  },'markingGroupNews');return;
+  case 'mark-group-news-list':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.tab!=='groups'||state.groupView!=='news')return;
+    const groups=new Map(state.groups.filter(group=>group.members?.includes(uid)).map(group=>[group.id,group]));
+    const entries=groupNewsListReads(groups,groupNewsFilter(groups,false),groupUnreadNews());
+    if(!entries.length)return;
+    await markGroupNewsSeen(uid,entries);
+    if(me()===uid)showToast('Lista marcada como vista.');
   },'markingGroupNews');return;
   case 'toggle-pinned-group':await attempt(async()=>{
     const uid=me();
