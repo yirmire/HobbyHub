@@ -1920,6 +1920,37 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('pinned groups appear first in both views and only joined groups can be pinned', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.pinnedGroupsLoaded=true;
+    state.groups=[
+      {id:'art',name:'Arte',members:['reader']},
+      {id:'books',name:'Livros',members:['reader']},
+      {id:'other',name:'Outro',members:['visitor']}
+    ];
+    state.pinnedGroupIds.add('books');
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),
+      setDoc:async(path,data)=>writes.push([path,data]),
+      deleteDoc:async path=>writes.push([path])};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderGroups()',context),/data-action="view-group" data-id="books"[\s\S]*data-action="view-group" data-id="art"/);
+  assert.match(vm.runInContext('renderGroupNews()',context),/<option value="books" >Livros<\/option>[\s\S]*<option value="art" >Arte<\/option>/);
+  assert.match(vm.runInContext("groupCard(state.groups[1])",context),/Desafixar grupo/);
+  assert.doesNotMatch(vm.runInContext("groupCard(state.groups[2])",context),/toggle-pinned-group/);
+  for(const id of ['books','art','other']){
+    await vm.runInContext(`onAction({dataset:{action:'toggle-pinned-group',id:'${id}'}})`,context);
+  }
+  const writes=JSON.parse(vm.runInContext('JSON.stringify(writes)',context));
+  assert.equal(writes.length,2);
+  assert.match(writes[0][0],/members\/reader\/pinnedGroups\/books$/);
+  assert.equal(writes[0].length,1);
+  assert.match(writes[1][0],/members\/reader\/pinnedGroups\/art$/);
+  assert.deepEqual(writes[1][1],{});
+});
+
 test('group news lists the newest posts from joined groups and opens the full list', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
