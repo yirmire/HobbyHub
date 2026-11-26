@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -467,7 +467,7 @@ async function init() {
       state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
-      state.groupView='mine';state.groupNewsLimit=20;state.groupHobby='';state.groupCity='';
+      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventAgendaView='list';state.eventWeekOffset=0;
       state.eventReads.clear();state.eventReadsLoaded=false;
@@ -1149,14 +1149,17 @@ function groupHighlights(groups, now=new Date()) {
 }
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
+ const selected=!compact&&groups.has(state.groupNewsGroup)?state.groupNewsGroup:'';
  const blocked=new Set(state.blockedIds);
- const posts=state.posts.filter(post=>groups.has(post.groupId)&&!blocked.has(post.userId))
+ const posts=state.posts.filter(post=>groups.has(post.groupId)&&(!selected||post.groupId===selected)&&!blocked.has(post.userId))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
  return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Novidades dos meus grupos">
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
  ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
+ ${!compact&&groups.size?`<label class="field" for="group-news-group">Por grupo<select class="select" id="group-news-group">
+ <option value="">Todos os meus grupos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected)}</select></label>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -1166,7 +1169,7 @@ function renderGroupNews(compact=false){
      <p class="post-copy">${esc(short(summary,140))}</p>
      <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa de ${esc(author)} em ${esc(group.name)}">Abrir conversa</button>
    </article>`;
- }).join(''):'<p class="tip">As publicações das comunidades de que você participa vão aparecer aqui.</p>'}
+ }).join(''):`<p class="tip" role="status">${selected?'Ainda não há publicações para mostrar neste grupo.':'As publicações das comunidades de que você participa vão aparecer aqui.'}</p>`}
  ${!compact&&posts.length>limit?'<button type="button" class="btn btn-outline btn-small" data-action="more-group-news">Ver mais publicações</button>':''}
  </section>`;
 }
@@ -4188,7 +4191,7 @@ async function onAction(btn) {
   case 'feed':state.feed=btn.dataset.value;render();return;
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
-  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;setTab('groups');return;
+  case 'open-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';setTab('groups');return;
   case 'more-group-news':state.groupNewsLimit+=20;render();return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
   case 'record-event-checkin':
@@ -5285,6 +5288,7 @@ document.addEventListener('change',(event)=>{
  }
  else if(event.target.id==='group-hobby')state.groupHobby=event.target.value;
  else if(event.target.id==='group-city')state.groupCity=event.target.value;
+ else if(event.target.id==='group-news-group'){state.groupNewsGroup=event.target.value;state.groupNewsLimit=20;}
  else return;
  render();
 });
