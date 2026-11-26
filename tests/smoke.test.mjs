@@ -1951,6 +1951,40 @@ test('pinned groups appear first in both views and only joined groups can be pin
   assert.deepEqual(writes[1][1],{});
 });
 
+test('group news can show just favorites without filtering the home preview', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.pinnedGroupsLoaded=true;
+    state.groups=[
+      {id:'art',name:'Arte',members:['reader']},
+      {id:'books',name:'Leitura',members:['reader']},
+      {id:'photo',name:'Fotografia',members:['reader']},
+      {id:'left',name:'Outro grupo',members:[]}
+    ];
+    state.pinnedGroupIds=new Set(['books','photo','left']);
+    state.posts=[
+      {id:'recent',groupId:'photo',content:'Recent',createdAt:2},
+      {id:'other',groupId:'art',content:'Other',createdAt:4},
+      {id:'older',groupId:'books',content:'Older',createdAt:1},
+      {id:'former',groupId:'left',content:'Former',createdAt:8}
+    ];
+    state.groupNewsLimit=40;
+    render=()=>{};
+  `,context);
+  handlers.change({target:{id:'group-news-group',value:'favorites/all'}});
+  const favorites=vm.runInContext('renderGroupNews()',context);
+  assert.match(favorites,/<option value="favorites\/all" selected>Só favoritos<\/option>/);
+  assert.match(favorites,/data-id="recent"[\s\S]*data-id="older"/);
+  assert.doesNotMatch(favorites,/data-id="(?:other|former)"/);
+  assert.equal(vm.runInContext('state.groupNewsLimit',context),20);
+  assert.match(vm.runInContext('renderGroupNews(true)',context),/data-id="other"/);
+  vm.runInContext("state.posts=state.posts.filter(post=>post.groupId==='art')",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/Ainda não há publicações nos seus grupos favoritos/);
+  vm.runInContext("state.pinnedGroupIds=new Set(['left'])",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/fixe um grupo em Minhas comunidades/);
+});
+
 test('group news lists the newest posts from joined groups and opens the full list', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
