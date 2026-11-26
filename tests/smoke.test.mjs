@@ -1986,6 +1986,43 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('searching group news matches text, author or group and composes with the existing filters', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};state.groupNewsReadsLoaded=true;state.tab='groups';state.groupView='news';
+    state.groups=[{id:'art',name:'Fotografia analógica',members:['reader']},{id:'books',name:'Leitura',members:['reader']}];
+    state.pinnedGroupIds.add('art');
+    state.groupNewsReads.set('art',10);
+    state.posts=[
+      {id:'text',groupId:'art',content:'Uma trilha à noite',userId:'one',userName:'Joana',createdAt:11},
+      {id:'author',groupId:'art',content:'Olhe o céu',userId:'two',userName:'Trília Lopes',createdAt:12},
+      {id:'other',groupId:'books',content:'Outra trilha',userId:'three',createdAt:13},
+      {id:'seen',groupId:'art',content:'Uma trilha antiga',userId:'three',createdAt:10}
+    ];
+    render=()=>{};
+  `,context);
+  const search=value=>handlers.input({target:{id:'group-news-search',value,matches:()=>false}});
+  const render=()=>vm.runInContext('renderGroupNews()',context);
+  search('TRILHA  A noite');
+  assert.match(render(),/data-id="text"/);
+  assert.doesNotMatch(render(),/data-id="(?:other|seen|author)"/);
+  search('trilia lopes');
+  assert.match(render(),/data-id="author"/);
+  search('fotografia analogica');
+  assert.match(render(),/data-id="text"/);
+  assert.doesNotMatch(render(),/data-id="other"/);
+  vm.runInContext("state.groupNewsGroup='favorites/all';state.groupNewsUnseenOnly=true",context);
+  search('trilha');
+  assert.match(render(),/data-id="text"/);
+  assert.doesNotMatch(render(),/data-id="(?:other|seen)"|data-action="mark-group-news-list"/);
+  assert.match(render(),/Limpe a busca/);
+  assert.match(vm.runInContext('renderGroupNews(true)',context),/data-id="other"/);
+  search('sem resultados');
+  assert.match(render(),/Nenhuma publicação corresponde à busca/);
+  search('');
+  assert.match(render(),/data-action="mark-group-news-list"/);
+});
+
 test('marking the news list captures only the current scope and preserves newer posts', async () => {
   const context=appContext();
   vm.runInContext(`
