@@ -1140,10 +1140,11 @@ function comparePinnedGroups(first,second){
 function groupUnreadNews(){
  const unread=new Map();
  if(!state.groupNewsReadsLoaded)return unread;
- const uid=me(),blocked=new Set(state.blockedIds);
+ const uid=me(),blocked=new Set(state.blockedIds),currentTime=now();
  for(const post of state.posts){
    if(!post.groupId||post.userId===uid||blocked.has(post.userId)
-      ||!Number.isFinite(post.createdAt)||post.createdAt<=(state.groupNewsReads.get(post.groupId)||0))continue;
+      ||!Number.isFinite(post.createdAt)||post.createdAt>currentTime
+      ||post.createdAt<=(state.groupNewsReads.get(post.groupId)||0))continue;
    const entry=unread.get(post.groupId)||{count:0,latest:0};
    entry.count++;
    entry.latest=Math.max(entry.latest,post.createdAt);
