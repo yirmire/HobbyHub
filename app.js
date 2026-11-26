@@ -1158,19 +1158,29 @@ function groupHighlights(groups, now=new Date()) {
  }
  return activity;
 }
+const favoriteGroupNews='favorites/all';
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
+ const favoritesOnly=!compact&&state.groupNewsGroup===favoriteGroupNews;
  const selected=!compact&&groups.has(state.groupNewsGroup)?state.groupNewsGroup:'';
  const blocked=new Set(state.blockedIds);
- const posts=state.posts.filter(post=>groups.has(post.groupId)&&(!selected||post.groupId===selected)&&!blocked.has(post.userId))
+ const posts=state.posts.filter(post=>groups.has(post.groupId)&&(!selected||post.groupId===selected)
+   &&(!favoritesOnly||state.pinnedGroupIds.has(post.groupId))&&!blocked.has(post.userId))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
+ let emptyMessage=selected?'Ainda não há publicações para mostrar neste grupo.':'As publicações das comunidades de que você participa vão aparecer aqui.';
+ if(favoritesOnly&&!posts.length){
+   const hasFavorites=[...groups.keys()].some(id=>state.pinnedGroupIds.has(id));
+   if(!state.pinnedGroupsLoaded)emptyMessage='Carregando seus grupos favoritos…';
+   else if(hasFavorites)emptyMessage='Ainda não há publicações nos seus grupos favoritos.';
+   else emptyMessage='Para ver novidades aqui, fixe um grupo em Minhas comunidades.';
+ }
  return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Novidades dos meus grupos">
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
  ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
- ${!compact&&groups.size?`<label class="field" for="group-news-group">Por grupo<select class="select" id="group-news-group">
- <option value="">Todos os meus grupos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected,comparePinnedGroups)}</select></label>`:''}
+ ${!compact&&(groups.size||favoritesOnly)?`<label class="field" for="group-news-group">Por grupo<select class="select" id="group-news-group">
+ <option value="">Todos os meus grupos</option><option value="${favoriteGroupNews}" ${favoritesOnly?'selected':''}>Só favoritos</option>${searchOptions(new Map([...groups].map(([id,group])=>[id,group.name])),selected,comparePinnedGroups)}</select></label>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -1180,7 +1190,7 @@ function renderGroupNews(compact=false){
      <p class="post-copy">${esc(short(summary,140))}</p>
      <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa de ${esc(author)} em ${esc(group.name)}">Abrir conversa</button>
    </article>`;
- }).join(''):`<p class="tip" role="status">${selected?'Ainda não há publicações para mostrar neste grupo.':'As publicações das comunidades de que você participa vão aparecer aqui.'}</p>`}
+ }).join(''):`<p class="tip" role="status">${emptyMessage}</p>`}
  ${!compact&&posts.length>limit?'<button type="button" class="btn btn-outline btn-small" data-action="more-group-news">Ver mais publicações</button>':''}
  </section>`;
 }
