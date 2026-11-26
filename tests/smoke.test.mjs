@@ -1986,6 +1986,44 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('unseen group news combines with favorites and individual groups using the read marker', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.groupNewsReadsLoaded=true;state.pinnedGroupsLoaded=true;
+    state.groupNewsReads.set('art',15);
+    state.pinnedGroupIds.add('art');
+    state.groups=[{id:'art',name:'Arte',members:['reader']},{id:'books',name:'Livros',members:['reader']}];
+    state.posts=[
+      {id:'seen',content:'Vista',groupId:'art',createdAt:15,userId:'author'},
+      {id:'new-art',content:'Arte nova',groupId:'art',createdAt:21,userId:'author'},
+      {id:'new-books',content:'Livro novo',groupId:'books',createdAt:22,userId:'author'},
+      {id:'mine',content:'Minha',groupId:'art',createdAt:23,userId:'reader'}
+    ];
+    state.groupNewsLimit=40;
+    render=()=>{};
+  `,context);
+  const action=name=>vm.runInContext(`onAction({dataset:{action:'${name}'}})`,context);
+  const list=()=>vm.runInContext('renderGroupNews()',context);
+  await action('toggle-group-news-unseen');
+  assert.equal(vm.runInContext('state.groupNewsLimit',context),20);
+  assert.match(list(),/data-action="toggle-group-news-unseen" aria-pressed="true"/);
+  assert.match(list(),/data-id="new-books"[\s\S]*data-id="new-art"/);
+  assert.doesNotMatch(list(),/data-id="(?:seen|mine)"/);
+  handlers.change({target:{id:'group-news-group',value:'favorites/all'}});
+  assert.match(list(),/data-id="new-art"/);
+  assert.doesNotMatch(list(),/data-id="new-books"/);
+  handlers.change({target:{id:'group-news-group',value:'books'}});
+  assert.match(list(),/data-id="new-books"/);
+  assert.doesNotMatch(list(),/data-id="new-art"/);
+  vm.runInContext("state.groupNewsReads.set('books',22)",context);
+  assert.match(list(),/Nenhuma publicação não vista neste grupo/);
+  assert.match(vm.runInContext('renderGroupNews(true)',context),/data-id="mine"/);
+  await action('open-group-news');
+  assert.match(list(),/data-action="toggle-group-news-unseen" aria-pressed="false"/);
+  assert.match(list(),/data-id="seen"/);
+});
+
 test('group news can show just favorites without filtering the home preview', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
