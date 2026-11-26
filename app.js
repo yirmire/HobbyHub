@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -477,7 +477,7 @@ async function init() {
       state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
-      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;state.groupHobby='';state.groupCity='';
+      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;state.groupNewsSearch='';state.groupHobby='';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventAgendaView='list';state.eventWeekOffset=0;
       state.eventReads.clear();state.eventReadsLoaded=false;
@@ -1227,10 +1227,12 @@ function renderGroupNews(compact=false){
  const filter=groupNewsFilter(groups,compact);
  const favoritesOnly=filter===favoriteGroupNews;
  const unseenOnly=!compact&&state.groupNewsUnseenOnly;
+ const query=compact?'':norm(state.groupNewsSearch);
  const selected=favoritesOnly?'':filter;
  const blocked=new Set(state.blockedIds),uid=me(),currentTime=now();
  const posts=state.posts.filter(post=>groups.has(post.groupId)&&groupNewsMatches(post.groupId,filter)&&!blocked.has(post.userId)
-   &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime)))
+   &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime))
+   &&(!query||[post.content,authorName(post),groups.get(post.groupId).name].some(value=>norm(value).includes(query))))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  if(compact&&!posts.length)return '';
  const limit=compact?3:state.groupNewsLimit;
@@ -1247,6 +1249,7 @@ function renderGroupNews(compact=false){
    if(!state.groupNewsReadsLoaded)emptyMessage='Carregando as novidades não vistas…';
    else if(!favoritesOnly)emptyMessage=selected?'Nenhuma publicação não vista neste grupo.':'Nenhuma publicação não vista nos seus grupos.';
  }
+ if(query&&!posts.length&&(!unseenOnly||state.groupNewsReadsLoaded))emptyMessage='Nenhuma publicação corresponde à busca e aos filtros atuais.';
  return `<section class="card form-stack" style="padding:16px;margin-bottom:16px" aria-label="Novidades dos meus grupos">
  <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:16px;margin:0">Novidades dos meus grupos</h2>
  ${compact?'<button type="button" class="text-action" data-action="open-group-news">Ver todas</button>':''}</div>
@@ -1256,7 +1259,9 @@ function renderGroupNews(compact=false){
    return [id,count?`${group.name} (${count} ${count===1?'nova':'novas'})`:group.name];
  })),selected,comparePinnedGroups)}</select></label>`:''}
  ${!compact&&groups.size?`<div><button type="button" class="filter ${unseenOnly?'active':''}" data-action="toggle-group-news-unseen" aria-pressed="${unseenOnly}">Só não vistas</button></div>`:''}
- ${unreadCount?`<div><button type="button" class="btn btn-outline btn-small" data-action="mark-group-news-list" aria-label="Marcar lista como vista, ${unreadCount} ${unreadCount===1?'publicação':'publicações'}" ${state.markingGroupNews?'disabled':''}>Marcar lista como vista (${unreadCount})</button></div>`:''}
+ ${!compact&&groups.size?`<label class="field" for="group-news-search">Buscar nas novidades<input id="group-news-search" class="input" type="search" maxlength="200" placeholder="Texto, autor ou grupo" value="${esc(state.groupNewsSearch)}"></label>`:''}
+ ${unreadCount&&query?'<p class="mini muted">Limpe a busca para marcar a lista como vista.</p>':''}
+ ${unreadCount&&!query?`<div><button type="button" class="btn btn-outline btn-small" data-action="mark-group-news-list" aria-label="Marcar lista como vista, ${unreadCount} ${unreadCount===1?'publicação':'publicações'}" ${state.markingGroupNews?'disabled':''}>Marcar lista como vista (${unreadCount})</button></div>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
@@ -4291,7 +4296,7 @@ async function onAction(btn) {
   case 'topic':state.topic=btn.dataset.topic;render();return;
   case 'group-view':state.groupView=['discover','news'].includes(btn.dataset.value)?btn.dataset.value:'mine';state.groupNewsLimit=20;render();return;
   case 'open-group-news':
-  case 'open-unseen-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=action==='open-unseen-group-news';setTab('groups');return;
+  case 'open-unseen-group-news':state.groupView='news';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsSearch='';state.groupNewsUnseenOnly=action==='open-unseen-group-news';setTab('groups');return;
   case 'toggle-group-news-unseen':state.groupNewsUnseenOnly=!state.groupNewsUnseenOnly;state.groupNewsLimit=20;render();return;
   case 'mark-group-news':await attempt(async()=>{
     const uid=me();
@@ -4303,7 +4308,7 @@ async function onAction(btn) {
   },'markingGroupNews');return;
   case 'mark-group-news-list':await attempt(async()=>{
     const uid=me();
-    if(!uid||state.tab!=='groups'||state.groupView!=='news')return;
+    if(!uid||state.tab!=='groups'||state.groupView!=='news'||norm(state.groupNewsSearch))return;
     const groups=new Map(state.groups.filter(group=>group.members?.includes(uid)).map(group=>[group.id,group]));
     const entries=groupNewsListReads(groups,groupNewsFilter(groups,false),groupUnreadNews());
     if(!entries.length)return;
@@ -5474,6 +5479,7 @@ document.addEventListener('input',(event)=>{
  if(event.target.form?.id==='post-form')savePostDraft(event.target.form);
  if(event.target.id==='event-search'){state.eventSearch=event.target.value;render();return;}
  if(event.target.id==='saved-search'){state.savedSearch=event.target.value;render();return;}
+ if(event.target.id==='group-news-search'){state.groupNewsSearch=event.target.value;state.groupNewsLimit=20;render();return;}
  if(event.target.matches('[data-live-search="true"]')){state.search=event.target.value;state.postSearchLimit=20;render();}
 });
 document.addEventListener('submit',async(event)=>{
