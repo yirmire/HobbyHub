@@ -416,6 +416,15 @@ await request(sender, 'POST', `${groups}?documentId=welcome-group`, 200, {
   members: { arrayValue: { values: [str(sender.localId)] } }
 });
 await request(recipient, 'GET', group, 200);
+const pinnedGroup=`public/data/members/${sender.localId}/pinnedGroups/welcome-group`;
+await request(recipient,'PATCH',`public/data/members/${recipient.localId}/pinnedGroups/welcome-group`,403,{});
+await request(sender,'PATCH',pinnedGroup,403,{unexpected:str('campo extra')});
+await request(sender,'PATCH',pinnedGroup,200,{});
+await request(sender,'PATCH',pinnedGroup,200,{});
+await request(sender,'GET',pinnedGroup,200);
+await request(recipient,'GET',pinnedGroup,403);
+await request(recipient,'DELETE',pinnedGroup,403);
+await request(sender,'DELETE',pinnedGroup,200);
 const welcome = {
   userId: str(sender.localId), userName: str('Pessoa de teste'), content: str('Boas-vindas!'),
   hobby: str('Fotografia'), location: str('Brasil'), likes: { arrayValue: { values: [] } },
