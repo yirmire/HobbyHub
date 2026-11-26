@@ -1986,6 +1986,34 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('group navigation badge counts unread posts from joined groups and opens the unseen list', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.groupNewsReadsLoaded=true;
+    state.groups=[{id:'one',members:['reader']},{id:'two',members:['reader']},{id:'left',members:[]}];
+    state.groupNewsReads.set('one',10);
+    state.posts=[
+      {groupId:'one',createdAt:15,userId:'author'},{groupId:'two',createdAt:16,userId:'author'},
+      {groupId:'left',createdAt:17,userId:'author'},{groupId:'one',createdAt:10,userId:'author'},
+      {groupId:'one',createdAt:18,userId:'reader'}
+    ];
+    state.groupNewsGroup='favorites/all';
+    render=()=>{};
+  `,context);
+  assert.equal(vm.runInContext('groupNewsNavCount()',context),2);
+  for(const render of ['renderSidebar','renderBottomNav']){
+    const html=vm.runInContext(`${render}(groupNewsNavCount())`,context);
+    assert.match(html,/data-action="tab" data-tab="groups"/);
+    assert.match(html,/data-action="open-unseen-group-news" aria-label="Abrir 2 publicações não vistas dos meus grupos">2/);
+    assert.doesNotMatch(vm.runInContext(`${render}(0)`,context),/open-unseen-group-news/);
+  }
+  assert.match(vm.runInContext('renderBottomNav(120)',context),/>99\+<\/button>/);
+  await vm.runInContext("onAction({dataset:{action:'open-unseen-group-news'}})",context);
+  assert.equal(vm.runInContext("state.tab+' '+state.groupView",context),'groups news');
+  assert.equal(vm.runInContext('state.groupNewsUnseenOnly',context),true);
+  assert.equal(vm.runInContext('state.groupNewsGroup',context),'');
+});
+
 test('unseen group news combines with favorites and individual groups using the read marker', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
