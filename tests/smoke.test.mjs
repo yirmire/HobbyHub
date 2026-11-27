@@ -2153,6 +2153,52 @@ test('community chat menus copy from the active channel and only offer reports f
   assert.deepEqual(copied,['Mensagem global','Mensagem local']);
 });
 
+test('community chat resumes at new messages and remembers reading separately by account and city', async () => {
+  const context=appContext(),positions=new Map();
+  context.localStorage={getItem:key=>positions.get(key)||null,setItem:(key,value)=>positions.set(key,value)};
+  context.document.visibilityState='visible';
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='global';
+    state.profile={location:'São Paulo'};
+    state.messages=[
+      {id:'a',scope:'global',senderId:'peer',createdAt:10,text:'Já lida'},
+      {id:'b',scope:'global',senderId:'reader',createdAt:10,text:'Minha própria mensagem'},
+      {id:'c',scope:'global',senderId:'peer',createdAt:10,text:'Mensagem nova'},
+      {id:'local',senderId:'peer',createdAt:12,text:'Mensagem local',location:'São Paulo'}
+    ];
+  `,context);
+  const run=code=>vm.runInContext(code,context);
+  const globalKey=run('communityReadingKey()');
+  const marker={getBoundingClientRect:()=>({top:130})};
+  const row={dataset:{communityMessage:'a',communityTime:'10'},getBoundingClientRect:()=>({bottom:45})};
+  const later={dataset:{communityMessage:'c',communityTime:'10'},getBoundingClientRect:()=>({bottom:180})};
+  const log={dataset:{communityReading:globalKey},clientHeight:100,scrollHeight:200,scrollTop:0,
+    getBoundingClientRect:()=>({top:10,bottom:110}),querySelector:()=>marker,
+    querySelectorAll:()=>[row,later],addEventListener:()=>{}};
+  context.log=log;
+  run('rememberCommunityReading(log)');
+  assert.deepEqual(JSON.parse(positions.get(globalKey)),{id:'a',time:10});
+  assert.match(run('renderMessages()'),/Novas mensagens<\/div><div data-community-message="c"/);
+  run('restoreChatScroll(null,log,0,false)');
+  assert.equal(log.scrollTop,120);
+  context.document.getElementById=id=>id==='chat-log'?log:null;
+  later.getBoundingClientRect=()=>({bottom:100});
+  await run("onAction({dataset:{action:'latest-community-messages'}})");
+  assert.equal(log.scrollTop,200);
+  assert.deepEqual(JSON.parse(positions.get(globalKey)),{id:'c',time:10});
+  context.document.getElementById=()=>null;
+  assert.doesNotMatch(run('renderMessages()'),/Novas mensagens/);
+  run("state.chatMode='community'");
+  const localKey=run('communityReadingKey()');
+  assert.notEqual(localKey,globalKey);
+  assert.match(run('renderMessages()'),/Mensagem local/);
+  assert.doesNotMatch(run('renderMessages()'),/Novas mensagens/);
+  run("state.profile.location='Recife'");
+  assert.notEqual(run('communityReadingKey()'),localKey);
+  run("state.chatMode='global';state.user={uid:'other'}");
+  assert.notEqual(run('communityReadingKey()'),globalKey);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;

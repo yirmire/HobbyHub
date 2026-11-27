@@ -347,7 +347,7 @@ function startSession() {
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
     state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();void loadEventRoom();loadHomeEventRooms();queueMicrotask(openLinkedContent);
   },'eventos');
-  subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));},'chat da comunidade');
+  subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>compareCommunityPositions(communityMessagePosition(a),communityMessagePosition(b)));},'chat da comunidade');
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
     (s)=>{
       const previous=state.threads.map(thread=>thread.id).sort().join(',');
@@ -2668,6 +2668,59 @@ const directReactionOptions=new Map([['👍','Gostei'],['❤️','Amei'],['😂'
 function chatMessageMenuScope(){
  return state.chatMode==='direct'?state.chatTarget?.uid&&'direct:'+state.chatTarget.uid:state.chatMode;
 }
+function communityReadingKey(){
+ const channel=state.chatMode==='global'?'global':['local',cityKey(myLocation())];
+ return 'hobbyhub-community-read:'+JSON.stringify([me(),channel]);
+}
+function readCommunityPosition(key){
+ try{
+   const position=JSON.parse(localStorage.getItem(key));
+   if(Number.isFinite(position?.time)&&typeof position.id==='string')return position;
+ }catch{}
+ return null;
+}
+function compareCommunityPositions(a,b){
+ return a.time-b.time||(a.id===b.id?0:a.id>b.id?1:-1);
+}
+function communityMessagePosition(message){
+ return {id:message.id,time:Number(message.createdAt)||0};
+}
+function firstUnreadCommunityMessage(messages,key){
+ const position=readCommunityPosition(key);
+ return position&&messages.find(message=>message.id&&message.senderId!==me()&&
+   compareCommunityPositions(communityMessagePosition(message),position)>0);
+}
+function rememberCommunityReading(log){
+ const key=log.dataset.communityReading;
+ if(!key||!log.clientHeight||state.modal||document.visibilityState!=='visible')return;
+ const bounds=log.getBoundingClientRect();
+ const visible=[...log.querySelectorAll('[data-community-message]')].findLast(row=>{
+   const bottom=row.getBoundingClientRect().bottom;
+   return bottom>bounds.top&&bottom<=bounds.bottom+1;
+ });
+ if(!visible)return;
+ const position={id:visible.dataset.communityMessage,time:Number(visible.dataset.communityTime)};
+ const previous=readCommunityPosition(key);
+ if(previous&&compareCommunityPositions(position,previous)<=0)return;
+ try{localStorage.setItem(key,JSON.stringify(position));}catch{}
+}
+function restoreChatScroll(previous,next,scroll,nearBottom){
+ const key=next.dataset.communityReading;
+ if(!key){
+   next.scrollTop=nearBottom?next.scrollHeight:scroll;
+   return;
+ }
+ if(!next.clientHeight)return;
+ const sameChat=previous?.dataset.communityReading===key&&
+   previous.querySelector('[data-community-message]');
+ if(sameChat)next.scrollTop=nearBottom?next.scrollHeight:scroll;
+ else{
+   const marker=next.querySelector('#community-new-messages');
+   next.scrollTop=marker?marker.getBoundingClientRect().top-next.getBoundingClientRect().top+next.scrollTop:next.scrollHeight;
+ }
+ next.addEventListener('scroll',()=>rememberCommunityReading(next),{passive:true});
+ rememberCommunityReading(next);
+}
 function chatMessages(){
  if(state.chatMode==='direct')return state.directMessages;
  return state.messages.filter(m=>state.chatMode==='global'?m.scope==='global':m.scope!=='global'&&locate(m.location));
@@ -3033,9 +3086,16 @@ function renderMessages() {
  const community=state.chatMode!=='direct';
  const global=state.chatMode==='global';
  const messages=chatMessages();
+ const readingKey=community?communityReadingKey():'';
  const anchor=community?-1:messages.findIndex(message=>message.id===state.directHistoryAnchor);
  const end=anchor<0?messages.length:Math.min(messages.length,Math.max(150,anchor+75));
  const start=Math.max(0,end-150);
+ const visibleMessages=messages.slice(start,end);
+ const previousLog=community?document.getElementById('chat-log'):null;
+ const previousMarker=previousLog?.clientHeight&&previousLog.dataset.communityReading===readingKey?
+   previousLog.querySelector('#community-new-messages')?.nextElementSibling?.dataset.communityMessage:null;
+ const unread=community?(visibleMessages.find(message=>previousMarker&&message.id===previousMarker)||
+   firstUnreadCommunityMessage(visibleMessages,readingKey)):null;
  const searching=!community&&state.chatTarget&&state.directSearch;
  const showingSaved=!community&&state.chatTarget&&state.directSavedLimit>0;
  const showingEvents=!community&&state.chatTarget&&state.directEventLimit>0;
@@ -3103,10 +3163,11 @@ function renderMessages() {
  </div>`:''}
  </div>`:''}
  ${searching?renderDirectSearch(searching.query,matches.length):''}
- <div id="chat-log" class="chat-log">${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
+ <div id="chat-log" class="chat-log" ${community?`data-community-reading="${esc(readingKey)}"`:''}>${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,m.senderId!==me()&&m.id?reportButton('communityMessage',m.id,'mensagem'):''):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?visibleMessages.map(m=>`${unread===m?'<div id="community-new-messages" class="community-new-messages">Novas mensagens</div>':''}<div ${community?`data-community-message="${esc(m.id)}" data-community-time="${communityMessagePosition(m).time}"`:`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,m.senderId!==me()&&m.id?reportButton('communityMessage',m.id,'mensagem'):''):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
+ ${community&&messages.length?`<div class="community-chat-navigation"><button type="button" class="btn btn-soft btn-small" data-action="latest-community-messages" aria-controls="chat-log">Ir para o fim ↓</button></div>`:''}
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
@@ -4199,7 +4260,9 @@ function render() {
  const modalView=previousModal?.dataset.view,modalScroll=previousModal?.scrollTop;
  const cursor=active&&typeof active.selectionStart==='number'?{start:active.selectionStart,end:active.selectionEnd}:null;
  const eventTabsScroll=document.getElementById('event-agenda-tabs')?.scrollLeft||0;
- const chatLog=document.getElementById('chat-log');const wasNearBottom=chatLog?chatLog.scrollHeight-chatLog.scrollTop-chatLog.clientHeight<75:false;
+ const chatLog=document.getElementById('chat-log');
+ const wasNearBottom=chatLog?chatLog.scrollHeight-chatLog.scrollTop-chatLog.clientHeight<(chatLog.dataset.communityReading?4:75):false;
+ const wasVisible=Boolean(chatLog?.clientHeight);
  const chatScroll=chatLog?.scrollTop||0;const pageScroll=window.scrollY;
  captureDrafts();document.body.classList.toggle('dark',state.dark);
  container.innerHTML=state.boot?`<div class="splash"><span class="splash-mark">✳</span><h1>HobbyHub</h1><p>Conectando suas paixões...</p></div>`:
@@ -4231,7 +4294,7 @@ function render() {
  }
  if(sameDialog)nextModal.scrollTop=modalScroll;
  const eventTabs=document.getElementById('event-agenda-tabs');if(eventTabs)eventTabs.scrollLeft=eventTabsScroll;
- const nextChat=document.getElementById('chat-log');if(nextChat)nextChat.scrollTop=wasNearBottom?nextChat.scrollHeight:chatScroll;
+ const nextChat=document.getElementById('chat-log');if(nextChat)restoreChatScroll(wasVisible?chatLog:null,nextChat,chatScroll,wasNearBottom);
  window.scrollTo({top:pageScroll,behavior:'instant'});
 }
 function updateMobileViewport(){
@@ -5524,6 +5587,11 @@ async function onAction(btn) {
     if(!chatMessageMenuScope())return;
     const message=chatMessages().find(item=>item.id===id&&!item.deletedAt);
     if(message&&typeof message.text==='string')await copyContentLink(message.text,'Mensagem copiada.','Copie a mensagem:');
+    return;
+  }
+  case 'latest-community-messages':{
+    const log=document.getElementById('chat-log');
+    if(log?.dataset.communityReading){log.scrollTop=log.scrollHeight;rememberCommunityReading(log);}
     return;
   }
   case 'chat-community':showCommunityChat(btn.dataset.value==='global'?'global':'community',true);return;

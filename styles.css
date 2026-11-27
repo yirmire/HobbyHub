@@ -110,3 +110,7 @@
  .event-mobile-create,.event-mobile-filter-toggle{display:inline-flex;align-items:center;min-height:40px}
  .event-extra-filters:not(.is-open){display:none}
 }
+.community-new-messages{display:flex;align-items:center;gap:10px;flex:none;color:var(--purple);font-size:12px;font-weight:700}
+.community-new-messages::before,.community-new-messages::after{content:"";flex:1;border-top:1px solid var(--line)}
+.community-chat-navigation{display:flex;justify-content:flex-end;padding:4px 12px;background:var(--panel)}
+.community-chat-navigation button{min-height:36px}
