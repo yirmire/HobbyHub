@@ -59,7 +59,7 @@ const now = () => Date.now();
 const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
-  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupMyInterests:false, groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
+  tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupMyInterests:false, groupDiscoveryOrder:'default', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
   savedView:'saved', savedReadingOnly:false, readSavedPosts:new Set(), savedPostOrder:'recent', savedPostDates:new Map(), savedGroup:'', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
@@ -483,7 +483,7 @@ async function init() {
       state.eventFormat='';state.eventCityFilter='';state.eventFiltersOpen=false;state.savedEventSearches.clear();state.savedEventSearchesLoaded=false;state.eventRoom=null;
       state.homeEventRooms.clear();
       state.exploreView='people';state.postSearchHobby='';state.postSearchGroup='';state.postSearchLimit=20;
-      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;state.groupNewsSearch='';state.groupHobby='';state.groupMyInterests=false;state.groupCity='';
+      state.groupView='mine';state.groupNewsLimit=20;state.groupNewsGroup='';state.groupNewsUnseenOnly=false;state.groupNewsSearch='';state.groupHobby='';state.groupMyInterests=false;state.groupDiscoveryOrder='default';state.groupCity='';
       state.eventFilter='upcoming';state.eventSearch='';state.eventHobby='';state.eventCommunity='';
       state.eventAgendaView='list';state.eventWeekOffset=0;
       state.eventReads.clear();state.eventReadsLoaded=false;
@@ -1175,7 +1175,7 @@ function groupNewsReadControls(group,count){
  return `<div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${count} ${count===1?'nova publicação':'novas publicações'}</span>
  <button type="button" class="text-action" data-action="mark-group-news" data-id="${esc(group.id)}" aria-label="Marcar novidades de ${esc(group.name)} como vistas" ${state.markingGroupNews?'disabled':''}>Marcar como vistas</button></div>`;
 }
-function groupCard(g, activity,unreadCount=0) {
+function groupCard(g, activity,unreadCount=0,lastPublished){
  const joined=(g.members||[]).includes(me());
  const pinAction=state.pinnedGroupIds.has(g.id)?'Desafixar':'Fixar';
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
@@ -1183,6 +1183,7 @@ function groupCard(g, activity,unreadCount=0) {
  ${joined&&state.groupRoles.get(g.id)==='pending'?'<span class="pill">Convite para moderar</span>':''}
  ${joined&&state.pinnedGroupsLoaded?`<button type="button" class="text-action" data-action="toggle-pinned-group" data-id="${esc(g.id)}" aria-label="${pinAction} ${esc(g.name)}" ${state.changingPinnedGroup?'disabled':''}>${pinAction} grupo</button>`:''}
  ${joined?groupNewsReadControls(g,unreadCount):''}
+ ${lastPublished===undefined?'':`<p class="mini muted">${lastPublished?`Última publicação: <time datetime="${localDateKey(new Date(lastPublished))}">${new Date(lastPublished).toLocaleDateString('pt-BR')}</time>`:'Sem publicações disponíveis'}</p>`}
  ${activity?.post?`<div><small class="muted">Publicação mais recente</small><br><button class="text-action" data-action="comments" data-id="${esc(activity.post.id)}">${esc(short(activity.post.content,75))}</button></div>`:''}
  ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
@@ -1298,12 +1299,23 @@ function renderGroups(){
  const list=groups.filter(group=>(!query||norm([group.name,group.hobby,group.description,group.location].join(' ')).includes(query))
    && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city)&&(!myInterests||myHobbies.has(norm(group.hobby))))));
  if(!discovering)list.sort((a,b)=>comparePinnedGroups(a.id,b.id));
+ const latest=new Map();
+ if(discovering){
+   const groupIds=new Set(list.map(group=>group.id));
+   const blocked=new Set(state.blockedIds),current=now();
+   for(const post of state.posts){
+     const date=post.createdAt;
+     if(groupIds.has(post.groupId)&&!blocked.has(post.userId)&&Number.isFinite(date)&&date<=current&&date>(latest.get(post.groupId)||0))latest.set(post.groupId,date);
+   }
+   if(state.groupDiscoveryOrder==='active')list.sort((a,b)=>(latest.get(b.id)||0)-(latest.get(a.id)||0));
+ }
  const activity=discovering?null:groupHighlights(list);
  const unread=discovering?null:groupUnreadNews();
  return header+` ${discovering?`<div class="card field-grid" style="padding:16px;margin-bottom:16px"><label class="field">Hobby<select class="select" id="group-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.groupHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label><label class="field">Cidade<select class="select" id="group-city"><option value="">Todas as cidades</option>${[...cities].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR')).map(([key,label])=>`<option value="${esc(key)}" ${state.groupCity===key?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>`:''}
- ${discovering?`<div class="filters"><button type="button" class="filter ${myInterests?'active':''}" data-action="toggle-group-my-interests" aria-pressed="${myInterests}">Meus interesses</button></div>`:''}
+ ${discovering?`<div class="filters"><button type="button" class="filter ${myInterests?'active':''}" data-action="toggle-group-my-interests" aria-pressed="${myInterests}">Meus interesses</button>
+ <label class="field">Ordenar grupos<select class="select" id="group-discovery-order"><option value="default" ${state.groupDiscoveryOrder==='default'?'selected':''}>Ordem padrão</option><option value="active" ${state.groupDiscoveryOrder==='active'?'selected':''}>Mais ativos recentemente</option></select></label></div>`:''}
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
- ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id),unread?.get(group.id)?.count)).join('')}</div>`:discovering?myInterests&&!myHobbies.size?empty('🧩','Adicione seus interesses','Escolha seus hobbies no perfil para encontrar grupos relacionados.','Editar perfil','edit-profile'):empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
+ ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id),unread?.get(group.id)?.count,discovering?latest.get(group.id)||null:undefined)).join('')}</div>`:discovering?myInterests&&!myHobbies.size?empty('🧩','Adicione seus interesses','Escolha seus hobbies no perfil para encontrar grupos relacionados.','Editar perfil','edit-profile'):empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
 const EVENT_OFFER_MS=3600000;
 function eventSeatOffer(event,uid=me()){
@@ -5491,6 +5503,7 @@ document.addEventListener('change',(event)=>{
  }
  else if(event.target.id==='group-hobby')state.groupHobby=event.target.value;
  else if(event.target.id==='group-city')state.groupCity=event.target.value;
+ else if(event.target.id==='group-discovery-order')state.groupDiscoveryOrder=event.target.value==='active'?'active':'default';
  else if(event.target.id==='group-news-group'){state.groupNewsGroup=event.target.value;state.groupNewsLimit=20;}
  else return;
  render();
