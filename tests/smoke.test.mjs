@@ -1920,6 +1920,26 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('weekly question notices show only the current question for joined unmuted groups', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const group={id:'art',name:'Arte',members:['reader'],weeklyQuestionPostId:'old',weeklyQuestionChangedAt:{toMillis:()=>20}};
+    state.groups=[group,{id:'other',name:'Outro',members:[],weeklyQuestionPostId:'outside'}];
+    state.posts=[{id:'old',groupId:'art',createdAt:10},{id:'new',groupId:'art',createdAt:11},{id:'outside',groupId:'other',createdAt:12}];
+    openComments=id=>{state.selectedPost=id;};
+  `,context);
+  const notices=()=>vm.runInContext("notificationItems().filter(item=>item.type==='weekly-question')",context);
+  assert.equal(notices().length,1);
+  assert.match(vm.runInContext('renderNotifications()',context),/Nova pergunta da semana em Arte/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'weekly-question:art:old:20'}})",context);
+  assert.equal(vm.runInContext('state.selectedPost',context),'old');
+  vm.runInContext("group.weeklyQuestionPostId='new';group.weeklyQuestionChangedAt={toMillis:()=>30}",context);
+  assert.equal(notices()[0].readKey,'weekly-question:art:new:30');
+  vm.runInContext("state.mutedCommunityIds.add('art')",context);
+  assert.equal(notices().length,0);
+});
+
 test('a group can replace its weekly question without removing earlier conversations', async () => {
   const context=appContext();
   vm.runInContext(`
@@ -1929,7 +1949,7 @@ test('a group can replace its weekly question without removing earlier conversat
       {id:'new',groupId:'art',content:'Qual projeto você está fazendo?',likes:[]},
       {id:'earlier',groupId:'art',content:'Qual técnica você prefere?',likes:[]}
     ];
-    firebase={doc:(_db,...path)=>path.join('/'),updateDoc:async(_,change)=>Object.assign(group,change)};
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>null,updateDoc:async(_,change)=>Object.assign(group,change)};
     render=()=>{};showToast=()=>{};
   `,context);
   const render=()=>vm.runInContext('renderModal()',context);
