@@ -1931,16 +1931,22 @@ test('weekly unanswered filter updates after the member replies and reopens the 
       getDocsFromServer:async id=>({empty:!answered.has(id)})};
     render=()=>{};
   `,context);
-  const action=name=>vm.runInContext(`onAction({dataset:{action:'${name}'}})`,context);
+  const action=(name,value)=>vm.runInContext(`onAction({dataset:${JSON.stringify({action:name,value})}})`,context);
   const list=()=>vm.runInContext('renderModal()',context);
   await action('open-all-weekly-questions');
-  await action('toggle-weekly-unanswered');
+  await action('set-weekly-answer-filter','answered');
+  assert.match(list(),/data-id="books-post"/);
+  assert.doesNotMatch(list(),/data-id="art-post"/);
+  await action('set-weekly-answer-filter','unanswered');
   assert.match(list(),/data-id="art-post"/);
   assert.doesNotMatch(list(),/data-id="books-post"/);
   vm.runInContext("answered.add('art-post');state.modal='comments'",context);
   await action('open-all-weekly-questions');
   assert.match(list(),/Nenhuma pergunta por responder/);
-  await action('toggle-weekly-unanswered');
+  await action('set-weekly-answer-filter','answered');
+  assert.match(list(),/data-id="art-post"/);
+  assert.match(list(),/data-id="books-post"/);
+  await action('set-weekly-answer-filter','all');
   assert.match(list(),/data-id="art-post"/);
 });
 
