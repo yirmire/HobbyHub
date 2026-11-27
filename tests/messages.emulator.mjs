@@ -306,6 +306,20 @@ await request(sender, 'PATCH', communitySaved, 403, { saved: { booleanValue: tru
 await request(sender, 'PATCH', communitySaved, 200, { saved: { booleanValue: false } });
 await request(sender, 'DELETE', communitySaved, 403);
 
+const communityReading = `public/data/members/${sender.localId}/communityReading/global`;
+const position = time => ({ time: { integerValue: String(time) }, id: { stringValue: 'hello' } });
+await request(sender, 'PATCH', communityReading, 200, position(20));
+await request(sender, 'GET', communityReading, 200);
+await request(sender, 'GET', `public/data/members/${sender.localId}/communityReading`, 200);
+await request(recipient, 'GET', communityReading, 403);
+await request(null, 'GET', communityReading, 403);
+await request(recipient, 'PATCH', communityReading, 403, position(30));
+await request(sender, 'PATCH', communityReading, 403, position(10));
+await request(sender, 'PATCH', communityReading, 403, { ...position(50), unexpected: { booleanValue: true } });
+await request(sender, 'PATCH', communityReading, 200, position(30));
+await request(sender, 'DELETE', communityReading, 403);
+
+
 
 const following = `public/data/members/${sender.localId}/following`;
 await request(sender, 'POST', `${following}?documentId=${recipient.localId}`, 200, {
