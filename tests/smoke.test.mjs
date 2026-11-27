@@ -2483,6 +2483,45 @@ test('community attention lists replies and exact mentions and opens the right c
   assert.doesNotMatch(run('renderCommunityAttention()'),/data-id="mention"/);
 });
 
+test('the community attention shortcut counts each unread message once and keeps the history after reading', () => {
+  const context=appContext(),storage=new Map();
+  const badge={dataset:{count:'2'},innerHTML:''};
+  context.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
+  context.document.visibilityState='visible';
+  context.document.getElementById=id=>id==='community-attention-count'?badge:null;
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='global';state.profile={name:'José Silva',location:'Recife'};
+    state.messages=[
+      {id:'my-message',senderId:'reader',scope:'global',text:'Olá',createdAt:1},
+      {id:'both',senderId:'peer',scope:'global',text:'Oi @jose-silva',replyTo:'my-message',createdAt:2},
+      {id:'regular',senderId:'peer',scope:'global',text:'Boa tarde',createdAt:3},
+      {id:'local',senderId:'peer',location:'Recife',text:'Oi @jose',createdAt:4},
+      {id:'remote',senderId:'peer',location:'Olinda',text:'Oi @jose',createdAt:5}
+    ];
+  `);
+  const panel=()=>run('renderMessages()');
+  const mark=(id,time)=>{
+    const key=run('communityReadingKey()');
+    const row={dataset:{communityMessage:id,communityTime:String(time)},getBoundingClientRect:()=>({bottom:40})};
+    context.log={dataset:{communityReading:key},clientHeight:80,querySelectorAll:()=>[row],getBoundingClientRect:()=>({top:0,bottom:80})};
+    run('rememberCommunityReading(log)');
+  };
+  assert.match(panel(),/id="community-attention-count"[^>]*data-count="2"/);
+  mark('both',2);
+  assert.equal(badge.dataset.count,'1');
+  assert.match(badge.innerHTML,/1 menção ou resposta nova/);
+  run("state.chatMode='community'");
+  mark('local',4);
+  assert.equal(badge.dataset.count,'0');
+  assert.equal(badge.innerHTML,'');
+  assert.match(panel(),/id="community-attention-count"[^>]*data-count="0"/);
+  const history=run('renderCommunityAttention()');
+  assert.match(history,/data-id="both"/);
+  assert.match(history,/data-id="local"/);
+  assert.doesNotMatch(history,/ · Nova/);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
