@@ -1920,6 +1920,28 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('group welcome notices combine reactions and link to the original presentation', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.blockedIds=['hidden'];
+    const post={id:'intro',groupId:'art',groupIntroduction:true,userId:'reader',createdAt:10,welcomesChangedAt:{toMillis:()=>20},
+      welcomedBy:['first','second','hidden']};
+    state.posts=[post,{...post,id:'other',userId:'other'}];
+    openComments=id=>{state.selectedPost=id;};
+  `,context);
+  const summary=()=>vm.runInContext("notificationItems().filter(item=>item.type==='group-welcome')",context);
+  assert.equal(summary().length,1);
+  assert.equal(summary()[0].count,2);
+  assert.match(vm.runInContext('renderNotifications()',context),/2 pessoas deram boas-vindas à sua apresentação/);
+  await vm.runInContext("onAction({dataset:{action:'open-notification',id:'group-welcome:intro:20'}})",context);
+  assert.equal(vm.runInContext('state.selectedPost',context),'intro');
+  assert.equal(vm.runInContext("state.notificationReads.has('group-welcome:intro:20')",context),true);
+  vm.runInContext("post.welcomesChangedAt={toMillis:()=>30};post.welcomedBy.push('third')",context);
+  assert.equal(summary()[0].readKey,'group-welcome:intro:30');
+  vm.runInContext("state.notificationSettings.interactions=false",context);
+  assert.equal(summary().length,0);
+});
+
 test('group welcome toggles only for another member’s introduction', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
@@ -1927,7 +1949,7 @@ test('group welcome toggles only for another member’s introduction', async () 
     const post={id:'intro',groupId:'art',groupIntroduction:true,userId:'author'};
     state.posts=[post];const group={id:'art',members:['reader','author']};state.groups=[group];
     const writes=[];
-    firebase={doc:(_db,...path)=>path.join('/'),arrayUnion:id=>['add',id],arrayRemove:id=>['remove',id],
+    firebase={doc:(_db,...path)=>path.join('/'),arrayUnion:id=>['add',id],arrayRemove:id=>['remove',id],serverTimestamp:()=>null,
       updateDoc:async(path,change)=>writes.push([path,change.welcomedBy])};
     render=()=>{};
   `,context);
