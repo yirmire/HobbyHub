@@ -89,7 +89,7 @@ const state = {
   groupNewsReads:new Map(), groupNewsReadsLoaded:false, markingGroupNews:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
-  invitedGroupId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, groupFirstStepsId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
   pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Map(), directMuteMenu:null, directMuteTimer:null, archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -505,7 +505,7 @@ async function init() {
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
-      state.invitedGroupId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
+      state.invitedGroupId=null;state.groupFirstStepsId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -3676,7 +3676,8 @@ function renderModal() {
  return modalWrap(title,`<form id="post-form" data-draft="true" ${key?`data-draft-key="${esc(key)}"`:''} class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
  ${state.composingGroup?`<span class="pill">${icon('users')} ${esc(state.groups.find(g=>g.id===state.composingGroup)?.name||'Comunidade')}</span>`:''}
  ${recap?'<p class="tip">Conte como foi o encontro, compartilhe dicas ou sugira uma próxima edição.</p>':''}
- <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" maxlength="2000" placeholder="${state.composingIntroduction?'Conte o que você gosta de fazer e o que gostaria de aprender com o grupo.':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
+ ${state.composingIntroduction?'<ul class="mini muted" id="group-introduction-prompts"><li>O que você gosta de fazer?</li><li>O que gostaria de aprender com o grupo?</li></ul>':''}
+ <div class="field"><label for="post-content">${state.composingIntroduction?'Como você quer se apresentar?':'O que você gostaria de compartilhar?'}</label><textarea id="post-content" class="textarea" name="content" maxlength="2000" ${state.composingIntroduction?'aria-describedby="group-introduction-prompts"':''} placeholder="${state.composingIntroduction?'Escreva sua apresentação':'Conte sua experiência, uma conquista, uma dúvida ou algo que fez você feliz...'}">${recap?esc(recap.title)+'\n\n':''}</textarea></div>
  ${sharedMediaFields()}
  <p class="mini muted">Inclua texto, uma foto ou um vídeo. Use links diretos para os arquivos.</p>
  <div class="field-grid"><div class="field"><label>Seu interesse</label>${topicSelect(state.composingGroup?state.groups.find(g=>g.id===state.composingGroup)?.hobby:(state.topic==='Todos'?'Arte':state.topic))}</div><div class="field"><label>Formato</label><select class="select" name="format"><option value="text">Post simples</option><option value="highlight">Post em destaque</option></select></div></div>
@@ -3690,6 +3691,7 @@ function renderModal() {
  const joined=(group.members||[]).includes(me());
  if(state.modal==='group-preview'&&!joined)return renderGroupPreview(group);
  const welcoming=state.invitedGroupId===group.id;
+ const firstSteps=joined&&(welcoming||state.groupFirstStepsId===group.id);
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
@@ -3701,9 +3703,13 @@ function renderModal() {
  <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${postOptionsButton(post)}${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
- ${welcoming?`<section class="card" style="padding:16px;margin:14px 0"><h3>${joined?'Faça sua primeira contribuição':'Participe desta comunidade'}</h3>
- <p class="mini muted">${joined?pinned?'Responda à publicação fixada ou se apresente ao grupo.':'Conte ao grupo o que você gosta de fazer e o que quer aprender.':'Entre para publicar, conversar sobre o hobby e conhecer quem já participa.'}</p>
- <div class="toggle-row" style="flex-wrap:wrap">${joined?`${pinned?`<button class="btn btn-primary btn-small" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}<button class="btn ${pinned?'btn-outline':'btn-primary'} btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Se apresentar</button>`:`<button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button>`}</div></section>`:''}
+ ${firstSteps?`<section class="card" style="padding:16px;margin:14px 0"><h3>Primeiros passos no grupo</h3>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Apresentar-me</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="browse-group-conversations" data-id="${esc(group.id)}">Ver as conversas</button>
+ ${pinned&&welcoming?`<button type="button" class="text-action" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}</div></section>`:''}
+ ${welcoming&&!joined?`<section class="card" style="padding:16px;margin:14px 0"><h3>Participe desta comunidade</h3>
+ <p class="mini muted">Entre para publicar, conversar sobre o hobby e conhecer quem já participa.</p>
+ <button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button></section>`:''}
  <div class="toggle-row" style="margin:18px 0;flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>${joined||!welcoming?`<button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(group.id)}">${joined?'Sair do grupo':'+ Participar'}</button>`:''}<button class="btn btn-outline btn-small" data-action="copy-group-invite" data-id="${esc(group.id)}">Copiar convite</button>${joined?`<button class="btn btn-soft btn-small" data-action="group-post" data-id="${esc(group.id)}">${icon('plus')} Publicar</button>`:''}</div>
  ${joined&&state.savedDiscoveryGroupIds.has(group.id)?saveDiscoveryGroupButton(group):''}
  ${pinned?renderGroupPost(pinned,true):''}
@@ -3712,7 +3718,7 @@ function renderModal() {
  ${joined?`<div class="section-head"><h2>Enquetes</h2><button class="text-action" data-action="group-polls" data-id="${esc(group.id)}">Ver enquetes</button></div>`:''}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
  ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
- <div class="section-head"><h2>Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
+ <div class="section-head"><h2 id="group-conversations" tabindex="-1">Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
  }
@@ -4887,6 +4893,13 @@ async function onAction(btn) {
     if(!group||!(group.members||[]).includes(me()))return;
     state.composingGroup=group.id;state.composingIntroduction=action==='introduce-group';state.composingRecapId=null;openPostComposer();return;
   }
+  case 'browse-group-conversations':
+    if(state.selectedGroup!==id||!['group-detail','group-preview'].includes(state.modal))return;
+    if(state.groupFirstStepsId===id)state.groupFirstStepsId=null;
+    if(state.invitedGroupId===id)state.invitedGroupId=null;
+    render();
+    document.getElementById('group-conversations')?.focus();
+    return;
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
   case 'event-hobby-alerts':openModal('event-hobby-alerts');return;
@@ -5282,14 +5295,21 @@ async function onAction(btn) {
   });return;
   case 'join-group':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===id);if(!group)return;
-    const uid=me(),joined=group.members?.includes(uid),target=ref('groups',id);
+    const uid=me();if(!uid)return;
+    const joined=group.members?.includes(uid),target=ref('groups',id);
+    const origin={tab:state.tab,modal:state.modal,group:state.selectedGroup};
     if(joined){
       const batch=firebase.writeBatch(db);
       batch.update(target,{members:firebase.arrayRemove(uid)});
       batch.delete(ref('members',uid,'moderation',id));
       await batch.commit();
     }else await firebase.updateDoc(target,{members:firebase.arrayUnion(uid)});
-    if(me()===uid)watchPollNotices();
+    if(me()!==uid)return;
+    watchPollNotices();
+    if(joined&&state.groupFirstStepsId===id)state.groupFirstStepsId=null;
+    if(!joined&&state.tab===origin.tab&&state.modal===origin.modal&&state.selectedGroup===origin.group){
+      state.groupFirstStepsId=id;state.tab='groups';state.selectedGroup=id;openModal('group-detail');
+    }
     showToast(joined?'Você saiu da comunidade.':'Bem-vindo à comunidade!');
   },'updatingGroup');return;
   case 'release-event-seat':await attempt(async()=>{
@@ -5709,6 +5729,7 @@ document.addEventListener('submit',async(event)=>{
     if(key&&originalDraft?.content===data.content&&Object.keys(media).every(name=>originalDraft[name]===(data[name]||''))&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
     if(me()!==uid)return;
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
+    if(groupId===state.groupFirstStepsId&&state.composingIntroduction)state.groupFirstStepsId=null;
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
