@@ -384,6 +384,19 @@ service cloud.firestore {
         allow read, delete: if isMe(uid);
         allow create, update: if isMe(uid) && validDismissedInvite();
       }
+      // Per-account reading position, one document per community channel.
+      match /communityReading/{channelId} {
+        function validCommunityReading(data) {
+          return channelId.size() <= 1200
+            && data.keys().hasOnly(['time', 'id'])
+            && data.time is int && data.time >= 0
+            && validText(data.id, 1, 150);
+        }
+        allow read: if isMe(uid);
+        allow create: if isMe(uid) && validCommunityReading(request.resource.data);
+        allow update: if isMe(uid) && validCommunityReading(request.resource.data)
+          && request.resource.data.time >= resource.data.time;
+      }
       // Per-account community bookmarks. A false marker preserves removals during legacy import.
       match /communitySaved/{messageId} {
         function validCommunitySaved(data) {
