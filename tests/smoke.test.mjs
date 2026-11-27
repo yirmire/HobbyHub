@@ -1949,7 +1949,10 @@ test('a group can replace its weekly question without removing earlier conversat
       {id:'new',groupId:'art',content:'Qual projeto você está fazendo?',likes:[]},
       {id:'earlier',groupId:'art',content:'Qual técnica você prefere?',likes:[]}
     ];
-    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>null,updateDoc:async(_,change)=>Object.assign(group,change)};
+    const archived=[];
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>null,runTransaction:async (_db,work)=>work({
+      get:async()=>({data:()=>group}),set:(path,entry)=>archived.push([path,entry]),update:(_,change)=>Object.assign(group,change)
+    })};
     render=()=>{};showToast=()=>{};
   `,context);
   const render=()=>vm.runInContext('renderModal()',context);
@@ -1958,6 +1961,11 @@ test('a group can replace its weekly question without removing earlier conversat
   const html=render();
   assert.match(html,/aria-label="Pergunta da semana"[\s\S]*data-action="comments" data-id="new"/);
   assert.match(html,/Conversas do grupo[\s\S]*Qual técnica você prefere/);
+  assert.match(vm.runInContext('archived[0][0]',context),/weeklyQuestionHistory\/earlier$/);
+  vm.runInContext("state.weeklyQuestionHistory={groupId:'art',entries:[{postId:'earlier',highlightedAt:{toMillis:()=>1609502400000}},{postId:'new'}]}",context);
+  const history=vm.runInContext('renderWeeklyQuestionHistory()',context);
+  assert.match(history,/Qual técnica você prefere[\s\S]*Destacada em[\s\S]*data-id="earlier"/);
+  assert.doesNotMatch(history,/Qual projeto você está fazendo/);
   vm.runInContext("state.user={uid:'member'};group.members.push('member')",context);
   assert.doesNotMatch(render(),/set-weekly-question|clear-weekly-question/);
 });
