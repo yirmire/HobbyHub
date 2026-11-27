@@ -1920,6 +1920,24 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('group introduction posts appear in both presentations and the conversation list', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.selectedGroup='art';state.modal='group-detail';
+    state.groups=[{id:'art',name:'Arte',hobby:'Arte',members:['reader']}];
+    state.posts=[
+      {id:'intro',groupId:'art',content:'Gosto de aquarela',groupIntroduction:true,likes:[]},
+      {id:'normal',groupId:'art',content:'Próxima oficina',likes:[]},
+      {id:'outside',groupId:'other',content:'Apresentação externa',groupIntroduction:true,likes:[]}
+    ];
+  `,context);
+  const html=vm.runInContext('renderModal()',context);
+  const section=html.match(/<details[\s\S]*?<\/details>/)?.[0]||'';
+  assert.match(section,/Apresentações \(1\)[\s\S]*Gosto de aquarela[\s\S]*data-id="intro"/);
+  assert.doesNotMatch(section,/Próxima oficina|Apresentação externa/);
+  assert.match(html,/Conversas do grupo[\s\S]*Apresentação[\s\S]*Gosto de aquarela/);
+});
+
 test('new group members can choose the introduction or skip straight to conversations', async () => {
   const context=appContext();
   const focused=[];
