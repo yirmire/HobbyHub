@@ -643,6 +643,23 @@ service cloud.firestore {
           && request.resource.data.weeklyQuestionChangedAt == request.time);
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
 
+      match /weeklyQuestionHistory/{postId} {
+        function groupPath() {
+          return /databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId);
+        }
+        function retiringCurrentQuestion() {
+          let group = get(groupPath()).data;
+          return managesGroup(appId, groupId, group)
+            && group.get('weeklyQuestionPostId','') == postId
+            && getAfter(groupPath()).data.get('weeklyQuestionPostId','') != postId
+            && request.resource.data.keys().hasOnly(['highlightedAt'])
+            && request.resource.data.highlightedAt == group.get('weeklyQuestionChangedAt', null);
+        }
+        allow read: if loggedIn() && (request.auth.uid in get(groupPath()).data.members
+          || managesGroup(appId, groupId, get(groupPath()).data));
+        allow create, update: if loggedIn() && retiringCurrentQuestion();
+      }
+
       function canReviewModeration() {
         return managesGroup(appId, groupId,
           get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId)).data);
