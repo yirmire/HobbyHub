@@ -1920,6 +1920,20 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('home weekly questions prioritize pinned groups and link to the same conversations', () => {
+  const context=appContext();
+  const html=vm.runInContext(`
+    state.user={uid:'reader'};
+    state.groups=['normal','favorite','second','fourth','outside'].map(id=>({id,name:id,weeklyQuestionPostId:id+'-post',members:id==='outside'?[]:['reader']}));
+    state.posts=state.groups.map((group,i)=>({id:group.weeklyQuestionPostId,groupId:group.id,content:'Pergunta '+group.id,createdAt:i+1}));
+    state.pinnedGroupIds.add('favorite');
+    renderGroupNews(true);
+  `,context);
+  const questions=html.match(/aria-label="Perguntas da semana"[\s\S]*?<\/section>/)?.[0]||'';
+  assert.match(questions,/data-id="favorite-post"[\s\S]*data-id="fourth-post"[\s\S]*data-id="second-post"/);
+  assert.doesNotMatch(questions,/normal-post|outside-post/);
+});
+
 test('weekly question notices show only the current question for joined unmuted groups', async () => {
   const context=appContext();
   vm.runInContext(`
