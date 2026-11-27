@@ -3693,10 +3693,12 @@ function renderModal() {
  const welcoming=state.invitedGroupId===group.id;
  const firstSteps=joined&&(welcoming||state.groupFirstStepsId===group.id);
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
+ const introductions=joined?groupPosts.filter(post=>post.groupIntroduction===true&&!state.blockedIds.includes(post.userId)):[];
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
+ ${post.groupIntroduction===true?'<p class="eyebrow">Apresentação</p>':''}
  <strong class="mini">${esc(authorName(post))}</strong> ${editedPostLabel(post)}${post.content?`<p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>`:''}
  ${renderSharedMedia(post,'na publicação')}
  ${recapEventButton(post)}
@@ -3718,6 +3720,12 @@ function renderModal() {
  ${joined?`<div class="section-head"><h2>Enquetes</h2><button class="text-action" data-action="group-polls" data-id="${esc(group.id)}">Ver enquetes</button></div>`:''}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
  ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
+ ${joined?`<details class="card" style="padding:14px;margin:16px 0"><summary style="cursor:pointer;font-weight:800">Apresentações (${introductions.length})</summary>
+ <div class="form-stack" style="margin-top:12px">${introductions.length?introductions.map(post=>`<article class="card" style="padding:12px">
+ <strong>${esc(authorName(post))}</strong>
+ <p class="post-copy">${esc(short(post.content?.trim()||'Apresentação com foto ou vídeo',200))}</p>
+ <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir apresentação de ${esc(authorName(post))}">Abrir apresentação</button>
+ </article>`).join(''):'<p class="mini muted">Ainda não há apresentações neste grupo.</p>'}</div></details>`:''}
  <div class="section-head"><h2 id="group-conversations" tabindex="-1">Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
@@ -5718,18 +5726,18 @@ document.addEventListener('submit',async(event)=>{
     if(content.length>2000)return;
     if(!content&&!media.photoUrl&&!media.videoUrl)throw new Error('Inclua texto, uma foto ou um vídeo.');
     const uid=me(),key=postDraftKey(),originalDraft=readPostDraft(key);
-    const groupId=state.composingGroup,eventRecapId=state.composingRecapId;
+    const groupId=state.composingGroup,eventRecapId=state.composingRecapId,introduction=state.composingIntroduction;
     if(eventRecapId){
       const event=state.events.find(item=>item.id===eventRecapId);
       if(!canComposeEventRecap(event)||event.groupId!==groupId)throw new Error('Este encontro não está mais disponível para publicar um relato.');
     }
     const mediaFields=Object.fromEntries(Object.entries(media).filter(([,value])=>value));
-    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,...mediaFields,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{})});
+    await firebase.addDoc(col('posts'),{userId:me(),userName:myName(),userAvatar:state.profile.avatar,location:myLocation(),hobby:val('hobby'),content,...mediaFields,format:val('format'),likes:[],createdAt:now(),...(groupId?{groupId}:{}),...(eventRecapId?{eventRecapId}:{}),...(groupId&&introduction?{groupIntroduction:true}:{})});
     const saved=readPostDraft(key);
     if(key&&originalDraft?.content===data.content&&Object.keys(media).every(name=>originalDraft[name]===(data[name]||''))&&JSON.stringify(saved)===JSON.stringify(originalDraft))removePostDraft(key);
     if(me()!==uid)return;
     if(groupId===state.invitedGroupId)state.invitedGroupId=null;
-    if(groupId===state.groupFirstStepsId&&state.composingIntroduction)state.groupFirstStepsId=null;
+    if(groupId===state.groupFirstStepsId&&introduction)state.groupFirstStepsId=null;
     closeModal();setTab(groupId?'groups':'home');
     if(groupId){state.selectedGroup=groupId;openModal('group-detail');}
     showToast('Sua publicação está no ar!');
