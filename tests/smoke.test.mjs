@@ -2338,7 +2338,7 @@ test('community search finds words and participant names in the open channel and
   assert.doesNotMatch(panel(),/id="community-search"/);
 });
 
-test('saved community messages are private to the browser account and channel and reopen the original', async () => {
+test('saved community messages are private to the account and filtered by channel and reopen the original', async () => {
   const context=appContext(),storage=new Map();
   context.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
   const run=code=>vm.runInContext(code,context);
@@ -2348,6 +2348,12 @@ test('saved community messages are private to the browser account and channel an
       {id:'global-note',scope:'global',senderId:'peer',text:'Recomendação global'},
       {id:'local-note',location:'Recife',senderId:'peer',text:'Recomendação local'}
     ];
+    db={};
+    const markers=new Map();
+    firebase={doc:(_db,...path)=>path,setDoc:async(path,data)=>{
+      markers.set(path.at(-1),data.saved);
+      state.communitySavedCloud={uid:path.at(-3),markers};
+    }};
     render=()=>{};showToast=()=>{};
   `);
   const action=(action,id)=>{context.actionData={action,id};return run('onAction({dataset:actionData})');};
@@ -2370,9 +2376,36 @@ test('saved community messages are private to the browser account and channel an
   await action('toggle-community-saved-message','local-note');
   assert.match(panel(),/Recomendação local/);
   run("state.profile.location='Olinda';state.messages.push({id:'other-note',location:'Olinda',text:'Outra cidade'})");
-  assert.equal(run('readCommunitySaved().size'),0);
+  assert.doesNotMatch(panel(),/Recomendação local/);
   run("state.chatMode='global';state.user={uid:'other'}");
   assert.equal(run('readCommunitySaved().size'),0);
+});
+
+test('legacy community saves migrate once across cities and never revive a cloud removal', async () => {
+  const context=appContext(),storage=new Map(),markers=new Map([['removed',false]]);
+  context.localStorage={get length(){return storage.size;},key:i=>[...storage.keys()][i],
+    getItem:key=>storage.get(key)||null,removeItem:key=>storage.delete(key)};
+  context.markers=markers;
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};db={};
+    firebase={doc:(_db,...path)=>path,runTransaction:async(_db,callback)=>callback({
+      get:async path=>({exists:()=>markers.has(path.at(-1))}),
+      set:(path,data)=>markers.set(path.at(-1),data.saved)
+    })};
+  `);
+  const key=(uid,channel)=>'hobbyhub-community-saved:'+JSON.stringify([uid,channel]);
+  storage.set(key('reader','global'),JSON.stringify(['removed','global-note']));
+  storage.set(key('reader',['local','recife']),JSON.stringify(['local-note']));
+  storage.set(key('other','global'),JSON.stringify(['foreign']));
+  await run("migrateCommunitySaved('reader')");
+  assert.deepEqual([...markers],[['removed',false],['global-note',true],['local-note',true]]);
+  assert.deepEqual([...storage.keys()],[key('other','global')]);
+  run("firebase.runTransaction=async()=>{throw new Error('offline')}");
+  context.console={warn(){}};
+  storage.set(key('reader','global'),JSON.stringify(['retry']));
+  await run("migrateCommunitySaved('reader')");
+  assert.equal(storage.has(key('reader','global')),true);
 });
 
 test('draft dates are recorded only after changes and newer edits appear first', () => {

@@ -384,6 +384,15 @@ service cloud.firestore {
         allow read, delete: if isMe(uid);
         allow create, update: if isMe(uid) && validDismissedInvite();
       }
+      // Per-account community bookmarks. A false marker preserves removals during legacy import.
+      match /communitySaved/{messageId} {
+        function validCommunitySaved(data) {
+          return messageId.size() > 0 && messageId.size() <= 150
+            && data.keys().hasOnly(['saved']) && data.saved is bool;
+        }
+        allow read: if isMe(uid);
+        allow create, update: if isMe(uid) && validCommunitySaved(request.resource.data);
+      }
       match /privateSaved/{threadId}/messages/{messageId} {
         function validSavedMessage() {
           let message = get(/databases/$(database)/documents/artifacts/$(appId)/dm_threads/$(threadId)/messages/$(messageId)).data;
