@@ -1920,6 +1920,32 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('saved group discovery keeps the bookmark before and after joining', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='groups';state.groupView='discover';
+    state.savedDiscoveryGroupsLoaded=true;
+    const group={id:'art',name:'Arte',hobby:'Arte',members:['owner']};
+    state.groups=[group,{id:'other',name:'Outro grupo',members:[]}];
+    state.selectedGroup='art';state.modal='group-preview';
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),setDoc:async path=>writes.push(['save',path]),
+      deleteDoc:async path=>writes.push(['delete',path])};render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/Guardar grupo/);
+  const toggle=()=>vm.runInContext("onAction({dataset:{action:'toggle-saved-discovery-group',id:'art'}})",context);
+  await toggle();
+  assert.match(vm.runInContext("writes[0].join(' ')",context),/save .*members\/reader\/savedDiscoveryGroups\/art$/);
+  vm.runInContext("state.savedDiscoveryGroupIds.add('art');group.members.push('reader')",context);
+  await vm.runInContext("onAction({dataset:{action:'toggle-saved-discovery-filter'}})",context);
+  const list=vm.runInContext('renderGroups()',context);
+  assert.match(list,/data-id="art"/);
+  assert.doesNotMatch(list,/data-id="other"/);
+  assert.match(vm.runInContext('renderModal()',context),/Remover dos grupos guardados/);
+  await toggle();
+  assert.equal(vm.runInContext('writes[1][0]',context),'delete');
+});
+
 test('group preview shows the latest post and the earliest upcoming event before joining', () => {
   const context=appContext();
   vm.runInContext(`
