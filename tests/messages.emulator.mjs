@@ -448,6 +448,11 @@ const welcome = {
   createdAt: { integerValue: String(Date.now()) }
 };
 await request(sender, 'POST', 'public/data/posts?documentId=welcome-post', 200, { ...welcome, groupId: str('welcome-group') });
+const groupIntroduction={...welcome,groupId:str('welcome-group'),groupIntroduction:{booleanValue:true}};
+await request(sender,'POST','public/data/posts?documentId=group-introduction',200,groupIntroduction);
+await request(sender,'POST','public/data/posts?documentId=global-introduction',403,{...welcome,groupIntroduction:{booleanValue:true}});
+await request(sender,'POST','public/data/posts?documentId=invalid-introduction',403,{...groupIntroduction,groupIntroduction:str('true')});
+await request(recipient,'POST','public/data/posts?documentId=nonmember-introduction',403,{...groupIntroduction,userId:str(recipient.localId)});
 await request(sender, 'POST', 'public/data/posts?documentId=unrelated-post', 200, welcome);
 const pin = `${group}?updateMask.fieldPaths=pinnedPostId`;
 await request(recipient, 'PATCH', pin, 403, { pinnedPostId: str('welcome-post') });
