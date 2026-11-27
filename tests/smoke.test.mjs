@@ -1920,6 +1920,28 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('new group members can choose the introduction or skip straight to conversations', async () => {
+  const context=appContext();
+  const focused=[];
+  context.document.getElementById=id=>({focus:()=>focused.push(id)});
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const group={id:'art',name:'Arte',hobby:'Arte',members:['reader']};
+    state.groups=[group];state.selectedGroup='art';state.groupFirstStepsId='art';state.modal='group-detail';
+    render=()=>{};
+  `,context);
+  const invoke=action=>vm.runInContext(`onAction({dataset:{action:'${action}',id:'art'}})`,context);
+  assert.match(vm.runInContext('renderModal()',context),/Apresentar-me[\s\S]*Ver as conversas/);
+  await invoke('introduce-group');
+  assert.match(vm.runInContext('renderModal()',context),/O que você gosta de fazer\?[\s\S]*O que gostaria de aprender com o grupo\?/);
+  assert.match(vm.runInContext('renderModal()',context),/aria-describedby="group-introduction-prompts"/);
+  vm.runInContext("state.modal='group-detail'",context);
+  await invoke('browse-group-conversations');
+  assert.deepEqual(focused,['group-conversations']);
+  assert.equal(vm.runInContext('state.groupFirstStepsId',context),null);
+  assert.doesNotMatch(vm.runInContext('renderModal()',context),/Primeiros passos no grupo/);
+});
+
 test('first visit saves the chosen hobby and carries the selection into discovery', async () => {
   const context=appContext();
   vm.runInContext(`
