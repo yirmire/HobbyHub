@@ -331,12 +331,14 @@ function startSession() {
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
   subscribe(col('posts'), (s)=>{
     state.posts=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    void refreshWeeklyAnswers();
     watchFollowedPosts();
     watchSavedComments();
     queueMicrotask(openLinkedContent);
   },'publicações');
   subscribe(col('groups'), (s)=>{
     state.groups=docs(s).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    void refreshWeeklyAnswers();
     state.groupsLoaded=true;
     watchReportNotices();watchPollNotices();
     queueMicrotask(openLinkedContent);
@@ -507,6 +509,7 @@ async function init() {
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.groupFirstStepsId=null;state.openGroupIntroductions=null;state.changingGroupWelcome=false;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.weeklyQuestionHistory=null;
+      state.weeklyUnansweredOnly=false;state.weeklyAnswers=null;
       state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -1362,6 +1365,28 @@ function activeWeeklyQuestions(groups,blocked){
    if(!post||post.groupId!==group.id||blocked.has(post.userId))return [];
    return [{group,post,time:group.weeklyQuestionChangedAt?.toMillis?.()||post.createdAt||0}];
  }).sort((a,b)=>comparePinnedGroups(a.group.id,b.group.id)||b.time-a.time);
+}
+function myActiveWeeklyQuestions(){
+ return activeWeeklyQuestions(state.groups.filter(group=>group.members?.includes(me())),new Set(state.blockedIds));
+}
+async function refreshWeeklyAnswers(force=false){
+ const uid=me();
+ if(!uid||state.modal!=='all-weekly-questions'||!state.weeklyUnansweredOnly)return;
+ const ids=myActiveWeeklyQuestions().map(({post})=>post.id).sort(),key=JSON.stringify(ids);
+ if(!force&&state.weeklyAnswers?.key===key)return;
+ const result={key,unanswered:null,error:false};
+ state.weeklyAnswers=result;
+ try{
+   const checks=await Promise.all(ids.map(async id=>{
+     const query=firebase.query(col('posts',id,'comments'),firebase.where('userId','==',uid),firebase.limit(1));
+     return (await firebase.getDocsFromServer(query)).empty?id:null;
+   }));
+   result.unanswered=new Set(checks.filter(Boolean));
+ }catch(error){
+   result.error=true;
+   console.error('HobbyHub: respostas às perguntas da semana',error);
+ }
+ if(me()===uid&&state.modal==='all-weekly-questions'&&state.weeklyAnswers===result)render();
 }
 function renderWeeklyQuestionCards(entries){
  return entries.map(({group,post})=>`<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
@@ -3800,9 +3825,17 @@ function renderModal() {
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
  if(state.modal==='all-weekly-questions'){
-   const groups=state.groups.filter(group=>group.members?.includes(me()));
-   const entries=activeWeeklyQuestions(groups,new Set(state.blockedIds));
-   return modalWrap('Perguntas da semana',`<div class="form-stack">${renderWeeklyQuestionCards(entries)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>'}</div>`);
+   const only=state.weeklyUnansweredOnly,result=state.weeklyAnswers;
+   const entries=myActiveWeeklyQuestions();
+   let content=renderWeeklyQuestionCards(entries)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>';
+   if(only){
+     if(result?.error)content='<p class="tip" role="status">Não foi possível verificar suas respostas.</p><button type="button" class="text-action" data-action="retry-weekly-answers">Tentar novamente</button>';
+     else if(!result?.unanswered)content='<p class="tip" role="status">Verificando suas respostas…</p>';
+     else content=renderWeeklyQuestionCards(entries.filter(({post})=>result.unanswered.has(post.id)))||'<p class="tip" role="status">Nenhuma pergunta por responder.</p>';
+   }
+   return modalWrap('Perguntas da semana',`<div class="form-stack">
+   <div><button type="button" class="filter ${only?'active':''}" data-action="toggle-weekly-unanswered" aria-pressed="${Boolean(only)}">Ainda não respondi</button></div>
+   ${content}</div>`);
  }
  if(state.modal==='weekly-question-history')return renderWeeklyQuestionHistory();
  if(state.modal==='group-detail'||state.modal==='group-preview'){
@@ -5027,7 +5060,16 @@ async function onAction(btn) {
     }
   });return;
   case 'open-weekly-question-history':await openWeeklyQuestionHistory(id);return;
-  case 'open-all-weekly-questions':if(me())openModal('all-weekly-questions');return;
+  case 'open-all-weekly-questions':
+    if(me()){state.weeklyAnswers=null;openModal('all-weekly-questions');await refreshWeeklyAnswers();}
+    return;
+  case 'toggle-weekly-unanswered':
+    if(state.modal==='all-weekly-questions'){
+      state.weeklyUnansweredOnly=!state.weeklyUnansweredOnly;state.weeklyAnswers=null;render();
+      await refreshWeeklyAnswers();
+    }
+    return;
+  case 'retry-weekly-answers':state.weeklyAnswers=null;render();await refreshWeeklyAnswers(true);return;
   case 'set-weekly-question':
   case 'clear-weekly-question':await attempt(async()=>{
     const group=state.groups.find(item=>item.id===state.selectedGroup),clear=action==='clear-weekly-question';
