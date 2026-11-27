@@ -3813,7 +3813,7 @@ function renderModal() {
  const key=postDraftKey();
  if(key&&state.pendingPostDraft===key)return modalWrap(title,`<div class="form-stack">
  <p>Você tem um rascunho salvo neste aparelho.</p>
- <button class="btn btn-primary" data-action="continue-post-draft">Continuar escrevendo</button>
+ <button class="btn btn-primary" data-action="continue-post-draft">${state.composingIntroduction?'Continuar apresentação':'Continuar escrevendo'}</button>
  <button class="btn btn-outline" data-action="discard-post-draft">Descartar rascunho</button>
  </div>`);
  return modalWrap(title,`<form id="post-form" data-draft="true" ${key?`data-draft-key="${esc(key)}"`:''} class="form-stack"><div class="toggle-row">${avatar(state.profile)}<div><strong style="font-size:13px">${esc(myName())}</strong><div class="muted mini">Compartilhando com a comunidade</div></div></div>
@@ -3854,6 +3854,7 @@ function renderModal() {
  if(state.modal==='group-preview'&&!joined)return renderGroupPreview(group);
  const welcoming=state.invitedGroupId===group.id;
  const firstSteps=joined&&(welcoming||state.groupFirstStepsId===group.id);
+ const introductionDraft=joined&&readPostDraft(introductionDraftKey(group.id));
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const introductions=joined?groupPosts.filter(post=>post.groupIntroduction===true&&!state.blockedIds.includes(post.userId)):[];
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
@@ -3872,9 +3873,10 @@ function renderModal() {
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
  ${firstSteps?`<section class="card" style="padding:16px;margin:14px 0"><h3>Primeiros passos no grupo</h3>
- <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Apresentar-me</button>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary btn-small" data-action="introduce-group" data-id="${esc(group.id)}">${introductionDraft?'Continuar apresentação':'Apresentar-me'}</button>
  <button type="button" class="btn btn-outline btn-small" data-action="browse-group-conversations" data-id="${esc(group.id)}">Ver as conversas</button>
  ${pinned&&welcoming?`<button type="button" class="text-action" data-action="comments" data-id="${esc(pinned.id)}">Responder à publicação fixada</button>`:''}</div></section>`:''}
+ ${introductionDraft&&!firstSteps?`<div style="margin:12px 0"><button type="button" class="btn btn-outline btn-small" data-action="introduce-group" data-id="${esc(group.id)}">Continuar apresentação</button></div>`:''}
  ${welcoming&&!joined?`<section class="card" style="padding:16px;margin:14px 0"><h3>Participe desta comunidade</h3>
  <p class="mini muted">Entre para publicar, conversar sobre o hobby e conhecer quem já participa.</p>
  <button class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}">Participar</button></section>`:''}
@@ -4032,9 +4034,14 @@ function saveCurrentPrivateMessageDraft(message=document.getElementById('message
  const key=privateMessageDraftKey();
  savePrivateMessageDraft(key,message??readPrivateMessageDraft(key)?.message??'',state.directReply?.id||'');
 }
+function introductionDraftKey(groupId){
+ const uid=me();
+ return uid&&groupId?'hobbyhub-post-draft:'+encodeURIComponent(uid)+':intro:'+encodeURIComponent(groupId):'';
+}
 function postDraftKey(){
  const uid=me();
- if(!uid||state.composingIntroduction||state.composingRecapId)return '';
+ if(!uid||state.composingRecapId)return '';
+ if(state.composingIntroduction)return introductionDraftKey(state.composingGroup);
  const scope=state.composingGroup?'group:'+encodeURIComponent(state.composingGroup):'feed';
  return 'hobbyhub-post-draft:'+encodeURIComponent(uid)+':'+scope;
 }
