@@ -1920,6 +1920,27 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('community discovery orders by the latest available post after applying filters', () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.tab='groups';state.groupView='discover';state.user={uid:'reader'};
+    state.groupMyInterests=true;state.profile={hobbies:['Arte']};
+    state.groupCity=cityKey('Curitiba');
+    const group=(id,hobby='Arte',location='Curitiba')=>({id,name:id,hobby,location,members:[]});
+    state.groups=[group('old'),group('empty'),group('new'),group('far','Arte','Recife'),group('unrelated','Leitura')];
+    const post=(groupId,date,userId='author')=>({groupId,createdAt:Date.parse(date),userId});
+    state.posts=[post('old','2020-01-01T12:00:00Z'),post('new','2021-02-02T12:00:00Z'),
+      post('old','2022-03-03T12:00:00Z','blocked'),post('far','2023-04-04T12:00:00Z')];
+    state.blockedIds=['blocked'];render=()=>{};
+  `,context);
+  handlers.change({target:{id:'group-discovery-order',value:'active'}});
+  const html=vm.runInContext('renderGroups()',context);
+  assert.match(html,/data-id="new"[\s\S]*data-id="old"[\s\S]*data-id="empty"/);
+  assert.match(html,/Última publicação: <time datetime="2021-02-02">/);
+  assert.match(html,/Sem publicações disponíveis/);
+  assert.doesNotMatch(html,/data-id="(?:far|unrelated)"/);
+});
+
 test('discovering communities by profile interests also respects the city', async () => {
   const context=appContext();
   vm.runInContext(`
