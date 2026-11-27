@@ -613,6 +613,13 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const timedWelcome={
+  update:{name:documents+'public/data/posts/group-introduction',fields:welcomes(recipient.localId)},
+  updateMask:{fieldPaths:['welcomedBy']},updateTransforms:stamp('welcomesChangedAt')
+};
+await moderate(recipient,[timedWelcome],200);
+await moderate(recipient,[timedWelcome],403);
+await moderate(sender,[{...timedWelcome,update:{...timedWelcome.update,fields:welcomes(recipient.localId,sender.localId)}}],403);
 const privateCollection='public/data/members/'+recipient.localId+'/savedCollections/collection';
 const createPrivateCollection={update:{name:documents+privateCollection,fields:{name:str('Fotografia')}},
   updateTransforms:stamp('createdAt'),currentDocument:{exists:false}};

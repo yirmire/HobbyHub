@@ -490,7 +490,7 @@ service cloud.firestore {
         return request.resource.data.userId == request.auth.uid
         && request.resource.data.likes == []
         && !request.resource.data.keys().hasAny(['editedAt'])
-        && !request.resource.data.keys().hasAny(['welcomedBy'])
+        && !request.resource.data.keys().hasAny(['welcomedBy','welcomesChangedAt'])
         && validPostContent(request.resource.data)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.location, 1, 90)
@@ -518,11 +518,21 @@ service cloud.firestore {
           && (request.time - duration.value(3, 'h')).date() > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
       }
       allow update: if onlyMyArrayMembership('likes');
+      function addsWelcomeWithTime() {
+        let previous = resource.data.get('welcomedBy', []);
+        let next = request.resource.data.welcomedBy;
+        return changedOnly(['welcomedBy','welcomesChangedAt'])
+          && previous is list && next is list && !(request.auth.uid in previous)
+          && next.size() == previous.size() + 1
+          && next.toSet() == previous.toSet().union([request.auth.uid].toSet())
+          && request.resource.data.get('welcomesChangedAt', null) == request.time;
+      }
       allow update: if loggedIn()
         && resource.data.get('groupIntroduction', false) == true
         && resource.data.userId != request.auth.uid
         && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(resource.data.groupId)).data.members
-        && ((resource.data.keys().hasAny(['welcomedBy']) && onlyMyArrayMembership('welcomedBy'))
+        && (addsWelcomeWithTime()
+          || (resource.data.keys().hasAny(['welcomedBy']) && onlyMyArrayMembership('welcomedBy'))
           || (!resource.data.keys().hasAny(['welcomedBy'])
             && changedOnly(['welcomedBy'])
             && request.resource.data.welcomedBy == [request.auth.uid]));
