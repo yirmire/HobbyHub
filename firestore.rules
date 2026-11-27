@@ -490,6 +490,7 @@ service cloud.firestore {
         return request.resource.data.userId == request.auth.uid
         && request.resource.data.likes == []
         && !request.resource.data.keys().hasAny(['editedAt'])
+        && !request.resource.data.keys().hasAny(['welcomedBy'])
         && validPostContent(request.resource.data)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.location, 1, 90)
@@ -517,6 +518,14 @@ service cloud.firestore {
           && (request.time - duration.value(3, 'h')).date() > timestamp.date(int(date[0]), int(date[1]), int(date[2]));
       }
       allow update: if onlyMyArrayMembership('likes');
+      allow update: if loggedIn()
+        && resource.data.get('groupIntroduction', false) == true
+        && resource.data.userId != request.auth.uid
+        && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(resource.data.groupId)).data.members
+        && ((resource.data.keys().hasAny(['welcomedBy']) && onlyMyArrayMembership('welcomedBy'))
+          || (!resource.data.keys().hasAny(['welcomedBy'])
+            && changedOnly(['welcomedBy'])
+            && request.resource.data.welcomedBy == [request.auth.uid]));
       allow update: if isMe(resource.data.userId)
         && changedOnly(['content','photoUrl','videoUrl','photoDescription','videoDescription','captionsUrl','editedAt'])
         && request.resource.data.diff(resource.data).affectedKeys().hasAny(['content','photoUrl','videoUrl','photoDescription','videoDescription','captionsUrl'])
