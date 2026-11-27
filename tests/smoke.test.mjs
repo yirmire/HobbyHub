@@ -2106,6 +2106,24 @@ test('group introduction posts appear in both presentations and the conversation
   assert.match(html,/Conversas do grupo[\s\S]*Apresentação[\s\S]*Gosto de aquarela/);
 });
 
+test('private chat puts conversation tools and per-message actions behind accessible controls', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='direct';state.chatTarget={uid:'peer',name:'Pessoa'};
+    state.directMessages=[{id:'one',senderId:'peer',text:'Uma mensagem'},{id:'two',senderId:'reader',text:'Outra mensagem'}];
+    state.directSavedIds=new Set();render=()=>{};
+  `,context);
+  const panel=()=>vm.runInContext('renderMessages()',context);
+  assert.match(panel(),/id="mobile-chat-options"[\s\S]*Buscar na conversa[\s\S]*Mensagens salvas/);
+  assert.match(panel(),/data-action="toggle-direct-message-menu" data-id="one"[^>]*aria-expanded="false"/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-message-menu',id:'one'}})",context);
+  assert.match(panel(),/data-id="one" aria-label="Opções da mensagem" aria-expanded="true"[\s\S]*direct-message-actions is-open[\s\S]*Copiar/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-direct-message-menu',id:'two'}})",context);
+  assert.match(panel(),/data-id="one" aria-label="Opções da mensagem" aria-expanded="false"/);
+  assert.match(panel(),/data-id="two" aria-label="Opções da mensagem" aria-expanded="true"/);
+  assert.match(panel(),/aria-label="Enviar mensagem"/);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
