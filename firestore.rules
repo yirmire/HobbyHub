@@ -614,10 +614,10 @@ service cloud.firestore {
     }
 
     match /artifacts/{appId}/public/data/groups/{groupId} {
-      function canPinGroupPost() {
-        let postId = request.resource.data.pinnedPostId;
+      function canSetGroupPostHighlight(field) {
+        let postId = request.resource.data.get(field, null);
         return managesGroup(appId, groupId, resource.data)
-          && changedOnly(['pinnedPostId'])
+          && changedOnly([field])
           && postId is string
           && (postId == '' || (validText(postId, 1, 120)
             && postId.matches('[^/]+')
@@ -627,7 +627,7 @@ service cloud.firestore {
       allow create: if loggedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.members == [request.auth.uid]
-        && !request.resource.data.keys().hasAny(['pinnedPostId'])
+        && !request.resource.data.keys().hasAny(['pinnedPostId','weeklyQuestionPostId'])
         && validText(request.resource.data.name, 3, 75)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.description, 1, 600)
@@ -635,7 +635,8 @@ service cloud.firestore {
       allow update: if (onlyMyArrayMembership('members')
           && (request.auth.uid in request.resource.data.members
             || !existsAfter(moderationPath(appId, request.auth.uid, groupId))))
-        || canPinGroupPost();
+        || canSetGroupPostHighlight('pinnedPostId')
+        || canSetGroupPostHighlight('weeklyQuestionPostId');
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
 
       function canReviewModeration() {

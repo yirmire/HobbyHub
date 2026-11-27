@@ -3719,6 +3719,8 @@ function renderModal() {
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const introductions=joined?groupPosts.filter(post=>post.groupIntroduction===true&&!state.blockedIds.includes(post.userId)):[];
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
+ const weeklyQuestion=groupPosts.find(post=>post.id===group.weeklyQuestionPostId&&!state.blockedIds.includes(post.userId));
+ const canManage=canManageGroup(group);
  const posts=groupPosts.filter(p=>p.id!==pinned?.id).slice(0,15);
  const events=state.events.filter(event=>event.groupId===group.id&&event.date>=today());
  const renderGroupPost=(post,isPinned=false)=>`<article class="card" style="padding:13px;margin-bottom:9px">${isPinned?'<p class="eyebrow">Publicação fixada</p>':''}
@@ -3727,6 +3729,7 @@ function renderModal() {
  ${renderSharedMedia(post,'na publicação')}
  ${recapEventButton(post)}
  ${groupWelcomeControls(post)}
+ ${canManage&&post.id!==group.weeklyQuestionPostId?`<button type="button" class="text-action" data-action="set-weekly-question" data-id="${esc(post.id)}">Destacar como pergunta da semana</button>`:''}
  <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${postOptionsButton(post)}${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
@@ -3752,6 +3755,11 @@ function renderModal() {
  <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir apresentação de ${esc(authorName(post))}">Abrir apresentação</button>
  ${groupWelcomeControls(post)}
  </article>`).join(''):'<p class="mini muted">Ainda não há apresentações neste grupo.</p>'}</div></details>`:''}
+ ${weeklyQuestion?`<section class="card form-stack" aria-label="Pergunta da semana" style="padding:14px;margin:16px 0">
+ <h2 style="margin:0;font-size:16px">Pergunta da semana</h2>
+ <p class="post-copy">${esc(short(weeklyQuestion.content?.trim()||'Abra a publicação para ver a pergunta.',240))}</p>
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary btn-small" data-action="comments" data-id="${esc(weeklyQuestion.id)}">Abrir conversa</button>
+ ${canManage?`<button type="button" class="text-action" data-action="clear-weekly-question" data-id="${esc(weeklyQuestion.id)}">Retirar destaque</button>`:''}</div></section>`:''}
  <div class="section-head"><h2 id="group-conversations" tabindex="-1">Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
@@ -4906,18 +4914,22 @@ async function onAction(btn) {
     if(me()===uid)showToast(muted?'Avisos da comunidade reativados.':'Enquetes, recados e mudanças de eventos salvos desta comunidade foram silenciados.');
   });return;
   case 'pin-group-post':
+  case 'set-weekly-question':
+  case 'clear-weekly-question':
   case 'unpin-group-post':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===state.selectedGroup);
     if(!canManageGroup(group))return;
     const groupRef=ref('groups',group.id);
-    if(action==='pin-group-post'){
+    const weekly=action==='set-weekly-question'||action==='clear-weekly-question';
+    const field=weekly?'weeklyQuestionPostId':'pinnedPostId';
+    if(action==='pin-group-post'||action==='set-weekly-question'){
       if(!state.posts.some(post=>post.id===id&&post.groupId===group.id))return;
-      await firebase.updateDoc(groupRef,{pinnedPostId:id});
-      showToast('Publicação fixada na comunidade.');
+      await firebase.updateDoc(groupRef,{[field]:id});
+      showToast(weekly?'Pergunta da semana destacada.':'Publicação fixada na comunidade.');
     }else{
       await firebase.runTransaction(db,async tx=>{
         const current=await tx.get(groupRef);
-        if(current.data()?.pinnedPostId===id)tx.update(groupRef,{pinnedPostId:''});
+        if(current.data()?.[field]===id)tx.update(groupRef,{[field]:''});
       });
     }
   });return;

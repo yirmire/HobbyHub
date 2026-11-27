@@ -460,6 +460,13 @@ await request(sender,'POST','public/data/posts?documentId=invalid-introduction',
 await request(recipient,'POST','public/data/posts?documentId=nonmember-introduction',403,{...groupIntroduction,userId:str(recipient.localId)});
 await request(sender, 'POST', 'public/data/posts?documentId=unrelated-post', 200, welcome);
 const pin = `${group}?updateMask.fieldPaths=pinnedPostId`;
+const weeklyQuestion=`${group}?updateMask.fieldPaths=weeklyQuestionPostId`;
+await request(recipient,'PATCH',weeklyQuestion,403,{weeklyQuestionPostId:str('welcome-post')});
+await request(sender,'PATCH',weeklyQuestion,403,{weeklyQuestionPostId:str('unrelated-post')});
+await request(sender,'PATCH',weeklyQuestion,200,{weeklyQuestionPostId:str('welcome-post')});
+await request(sender,'PATCH',weeklyQuestion,200,{weeklyQuestionPostId:str('group-introduction')});
+await request(sender,'GET','public/data/posts/welcome-post',200);
+await request(sender,'PATCH',weeklyQuestion,200,{weeklyQuestionPostId:str('')});
 await request(recipient, 'PATCH', pin, 403, { pinnedPostId: str('welcome-post') });
 await request(sender, 'PATCH', pin, 403, { pinnedPostId: str('unrelated-post') });
 await request(sender, 'PATCH', pin, 200, { pinnedPostId: str('welcome-post') });
