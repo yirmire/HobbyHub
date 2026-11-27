@@ -115,3 +115,4 @@
 .community-chat-navigation{display:flex;justify-content:flex-end;padding:4px 12px;background:var(--panel)}
 .community-chat-navigation button{min-height:36px}
 .community-contact-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toggle-community-search{display:grid;place-items:center;margin-left:auto;min-width:44px;min-height:44px;flex:none}

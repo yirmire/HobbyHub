@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', eventFiltersOpen:false, savedEventSearches:new Map(), savedEventSearchesLoaded:false, eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, communityReply:null, communityHistoryAnchor:null, mobileChatOpen:false, mobileChatOptions:false, directMessageMenu:null, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, communityReply:null, communityHistoryAnchor:null, communitySearch:null, mobileChatOpen:false, mobileChatOptions:false, directMessageMenu:null, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -139,7 +139,7 @@ function unsubscribeAll() {
  if(['invites','sent-invites'].includes(state.eventFilter))state.eventFilter='upcoming';
  state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.directMessageMenu=null;state.mobileChatListScroll=0;
- state.directMessageEditor=null;state.communityReply=null;state.communityHistoryAnchor=null;
+ state.directMessageEditor=null;state.communityReply=null;state.communityHistoryAnchor=null;state.communitySearch=null;
  closeAllSavedDirectMessages();
  stopDirectSavedMessages();
  for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
@@ -193,7 +193,7 @@ function showCommunityChat(mode,open=false){
  state.directMuteMenu=null;
  stopDirectSavedMessages();
  if(state.chatMode!==mode)state.communityReply=null;
- state.communityHistoryAnchor=null;
+ state.communityHistoryAnchor=null;state.communitySearch=null;
  state.chatMode=mode;state.chatTarget=null;
  state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
  if(state.messageUnsub){state.messageUnsub();state.messageUnsub=null;}
@@ -2578,11 +2578,20 @@ function directSearchResults(messages,query){
  const term=norm(query);
  return term?messages.filter(message=>!message.deletedAt&&norm(message.text).includes(term)).reverse():[];
 }
-function renderDirectSearch(query,count){
+function communityMessageAuthor(message){
+ return message.senderName||member(message.senderId)?.name||'Pessoa';
+}
+function communitySearchResults(messages,query){
+ const term=norm(query);
+ return term?messages.filter(message=>message.id&&!message.deletedAt&&
+   (norm(message.text).includes(term)||norm(communityMessageAuthor(message)).includes(term))).reverse():[];
+}
+function renderChatSearch(query,count,community=false){
+ const input=community?'community-search':'direct-search';
  return `<div class="form-stack" style="padding:12px">
- <label for="direct-search">Buscar na conversa</label>
- <input id="direct-search" class="input" value="${esc(query)}" maxlength="150" autocomplete="off">
- <p class="mini muted" role="status">${norm(query)?(count?`${count} ${count===1?'mensagem encontrada':'mensagens encontradas'}`:'Nenhuma mensagem encontrada.'):'Digite uma palavra ou frase.'}</p>
+ <label for="${input}">Buscar na conversa</label>
+ <input id="${input}" class="input" ${community?'type="search" placeholder="Palavra ou nome"':''} value="${esc(query)}" maxlength="150" autocomplete="off">
+ <p class="mini muted" role="status">${norm(query)?(count?`${count} ${count===1?'mensagem encontrada':'mensagens encontradas'}`:'Nenhuma mensagem encontrada.'):community?'Digite uma palavra ou nome.':'Digite uma palavra ou frase.'}</p>
  </div>`;
 }
 function stopDirectSavedMessages(){
@@ -2650,9 +2659,10 @@ function renderDirectLinks(messages,limit){
  </div></div>`).join('')}
  ${links.length>limit?'<button type="button" class="btn btn-soft" data-action="more-direct-links">Ver mais links</button>':''}`;
 }
-function renderDirectSearchMatches(results,limit){
- return `${results.slice(0,limit).map(message=>`<button class="btn btn-outline" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere" data-action="jump-direct-message" data-id="${esc(message.id)}">${esc(short(message.text,180))}<small style="display:block">${when(message.createdAt)}</small></button>`).join('')}
- ${results.length>limit?'<button class="btn btn-soft" data-action="more-direct-matches">Ver mais resultados</button>':''}`;
+function renderChatSearchMatches(results,limit,community=false){
+ const channel=community?'community':'direct';
+ return `${results.slice(0,limit).map(message=>`<button class="btn btn-outline" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere" data-action="jump-${channel}-message" data-id="${esc(message.id)}">${community?`<strong style="display:block">${esc(communityMessageAuthor(message))}</strong>`:''}${esc(short(message.text,180))}<small style="display:block">${when(message.createdAt)}</small></button>`).join('')}
+ ${results.length>limit?`<button class="btn btn-soft" data-action="more-${channel}-matches">Ver mais resultados</button>`:''}`;
 }
 function showDirectMessage(id){
  state.directEventLimit=0;
@@ -2714,12 +2724,16 @@ function rememberCommunityReading(log){
  if(indicator)indicator.hidden=!firstUnreadCommunityMessage(chatMessages(),key);
 }
 function restoreChatScroll(previous,next,scroll,nearBottom){
+ const search=next.dataset.communitySearch;
+ if(search){next.scrollTop=previous?.dataset.communitySearch===search?scroll:0;return;}
  const key=next.dataset.communityReading;
  if(!key){
    next.scrollTop=nearBottom?next.scrollHeight:scroll;
    return;
  }
  if(!next.clientHeight)return;
+ next.addEventListener('scroll',()=>rememberCommunityReading(next),{passive:true});
+ if(previous?.dataset.communitySearch===key&&state.communityHistoryAnchor?.key===key)return;
  const sameChat=previous?.dataset.communityReading===key&&
    previous.querySelector('[data-community-message]');
  if(sameChat)next.scrollTop=nearBottom?next.scrollHeight:scroll;
@@ -2727,7 +2741,6 @@ function restoreChatScroll(previous,next,scroll,nearBottom){
    const marker=next.querySelector('#community-new-messages');
    next.scrollTop=marker?marker.getBoundingClientRect().top-next.getBoundingClientRect().top+next.scrollTop:next.scrollHeight;
  }
- next.addEventListener('scroll',()=>rememberCommunityReading(next),{passive:true});
  rememberCommunityReading(next);
 }
 function chatMessages(mode=state.chatMode){
@@ -3108,11 +3121,12 @@ function renderMessages() {
    previousLog.querySelector('#community-new-messages')?.nextElementSibling?.dataset.communityMessage:null;
  const unread=community?(visibleMessages.find(message=>previousMarker&&message.id===previousMarker)||
    firstUnreadCommunityMessage(visibleMessages,readingKey)):null;
- const searching=!community&&state.chatTarget&&state.directSearch;
+ const communitySearch=community&&state.communitySearch?.key===readingKey?state.communitySearch:null;
+ const searching=community?communitySearch:state.chatTarget&&state.directSearch;
  const showingSaved=!community&&state.chatTarget&&state.directSavedLimit>0;
  const showingEvents=!community&&state.chatTarget&&state.directEventLimit>0;
  const showingLinks=!community&&state.chatTarget&&state.directLinksLimit>0;
- const matches=searching?directSearchResults(messages,searching.query):[];
+ const matches=searching?(community?communitySearchResults(messages,searching.query):directSearchResults(messages,searching.query)):[];
  const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
  const blocked=!community&&state.blockedIds.includes(state.chatTarget?.uid);
  const activeThread=!community&&state.chatTarget?threadId(me(),state.chatTarget.uid):null;
@@ -3158,7 +3172,7 @@ function renderMessages() {
  <button class="btn btn-soft btn-small" style="width:100%" data-action="tab" data-tab="explore">${icon('users')} Explorar</button></div>
  <div class="chat-panel ${community?'':'private-chat-panel'}"><div class="chat-panel-head"><div class="chat-mobile-navigation">
  <button type="button" class="circle-btn" aria-label="Voltar às conversas" id="mobile-chat-back" data-action="back-mobile-chats">‹</button>
-</div>${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div> ${!community&&state.chatTarget?`<button type="button" class="circle-btn" aria-label="Opções da conversa" aria-expanded="${state.mobileChatOptions}" aria-controls="mobile-chat-options" data-action="toggle-mobile-chat-options">⋯</button>`:''}
+</div>${avatar(community?{avatar:global?'🌍':'📍'}:member(state.chatTarget?.uid)||{avatar:'💬'})}<div><strong>${esc(title)}</strong><small>${global?'Para todos os membros do HobbyHub':community?'Mensagens públicas da sua cidade':'Somente participantes podem acessar esta conversa'}</small></div> ${community?`<button type="button" class="circle-btn" id="toggle-community-search" aria-label="${communitySearch?'Fechar busca':'Buscar na conversa'}" aria-expanded="${Boolean(communitySearch)}" aria-controls="chat-log" data-action="toggle-community-search">${icon('search')}</button>`:''}${!community&&state.chatTarget?`<button type="button" class="circle-btn" aria-label="Opções da conversa" aria-expanded="${state.mobileChatOptions}" aria-controls="mobile-chat-options" data-action="toggle-mobile-chat-options">⋯</button>`:''}
  </div>
  ${!community&&state.chatTarget?`<div id="mobile-chat-options" class="chat-options ${state.mobileChatOptions?'is-open':''}" role="group" aria-label="Opções da conversa"><div class="chat-tools">
  <button class="btn btn-soft btn-small" data-action="toggle-direct-search" aria-expanded="${Boolean(searching)}">${searching?'Fechar busca':'Buscar na conversa'}</button>
@@ -3175,12 +3189,12 @@ function renderMessages() {
  ${[['1h','1 hora'],['8h','8 horas'],['manual','Até reativar manualmente']].map(([value,label])=>`<button type="button" class="btn btn-outline btn-small" data-action="set-direct-mute-duration" data-value="${value}" ${state.changingDirectMute?'disabled':''}>${label}</button>`).join('')}
  </div>`:''}
  </div>`:''}
- ${searching?renderDirectSearch(searching.query,matches.length):''}
- <div id="chat-log" class="chat-log" ${community?`data-community-reading="${esc(readingKey)}"`:''}>${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
+ ${searching?renderChatSearch(searching.query,matches.length,community):''}
+ <div id="chat-log" class="chat-log" ${community?`data-community-${communitySearch?'search':'reading'}="${esc(readingKey)}"`:''}>${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderChatSearchMatches(matches,searching.limit,community):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?visibleMessages.map(m=>`${unread===m?'<div id="community-new-messages" class="community-new-messages">Novas mensagens</div>':''}<div ${community?`id="community-message-${esc(m.id)}" tabindex="-1" data-community-message="${esc(m.id)}" data-community-time="${communityMessagePosition(m).time}"`:`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo&&m.replyTo!==m.id?(directQuote(originals.get(m.replyTo),community)||(community?'<small>Mensagem original indisponível</small>':'')):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,`<button type="button" class="btn btn-soft btn-small" data-action="reply-community-message" data-id="${esc(m.id)}">Responder</button>${m.senderId!==me()?reportButton('communityMessage',m.id,'mensagem'):''}`):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?visibleMessages.map(m=>`${unread===m?'<div id="community-new-messages" class="community-new-messages">Novas mensagens</div>':''}<div ${community?`id="community-message-${esc(m.id)}" tabindex="-1" data-community-message="${esc(m.id)}" data-community-time="${communityMessagePosition(m).time}"`:`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(communityMessageAuthor(m))}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo&&m.replyTo!==m.id?(directQuote(originals.get(m.replyTo),community)||(community?'<small>Mensagem original indisponível</small>':'')):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,`<button type="button" class="btn btn-soft btn-small" data-action="reply-community-message" data-id="${esc(m.id)}">Responder</button>${m.senderId!==me()?reportButton('communityMessage',m.id,'mensagem'):''}`):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
- ${community&&messages.length?`<div class="community-chat-navigation"><button type="button" class="btn btn-soft btn-small" data-action="latest-community-messages" aria-controls="chat-log">Ir para o fim ↓</button></div>`:''}
+ ${community&&!communitySearch&&messages.length?`<div class="community-chat-navigation"><button type="button" class="btn btn-soft btn-small" data-action="latest-community-messages" aria-controls="chat-log">Ir para o fim ↓</button></div>`:''}
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying,community)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-${community?'community':'direct'}-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
 }
@@ -4241,6 +4255,10 @@ function findActionFocus(container,key){
 function handleDialogKey(event){
  if(event.isComposing||event.defaultPrevented)return;
  if(!state.modal){
+   if(event.key==='Escape'&&state.tab==='messages'&&state.chatMode!=='direct'&&state.communitySearch?.key===communityReadingKey()){
+     event.preventDefault();
+     state.communitySearch=null;render();document.getElementById('toggle-community-search')?.focus();return;
+   }
    if(event.key==='Escape'&&state.tab==='messages'&&(state.directMessageMenu||state.mobileChatOptions)){
      event.preventDefault();
      const target=state.directMessageMenu?'toggle-direct-message-menu':'toggle-mobile-chat-options';
@@ -4348,7 +4366,7 @@ function closeModal(){
  state.drafts.clear();state.modal=null;state.reportTarget=null;state.selectedPost=null;state.selectedGroup=null;state.composingGroup=null;state.composingIntroduction=false;state.viewUser=null;if(state.commentUnsub){state.commentUnsub();state.commentUnsub=null;}state.comments=[];render();void markOpenConversationRead();}
 function openModal(name){state.drafts.clear();state.modal=name;render();}
 function setTab(tab){
- if(tab!=='messages'){state.mobileChatOpen=false;state.mobileChatOptions=false;state.directMessageMenu=null;state.mobileChatListScroll=0;closeAllSavedDirectMessages();state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directReactionPicker=null;}
+ if(tab!=='messages'){state.communitySearch=null;state.mobileChatOpen=false;state.mobileChatOptions=false;state.directMessageMenu=null;state.mobileChatListScroll=0;closeAllSavedDirectMessages();state.directSavedLimit=0;state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directReactionPicker=null;}
  if(tab!=='saved')state.savedSelection=null;
  clearContentLink();state.welcomePending=false;state.tab=tab;state.modal=null;state.drafts.clear();render();
  void markOpenConversationRead();
@@ -5578,6 +5596,7 @@ async function onAction(btn) {
     }
   },'updatingBlock');return;
   case 'back-mobile-chats':
+    state.communitySearch=null;
     state.mobileChatOpen=false;state.mobileChatOptions=false;state.directMessageMenu=null;state.directMuteMenu=null;
     render();
     document.getElementById('mobile-chat-list-title')?.focus({preventScroll:true});
@@ -5611,10 +5630,25 @@ async function onAction(btn) {
     render();
     document.getElementById('message-text')?.focus();
     return;
+  case 'toggle-community-search':{
+    if(state.chatMode==='direct')return;
+    const key=communityReadingKey();
+    state.communitySearch=state.communitySearch?.key===key?null:{key,query:'',limit:20};
+    state.directMessageMenu=null;
+    render();
+    document.getElementById(state.communitySearch?'community-search':'toggle-community-search')?.focus();
+    return;
+  }
+  case 'more-community-matches':
+    if(state.chatMode!=='direct'&&state.communitySearch?.key===communityReadingKey()){
+      state.communitySearch.limit+=20;render();
+    }
+    return;
   case 'jump-community-message':{
     if(state.chatMode==='direct'||!id||!chatMessages().some(message=>message.id===id))return;
     const targetId='community-message-'+id;
-    if(!document.getElementById(targetId)){
+    if(state.communitySearch||!document.getElementById(targetId)){
+      state.communitySearch=null;
       state.communityHistoryAnchor={key:communityReadingKey(),id};
       render();
     }
@@ -6091,6 +6125,13 @@ document.addEventListener('input',(event)=>{
  }
  if(event.target.id==='direct-thread-search'){state.directThreadSearch=event.target.value;render();return;}
  if(event.target.id==='message-text'){saveCurrentPrivateMessageDraft(event.target.value);return;}
+ if(event.target.id==='community-search'&&state.chatMode!=='direct'&&state.communitySearch?.key===communityReadingKey()){
+   state.communitySearch.query=event.target.value;
+   state.communitySearch.limit=20;
+   render();
+   const log=document.getElementById('chat-log');if(log)log.scrollTop=0;
+   return;
+ }
  if(event.target.id==='direct-search'&&state.directSearch){
    state.directSearch.query=event.target.value;
    state.directSearch.limit=20;

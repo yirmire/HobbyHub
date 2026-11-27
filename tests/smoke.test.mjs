@@ -503,7 +503,7 @@ test('private chat search finds accented text outside the recent window and open
   const opened=vm.runInContext("showDirectMessage('message-12');renderMessages()",context);
   assert.match(opened,/id="direct-message-message-12" tabindex="-1"/);
   assert.match(opened,/Ir para as mais recentes/);
-  assert.doesNotMatch(vm.runInContext("state.chatMode='global';renderMessages()",context),/Buscar na conversa/);
+  assert.doesNotMatch(vm.runInContext("state.chatMode='global';renderMessages()",context),/id="direct-search"|data-action="toggle-direct-search"/);
 });
 
 test('notifications count unread items and only show reports to current moderators', () => {
@@ -2282,6 +2282,60 @@ test('community replies send a reference and jump to older originals in their ow
   assert.equal(run('state.communityReply'),null);
   await action('latest-community-messages');
   assert.doesNotMatch(panel(),/id="community-message-original"/);
+});
+
+test('community search finds words and participant names in the open channel and opens a result', async () => {
+  const handlers={},context=appContext(handlers),focused=[];
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='global';state.profile={location:'Recife'};
+    state.members=[{uid:'other',name:'João'}];
+    state.messages=[
+      {id:'original',senderId:'peer',senderName:'Érica',scope:'global',text:'Sugestão de café',createdAt:1},
+      ...Array.from({length:151},(_,i)=>({id:'past-'+i,senderId:'other',scope:'global',text:'Conversa',createdAt:i+2})),
+      {id:'local',senderId:'peer',location:'Recife',text:'Café local',createdAt:200},
+      {id:'remote',senderId:'peer',location:'Olinda',text:'Café de outra cidade',createdAt:201}
+    ];
+    render=()=>{};
+  `);
+  const panel=()=>run('renderMessages()');
+  const action=(action,id)=>{context.actionData={action,id};return run('onAction({dataset:actionData})');};
+  const enter=value=>handlers.input({target:{id:'community-search',value}});
+  context.document.getElementById=id=>{
+    if(id==='community-search'||id==='toggle-community-search')return {focus:()=>focused.push(id)};
+    if(id==='community-message-original'&&panel().includes('id="community-message-original"')){
+      return {focus:()=>focused.push(id),scrollIntoView:()=>focused.push('scroll')};
+    }
+    return null;
+  };
+  assert.match(panel(),/id="toggle-community-search"[^>]*aria-expanded="false"/);
+  await action('toggle-community-search');
+  assert.deepEqual(focused,['community-search']);
+  assert.match(panel(),/id="community-search"[^>]*placeholder="Palavra ou nome"/);
+  assert.doesNotMatch(panel(),/data-community-reading=/);
+  enter(' CAFE ');
+  assert.match(panel(),/1 mensagem encontrada/);
+  assert.match(panel(),/data-action="jump-community-message" data-id="original"/);
+  assert.doesNotMatch(panel(),/Café local|Café de outra cidade/);
+  enter('joao');
+  assert.match(panel(),/151 mensagens encontradas/);
+  assert.equal((panel().match(/data-action="jump-community-message"/g)||[]).length,20);
+  await action('more-community-matches');
+  assert.equal((panel().match(/data-action="jump-community-message"/g)||[]).length,40);
+  enter('erica');
+  await action('jump-community-message','original');
+  assert.deepEqual(focused.slice(-2),['community-message-original','scroll']);
+  assert.doesNotMatch(panel(),/id="community-search"/);
+  assert.match(panel(),/id="community-message-original"/);
+
+  run("showCommunityChat('community')");
+  await action('toggle-community-search');
+  enter('café');
+  assert.match(panel(),/Café local/);
+  assert.doesNotMatch(panel(),/Sugestão de café|Café de outra cidade/);
+  handlers.keydown({key:'Escape',preventDefault(){}});
+  assert.equal(focused.at(-1),'toggle-community-search');
+  assert.doesNotMatch(panel(),/id="community-search"/);
 });
 
 test('draft dates are recorded only after changes and newer edits appear first', () => {
