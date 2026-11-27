@@ -1224,6 +1224,7 @@ function renderGroupPreview(group,date=new Date()){
    ${post?`<p class="post-copy">${esc(short(summary,240))}</p>`:'<p class="mini muted">Sem publicações disponíveis.</p>'}</section>
    <section class="card" style="padding:14px"><h3>Próximo evento</h3>
    ${next?`<button type="button" class="text-action" data-action="view-event" data-id="${esc(next.id)}">${esc(next.title)}</button><p class="mini muted">${dateLabel(schedule.date)} ${esc(eventTimeLabel(next,schedule))}</p>`:'<p class="mini muted">Nenhum encontro marcado ainda.</p>'}</section>
+   ${state.invitedGroupId===group.id?'<div><button type="button" class="text-action" data-action="back-first-visit">Voltar às boas-vindas</button></div>':''}
  </div>`);
 }
 function groupHighlights(groups, now=new Date()) {
@@ -2927,10 +2928,12 @@ function suggestedWelcomeGroups() {
 function renderFirstVisit() {
  const suggestions=suggestedWelcomeGroups();
  const hobbies=[...new Set(state.groups.map(group=>group.hobby).filter(hobby=>typeof hobby==='string'&&hobby))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
- return modalWrap('Boas-vindas ao HobbyHub',`<p>Encontre uma comunidade para praticar um hobby com outras pessoas.</p>
+ const chosen=state.welcomeHobby,added=chosen&&state.profile?.hobbies?.some(hobby=>norm(hobby)===norm(chosen));
+ return modalWrap('Boas-vindas ao HobbyHub',`<p>Escolha um hobby para encontrar comunidades. Você também pode adicioná-lo ao seu perfil.</p>
  <label class="field">Explorar por hobby<select class="select" id="welcome-hobby"><option value="">Todos os hobbies</option>${hobbies.map(hobby=>`<option value="${esc(hobby)}" ${state.welcomeHobby===hobby?'selected':''}>${esc(hobby)}</option>`).join('')}</select></label>
+ ${chosen?added?'<p class="mini muted" role="status">Este hobby está no seu perfil.</p>':`<div style="margin-top:10px"><button type="button" class="btn btn-outline btn-small" data-action="save-welcome-hobby" ${state.busy?'disabled':''}>Adicionar hobby ao perfil</button></div>`:''}
  <div class="form-stack" style="margin:14px 0">${suggestions.length?suggestions.map(({group,local,shared})=>`<article class="card" style="padding:12px"><button type="button" class="text-action" data-action="view-welcome-group" data-id="${esc(group.id)}">${esc(group.name)}</button><p class="mini muted" style="margin:4px 0">${esc(group.hobby)} · ${esc(group.location||'Online')}${local?' · Da sua cidade':''}${shared?' · Hobby em comum':''}</p></article>`).join(''):'<p class="tip">Ainda não há sugestões com esse filtro.</p>'}</div>
- <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-outline" data-action="discover-groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
+ <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary" data-action="welcome-discover-groups">Ver comunidades</button><button type="button" class="btn btn-ghost" data-action="tab" data-tab="home">Pular e ir ao feed</button></div>`);
 }
 function feedbackAvailable(event) {
  const dateInBrasilia=eventCheckinDay();
@@ -4440,6 +4443,26 @@ async function onAction(btn) {
     if(me()===uid)showToast(saved?'Grupo removido dos guardados.':'Grupo guardado para conhecer depois.');
   },'changingSavedDiscoveryGroup');return;
   case 'discover-groups':state.groupView='discover';setTab('groups');return;
+  case 'welcome-discover-groups':
+    if(state.modal==='first-visit'){
+      state.groupHobby=state.welcomeHobby;state.groupMyInterests=false;state.savedDiscoveryOnly=false;
+      state.groupView='discover';setTab('groups');
+    }
+    return;
+  case 'save-welcome-hobby':await attempt(async()=>{
+    const uid=me(),hobby=state.welcomeHobby;
+    if(!uid||state.modal!=='first-visit'||!hobby||!state.groups.some(group=>group.hobby===hobby))return;
+    const target=memberRef(uid);
+    await firebase.runTransaction(db,async transaction=>{
+      const profile=(await transaction.get(target)).data();
+      if(!profile)throw new Error('O perfil ainda está carregando. Tente novamente.');
+      const hobbies=Array.isArray(profile.hobbies)?profile.hobbies:[];
+      if(hobbies.some(item=>norm(item)===norm(hobby)))return;
+      if(hobbies.length>=10)throw new Error('Seu perfil já tem 10 hobbies. Edite o perfil para trocar um deles.');
+      transaction.update(target,{hobbies:[...hobbies,hobby]});
+    });
+    if(me()===uid)showToast('Hobby adicionado ao seu perfil.');
+  });return;
   case 'record-event-checkin':
   case 'undo-event-checkin':await attempt(async()=>{
     const event=state.events.find(item=>item.id===state.selectedEvent),uid=me();
@@ -4819,7 +4842,12 @@ async function onAction(btn) {
   });return;
   case 'view-welcome-group':
     if(!state.groups.some(group=>group.id===id))return;
-    state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-detail');return;
+    state.tab='groups';state.selectedGroup=id;state.invitedGroupId=id;openModal('group-preview');return;
+  case 'back-first-visit':
+    if(state.modal==='group-preview'&&state.selectedGroup===state.invitedGroupId){
+      state.invitedGroupId=null;state.selectedGroup=null;openModal('first-visit');
+    }
+    return;
   case 'copy-group-invite':await copyGroupInvite(id);return;
   case 'restore-community-notices':
   case 'toggle-community-notices':await attempt(async()=>{
