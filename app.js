@@ -666,7 +666,7 @@ const notificationCategories={
 };
 const notificationCategoryByType=new Map([
  ['poll-open','polls'],['poll-result','polls'],['event-bulletin','bulletins'],
- ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['comment-reply','interactions'],['testimonial','interactions']
+ ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['comment-reply','interactions'],['testimonial','interactions'],['group-welcome','interactions']
 ]);
 const communityNoticeTypes=new Set(['event-hobby-alert','poll-open','poll-result','event-bulletin','saved-event-change']);
 function watchFollowedPosts(){
@@ -762,6 +762,16 @@ function renderEventHobbyAlerts(){
 }
 function notificationItems(){
  const items=state.notifications.map(item=>({...item,key:item.id}));
+ const uid=me();
+ if(uid&&state.notificationSettings.interactions!==false){
+   const blocked=new Set(state.blockedIds);
+   for(const post of state.posts){
+     if(post.userId!==uid||post.groupIntroduction!==true||!Array.isArray(post.welcomedBy))continue;
+     const count=post.welcomedBy.filter(id=>id!==uid&&!blocked.has(id)).length;
+     if(count)items.push({type:'group-welcome',postId:post.id,groupId:post.groupId,count,
+       key:'group-welcome:'+post.id,createdAt:post.welcomesChangedAt||post.createdAt});
+   }
+ }
  const directComments=new Set(state.notificationSettings.interactions===false?[]:state.notifications
    .filter(item=>item.type==='comment'||item.type==='comment-reply').map(item=>followedCommentReadKey(item.postId,item.commentId)));
  for(const [postId,watch] of state.followedPostWatches){
@@ -878,6 +888,7 @@ function renderNotifications(){
      'comment-reply':actor+' respondeu ao seu comentário.',
      'followed-comment':actor+' comentou em uma publicação que você acompanha.',
      testimonial:actor+' enviou um depoimento para você.',
+     'group-welcome':(item.count===1?'1 pessoa deu':item.count+' pessoas deram')+' boas-vindas à sua apresentação.',
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
@@ -892,7 +903,7 @@ function renderNotifications(){
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-hobby-alert':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos','group-welcome':'Abrir apresentação',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-hobby-alert':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -4927,7 +4938,8 @@ async function onAction(btn) {
     const post=state.posts.find(item=>item.id===id);
     if(!post||!canWelcomeGroupPost(post))return;
     const uid=me(),welcomed=Array.isArray(post.welcomedBy)&&post.welcomedBy.includes(uid);
-    await firebase.updateDoc(ref('posts',id),{welcomedBy:welcomed?firebase.arrayRemove(uid):firebase.arrayUnion(uid)});
+    await firebase.updateDoc(ref('posts',id),welcomed?{welcomedBy:firebase.arrayRemove(uid)}
+      :{welcomedBy:firebase.arrayUnion(uid),welcomesChangedAt:firebase.serverTimestamp()});
   },'changingGroupWelcome');return;
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
@@ -5003,8 +5015,8 @@ async function onAction(btn) {
     if(notice.type==='testimonial'){
       setTab('profile');document.getElementById('received-testimonials')?.scrollIntoView();return;
     }
-    if(['comment','comment-reply','followed-comment'].includes(notice.type)&&state.posts.some(post=>post.id===notice.postId)){
-      openComments(notice.postId,notice.type==='comment'?'':notice.commentId);return;
+    if(['comment','comment-reply','followed-comment','group-welcome'].includes(notice.type)&&state.posts.some(post=>post.id===notice.postId)){
+      openComments(notice.postId,['comment','group-welcome'].includes(notice.type)?'':notice.commentId);return;
     }
     if(notice.type==='follow'&&member(notice.actorId)){
       state.viewUser=notice.actorId;state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='Carregando depoimentos…';
