@@ -2212,7 +2212,7 @@ function myPostDrafts(){
      drafts.push({key,draft,groupId,introduction:match?.[1]==='intro',name:group?.name||(groupId?'Grupo indisponível':'Feed'),
        available:!groupId||Boolean(group?.members?.includes(uid))});
    }
-   return drafts.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+   return drafts.sort((a,b)=>(b.draft.updatedAt||0)-(a.draft.updatedAt||0)||a.name.localeCompare(b.name,'pt-BR'));
  }catch{return [];}
 }
 function renderMyPostDrafts(){
@@ -2222,6 +2222,7 @@ function renderMyPostDrafts(){
  ${drafts.map(({key,draft,introduction,name,available})=>`<article class="card" style="padding:14px;overflow-wrap:anywhere">
  <strong>${esc(name)}</strong><p class="mini muted">${introduction?'Apresentação':'Publicação'}</p>
  <p class="post-copy">${esc(short(draft.content.trim()||'Rascunho com mídia',160))}</p>
+ ${draft.updatedAt?`<p class="mini muted">Última edição: <time datetime="${new Date(draft.updatedAt).toISOString()}">${new Date(draft.updatedAt).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}</time></p>`:''}
  ${!available?'<p class="mini muted">Este grupo está indisponível para publicar.</p>':''}
  <div class="toggle-row" style="flex-wrap:wrap">${available?`<button type="button" class="btn btn-primary btn-small" data-action="resume-local-post-draft" data-id="${esc(key)}">Continuar</button>`:''}
  <button type="button" class="text-action" data-action="discard-local-post-draft" data-id="${esc(key)}">Descartar</button></div></article>`).join('')||'<p class="tip">Você ainda não tem rascunhos neste aparelho.</p>'}</section>`;
@@ -4093,7 +4094,8 @@ function readPostDraft(key){
    if(typeof draft?.content!=='string')return null;
    const media=postDraftMedia(name=>draft[name]);
    if(!draft.content.trim()&&!Object.values(media).some(Boolean))return null;
-   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text',...media};
+   const updatedAt=Number.isFinite(draft.updatedAt)&&draft.updatedAt>0&&draft.updatedAt<=8640000000000000?draft.updatedAt:null;
+   return {content:draft.content.slice(0,2000),hobby:typeof draft.hobby==='string'?draft.hobby:'',format:draft.format==='highlight'?'highlight':'text',...media,updatedAt};
  }catch{return null;}
 }
 function removePostDraft(key){
@@ -4105,8 +4107,12 @@ function savePostDraft(form){
  const {content,hobby,format}=form.elements;
  const media=postDraftMedia(name=>form.elements[name]?.value);
  try{
-   if(!content.value.trim()&&!Object.values(media).some(Boolean))removePostDraft(key);
-   else localStorage.setItem(key,JSON.stringify({content:content.value,hobby:hobby.value,format:format.value,...media}));
+   if(!content.value.trim()&&!Object.values(media).some(Boolean)){
+     removePostDraft(key);return;
+   }
+   const {updatedAt,...previous}=readPostDraft(key)||{};
+   const next={content:content.value,hobby:hobby.value,format:format.value,...media};
+   if(JSON.stringify(previous)!==JSON.stringify(next))localStorage.setItem(key,JSON.stringify({...next,updatedAt:now()}));
  }catch{}
 }
 function openPostComposer(){
