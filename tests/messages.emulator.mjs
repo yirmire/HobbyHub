@@ -624,7 +624,7 @@ const weeklyWithTime={
   update:{name:documents+group,fields:{weeklyQuestionPostId:str('welcome-post')}},
   updateMask:{fieldPaths:['weeklyQuestionPostId']},updateTransforms:stamp('weeklyQuestionChangedAt')
 };
-await moderate(recipient,[weeklyWithTime],403);
+await moderate(other,[weeklyWithTime],403);
 await moderate(sender,[weeklyWithTime],200);
 await moderate(sender,[weeklyWithTime],403);
 assert.ok((await request(sender,'GET',group,200)).fields.weeklyQuestionChangedAt.timestampValue);
