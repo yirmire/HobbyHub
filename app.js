@@ -60,7 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
-  savedView:'saved', savedGroup:'', savedSearch:'', followedPostsFilter:'all',
+  savedView:'saved', savedPostOrder:'recent', savedPostDates:new Map(), savedGroup:'', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
   savedNotes:new Map(), savedNotePostId:null,
@@ -373,6 +373,10 @@ function startSession() {
   },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),snapshot=>{
     state.savedIds=snapshot.docs.map(doc=>doc.id);
+    state.savedPostDates=new Map(snapshot.docs.map(doc=>{
+      const date=doc.data().savedAt;
+      return [doc.id,typeof date==='number'?date:date?.toMillis?.()];
+    }));
     for(const id of state.savedSelection||[]){
       if(!state.savedIds.includes(id))state.savedSelection.delete(id);
     }
@@ -464,7 +468,7 @@ async function init() {
       state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
-      state.savedView='saved';state.savedGroup='';
+      state.savedView='saved';state.savedGroup='';state.savedPostOrder='recent';state.savedPostDates.clear();
       state.savedSearch='';
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.editingSavedCollectionId=null;
@@ -2015,12 +2019,20 @@ function renderSaved() {
  <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}
  ${collectionIds.size&&!selection?`<button class="text-action" data-action="export-saved-posts">${collection?'Exportar coleção e notas':'Exportar salvos e notas'}</button>`:''}</div>`;
  const posts=state.posts.filter(post=>collectionIds.has(post.id)&&(!groupId||post.groupId===groupId));
- const results=posts.filter(post=>savedPostMatches(post,query,true));
+ const results=posts.filter(post=>savedPostMatches(post,query,true)).sort((a,b)=>{
+   const first=state.savedPostDates.get(a.id),second=state.savedPostDates.get(b.id);
+   if(!Number.isFinite(first))return Number.isFinite(second)?1:0;
+   if(!Number.isFinite(second))return -1;
+   return state.savedPostOrder==='oldest'?first-second:second-first;
+ });
+ const ordering=`<label class="field" style="margin-top:12px">Ordenar por data em que salvou<select class="select" id="saved-post-order">
+ <option value="recent" ${state.savedPostOrder==='recent'?'selected':''}>Salvas recentemente</option>
+ <option value="oldest" ${state.savedPostOrder==='oldest'?'selected':''}>Salvas há mais tempo</option></select></label>`;
  const selectionControls=selection?`<div class="toggle-row" style="flex-wrap:wrap;margin-bottom:16px">
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
  <button class="btn btn-primary btn-small" data-action="choose-bulk-collection" ${!selection.size||state.busy?'disabled':''}>Adicionar à coleção</button>
  ${collection?`<button class="btn btn-outline btn-small" data-action="remove-selected-from-collection" data-id="${esc(collection.id)}" ${!selection.size||state.busy?'disabled':''}>Retirar desta coleção</button>`:''}</div>`:'';
- return filters+search+collections+groupFilter+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
+ return filters+search+collections+groupFilter+(savedIds.size?ordering:'')+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
  ${posts.length||selection?`<button class="text-action" data-action="toggle-saved-selection" ${state.busy?'disabled':''}>${selection?'Cancelar seleção':'Selecionar'}</button>`:''}</div></div>${selectionControls}
  ${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${selection?`<button class="btn btn-outline btn-small" data-action="select-saved-post" data-id="${esc(post.id)}" aria-pressed="${selection.has(post.id)}" ${state.busy?'disabled':''}>${selection.has(post.id)?'Selecionada ✓':'Selecionar publicação'}</button>`:''}${postCard(post)}
  ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':groupId?'<p class="tip" role="status">Nenhuma publicação salva deste grupo nesta lista.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
@@ -5423,6 +5435,7 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
  else if(event.target.id==='event-city-filter')state.eventCityFilter=event.target.value;
+ else if(event.target.id==='saved-post-order')state.savedPostOrder=event.target.value==='oldest'?'oldest':'recent';
  else if(event.target.id==='saved-group-filter'){
    state.savedGroup=event.target.value;
    state.savedSelection=null;
