@@ -1391,11 +1391,12 @@ async function refreshWeeklyAnswers(force=false){
  }
  if(me()===uid&&state.modal==='all-weekly-questions'&&state.weeklyAnswers===result)render();
 }
-function renderWeeklyQuestionCards(entries){
+function renderWeeklyQuestionCards(entries,showFollow=false){
  return entries.map(({group,post})=>`<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
  <strong class="mini">${esc(group.name)}</strong>
  <p class="post-copy">${esc(short(post.content?.trim()||'Abra a publicação para ver a pergunta.',140))}</p>
  <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa da pergunta da semana em ${esc(group.name)}">Abrir conversa</button>
+ ${showFollow?`<button type="button" class="text-action" data-action="toggle-followed-weekly-question" data-id="${esc(post.id)}" ${state.busy?'disabled':''}>${state.followedPosts.has(post.id)?'Parar de acompanhar':'Acompanhar conversa'}</button>`:''}
  </article>`).join('');
 }
 function renderHomeWeeklyQuestions(groups,blocked){
@@ -3830,14 +3831,14 @@ function renderModal() {
  if(state.modal==='all-weekly-questions'){
    const filter=state.weeklyAnswerFilter||'all',result=state.weeklyAnswers;
    const entries=myActiveWeeklyQuestions();
-   let content=renderWeeklyQuestionCards(entries)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>';
+   let content=renderWeeklyQuestionCards(entries,true)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>';
    if(filter!=='all'){
      if(result?.error)content='<p class="tip" role="status">Não foi possível verificar suas respostas.</p><button type="button" class="text-action" data-action="retry-weekly-answers">Tentar novamente</button>';
      else if(!result?.unanswered)content='<p class="tip" role="status">Verificando suas respostas…</p>';
      else{
        const unanswered=filter==='unanswered';
        const matches=entries.filter(({post})=>result.unanswered.has(post.id)===unanswered);
-       content=renderWeeklyQuestionCards(matches)||`<p class="tip" role="status">${unanswered?'Nenhuma pergunta por responder.':'Você ainda não respondeu às perguntas em destaque.'}</p>`;
+       content=renderWeeklyQuestionCards(matches,true)||`<p class="tip" role="status">${unanswered?'Nenhuma pergunta por responder.':'Você ainda não respondeu às perguntas em destaque.'}</p>`;
      }
    }
    return modalWrap('Perguntas da semana',`<div class="form-stack">
@@ -5708,11 +5709,16 @@ async function onAction(btn) {
     openComments(id,newest?.id);return;
   }
   case 'stop-followed-post':
+  case 'toggle-followed-weekly-question':
   case 'toggle-followed-post':await attempt(async()=>{
     const uid=me();
     const following=state.followedPosts.has(id),stop=btn.dataset.action==='stop-followed-post';
-    if(!uid||(stop?state.tab!=='saved'||state.savedView!=='following'||!following:
-       state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id)))return;
+    if(!uid)return;
+    if(stop){
+      if(state.tab!=='saved'||state.savedView!=='following'||!following)return;
+    }else if(action==='toggle-followed-weekly-question'){
+      if(state.modal!=='all-weekly-questions'||!myActiveWeeklyQuestions().some(({post})=>post.id===id))return;
+    }else if(state.modal!=='post-options'||state.postEditor?.id!==id||!state.posts.some(post=>post.id===id))return;
     const target=ref('members',uid,'followedPosts',id);
     if(following)await firebase.deleteDoc(target);
     else await firebase.setDoc(target,{followedAt:firebase.serverTimestamp()});
