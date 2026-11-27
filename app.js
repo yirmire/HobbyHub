@@ -2668,8 +2668,8 @@ const directReactionOptions=new Map([['👍','Gostei'],['❤️','Amei'],['😂'
 function chatMessageMenuScope(){
  return state.chatMode==='direct'?state.chatTarget?.uid&&'direct:'+state.chatTarget.uid:state.chatMode;
 }
-function communityReadingKey(){
- const channel=state.chatMode==='global'?'global':['local',cityKey(myLocation())];
+function communityReadingKey(mode=state.chatMode){
+ const channel=mode==='global'?'global':['local',cityKey(myLocation())];
  return 'hobbyhub-community-read:'+JSON.stringify([me(),channel]);
 }
 function readCommunityPosition(key){
@@ -2690,6 +2690,10 @@ function firstUnreadCommunityMessage(messages,key){
  return position&&messages.find(message=>message.id&&message.senderId!==me()&&
    compareCommunityPositions(communityMessagePosition(message),position)>0);
 }
+function renderCommunityContact(mode,label,emoji){
+ const unread=firstUnreadCommunityMessage(chatMessages(mode),communityReadingKey(mode));
+ return `<button class="chat-contact ${state.chatMode===mode?'active':''}" data-action="chat-community"${mode==='global'?' data-value="global"':''}>${avatar({avatar:emoji})}<span class="community-contact-label">${label}</span><span id="community-unread-${mode}" class="unread-dot" ${unread?'':'hidden'}><span class="sr-only">Novas mensagens</span></span></button>`;
+}
 function rememberCommunityReading(log){
  const key=log.dataset.communityReading;
  if(!key||!log.clientHeight||state.modal||document.visibilityState!=='visible')return;
@@ -2702,7 +2706,10 @@ function rememberCommunityReading(log){
  const position={id:visible.dataset.communityMessage,time:Number(visible.dataset.communityTime)};
  const previous=readCommunityPosition(key);
  if(previous&&compareCommunityPositions(position,previous)<=0)return;
- try{localStorage.setItem(key,JSON.stringify(position));}catch{}
+ try{localStorage.setItem(key,JSON.stringify(position));}catch{return;}
+ if(state.chatMode==='direct'||communityReadingKey()!==key)return;
+ const indicator=document.getElementById('community-unread-'+state.chatMode);
+ if(indicator)indicator.hidden=!firstUnreadCommunityMessage(chatMessages(),key);
 }
 function restoreChatScroll(previous,next,scroll,nearBottom){
  const key=next.dataset.communityReading;
@@ -2721,9 +2728,9 @@ function restoreChatScroll(previous,next,scroll,nearBottom){
  next.addEventListener('scroll',()=>rememberCommunityReading(next),{passive:true});
  rememberCommunityReading(next);
 }
-function chatMessages(){
- if(state.chatMode==='direct')return state.directMessages;
- return state.messages.filter(m=>state.chatMode==='global'?m.scope==='global':m.scope!=='global'&&locate(m.location));
+function chatMessages(mode=state.chatMode){
+ if(mode==='direct')return state.directMessages;
+ return state.messages.filter(m=>mode==='global'?m.scope==='global':m.scope!=='global'&&locate(m.location));
 }
 function renderMessageMenu(m,actions){
  if(!m.id)return '';
@@ -3131,8 +3138,8 @@ function renderMessages() {
  <button class="btn ${unreadOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="unread" aria-pressed="${unreadOnly}">Não lidas</button>
  <button class="btn ${archiveOnly?'btn-soft':'btn-outline'} btn-small" data-action="filter-direct-threads" data-value="archived" aria-pressed="${archiveOnly}">Arquivadas</button>
  </div>
- <button class="chat-contact ${global?'active':''}" data-action="chat-community" data-value="global"><span class="avatar">🌍</span><span>Comunidade global</span></button>
- <button class="chat-contact ${community&&!global?'active':''}" data-action="chat-community"><span class="avatar">📍</span><span>Comunidade local</span></button>
+ ${renderCommunityContact('global','Comunidade global','🌍')}
+ ${renderCommunityContact('community','Comunidade local','📍')}
  ${query&&!threads.length?'<p class="mini muted" role="status">Nenhuma conversa encontrada neste filtro.</p>':''}
  ${!query&&archiveOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa arquivada.</p>':''}
  ${!query&&unreadOnly&&!threads.length?'<p class="tip" role="status">Nenhuma conversa não lida.</p>':''}
