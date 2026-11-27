@@ -1986,6 +1986,24 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('bulk reading status marks only selected unread saved posts', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.tab='saved';state.user={uid:'reader'};state.savedReadingOnly=true;
+    state.savedIds=['first','second','already','other'];state.readSavedPosts.add('already');
+    state.savedSelection=new Set(['first','second','already','removed']);
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),writeBatch:()=>({
+      update:(path,change)=>writes.push([path.split('/').at(-1),change]),commit:async()=>{}
+    })};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderSaved()',context),/Marcar selecionadas como lidas \(2\)/);
+  await vm.runInContext("onAction({dataset:{action:'mark-selected-saved-read'}})",context);
+  assert.equal(vm.runInContext('JSON.stringify(writes)',context),'[["first",{"read":true}],["second",{"read":true}]]');
+  assert.equal(vm.runInContext('state.savedSelection',context),null);
+});
+
 test('saved reading status updates only the saved record and filters unread posts', async () => {
   const context=appContext();
   vm.runInContext(`
