@@ -89,7 +89,7 @@ const state = {
   groupNewsReads:new Map(), groupNewsReadsLoaded:false, markingGroupNews:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
-  invitedGroupId:null, groupFirstStepsId:null, openGroupIntroductions:null, changingGroupWelcome:false, weeklyQuestionHistory:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, groupFirstStepsId:null, openGroupIntroductions:null, changingGroupWelcome:false, weeklyQuestionHistory:null, weeklyAnswerFilter:'all', weeklyAnswers:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
   pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Map(), directMuteMenu:null, directMuteTimer:null, archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -404,7 +404,10 @@ function startSession() {
   },'publicações acompanhadas');
   subscribe(col('members',me(),'savedEvents'),snapshot=>{state.savedEventDates=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().savedAt]));},'eventos salvos');
   subscribe(col('members',me(),'following'),(s)=>{state.followingIds=s.docs.map((d)=>d.id);},'pessoas seguidas');
-  subscribe(col('members',me(),'blocked'),(s)=>{state.blockedIds=s.docs.map((d)=>d.id);},'pessoas bloqueadas');
+  subscribe(col('members',me(),'blocked'),snapshot=>{
+    state.blockedIds=snapshot.docs.map(doc=>doc.id);
+    void refreshWeeklyAnswers();
+  },'pessoas bloqueadas');
   subscribe(col('members',me(),'moderation'),snapshot=>{
     state.groupRoles=new Map(snapshot.docs.map(doc=>[doc.id,doc.data().status]));
     watchReportNotices();
@@ -509,7 +512,7 @@ async function init() {
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.groupFirstStepsId=null;state.openGroupIntroductions=null;state.changingGroupWelcome=false;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.weeklyQuestionHistory=null;
-      state.weeklyUnansweredOnly=false;state.weeklyAnswers=null;
+      state.weeklyAnswerFilter='all';state.weeklyAnswers=null;
       state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -1371,7 +1374,7 @@ function myActiveWeeklyQuestions(){
 }
 async function refreshWeeklyAnswers(force=false){
  const uid=me();
- if(!uid||state.modal!=='all-weekly-questions'||!state.weeklyUnansweredOnly)return;
+ if(!uid||state.modal!=='all-weekly-questions'||!['unanswered','answered'].includes(state.weeklyAnswerFilter))return;
  const ids=myActiveWeeklyQuestions().map(({post})=>post.id).sort(),key=JSON.stringify(ids);
  if(!force&&state.weeklyAnswers?.key===key)return;
  const result={key,unanswered:null,error:false};
@@ -3825,16 +3828,21 @@ function renderModal() {
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
  if(state.modal==='all-weekly-questions'){
-   const only=state.weeklyUnansweredOnly,result=state.weeklyAnswers;
+   const filter=state.weeklyAnswerFilter||'all',result=state.weeklyAnswers;
    const entries=myActiveWeeklyQuestions();
    let content=renderWeeklyQuestionCards(entries)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>';
-   if(only){
+   if(filter!=='all'){
      if(result?.error)content='<p class="tip" role="status">Não foi possível verificar suas respostas.</p><button type="button" class="text-action" data-action="retry-weekly-answers">Tentar novamente</button>';
      else if(!result?.unanswered)content='<p class="tip" role="status">Verificando suas respostas…</p>';
-     else content=renderWeeklyQuestionCards(entries.filter(({post})=>result.unanswered.has(post.id)))||'<p class="tip" role="status">Nenhuma pergunta por responder.</p>';
+     else{
+       const unanswered=filter==='unanswered';
+       const matches=entries.filter(({post})=>result.unanswered.has(post.id)===unanswered);
+       content=renderWeeklyQuestionCards(matches)||`<p class="tip" role="status">${unanswered?'Nenhuma pergunta por responder.':'Você ainda não respondeu às perguntas em destaque.'}</p>`;
+     }
    }
    return modalWrap('Perguntas da semana',`<div class="form-stack">
-   <div><button type="button" class="filter ${only?'active':''}" data-action="toggle-weekly-unanswered" aria-pressed="${Boolean(only)}">Ainda não respondi</button></div>
+   <div class="filters" role="group" aria-label="Filtrar perguntas por resposta">${[['all','Todas'],['unanswered','Ainda não respondi'],['answered','Já respondi']].map(([value,label])=>
+   `<button type="button" class="filter ${filter===value?'active':''}" data-action="set-weekly-answer-filter" data-value="${value}" aria-pressed="${filter===value}">${label}</button>`).join('')}</div>
    ${content}</div>`);
  }
  if(state.modal==='weekly-question-history')return renderWeeklyQuestionHistory();
@@ -5063,9 +5071,10 @@ async function onAction(btn) {
   case 'open-all-weekly-questions':
     if(me()){state.weeklyAnswers=null;openModal('all-weekly-questions');await refreshWeeklyAnswers();}
     return;
-  case 'toggle-weekly-unanswered':
-    if(state.modal==='all-weekly-questions'){
-      state.weeklyUnansweredOnly=!state.weeklyUnansweredOnly;state.weeklyAnswers=null;render();
+  case 'set-weekly-answer-filter':
+    if(state.modal==='all-weekly-questions'&&['all','unanswered','answered'].includes(btn.dataset.value)){
+      if(state.weeklyAnswerFilter===btn.dataset.value)return;
+      state.weeklyAnswerFilter=btn.dataset.value;state.weeklyAnswers=null;render();
       await refreshWeeklyAnswers();
     }
     return;
