@@ -2178,7 +2178,7 @@ test('community chat resumes at new messages and remembers reading separately by
   context.log=log;
   run('rememberCommunityReading(log)');
   assert.deepEqual(JSON.parse(positions.get(globalKey)),{id:'a',time:10});
-  assert.match(run('renderMessages()'),/Novas mensagens<\/div><div data-community-message="c"/);
+  assert.match(run('renderMessages()'),/Novas mensagens<\/div><div id="community-message-c"/);
   run('restoreChatScroll(null,log,0,false)');
   assert.equal(log.scrollTop,120);
   context.document.getElementById=id=>id==='chat-log'?log:null;
@@ -2235,6 +2235,53 @@ test('community unread indicators follow each channel and clear after the last n
   assert.equal(indicators['community-unread-community'].hidden,false);
   assert.match(panel(),hidden('global'));
   assert.doesNotMatch(panel(),hidden('community'));
+});
+
+test('community replies send a reference and jump to older originals in their own channel', async () => {
+  const handlers={},context=appContext(handlers),writes=[],focused=[];
+  context.FormData=function(){return [['message','Minha resposta']];};
+  context.writes=writes;
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.chatMode='community';state.profile={location:'Recife'};
+    state.messages=[
+      {id:'original',senderId:'peer',senderName:'Ana',location:'Recife',text:'Mensagem de <Ana>',createdAt:1},
+      ...Array.from({length:151},(_,i)=>({id:'past-'+i,senderId:'peer',location:'Recife',text:'Conversa',createdAt:i+2})),
+      {id:'outside',scope:'global',senderId:'peer',text:'Outro canal',createdAt:200},
+      {id:'answer',senderId:'peer',location:'Recife',text:'Uma resposta',replyTo:'original',createdAt:201},
+      {id:'wrong',senderId:'peer',location:'Recife',text:'Outra resposta',replyTo:'outside',createdAt:202}
+    ];
+    db={};firebase={collection:()=> 'messages',addDoc:async(_target,payload)=>writes.push(payload)};
+    render=()=>{};showToast=()=>{};
+  `);
+  const form={id:'message-form',dataset:{draftKey:'message-form:reader:community'},elements:{message:{value:'Minha resposta'}}};
+  const panel=()=>run('renderMessages()');
+  context.document.getElementById=id=>{
+    if(id==='message-form')return form;
+    if(id==='community-message-original'&&panel().includes('id="community-message-original"')){
+      return {focus:()=>focused.push('original'),scrollIntoView:()=>focused.push('scroll')};
+    }
+    return null;
+  };
+  const action=(action,id)=>{context.actionData={action,id};return run('onAction({dataset:actionData})');};
+  assert.match(panel(),/data-action="reply-community-message" data-id="answer"/);
+  assert.match(panel(),/data-action="jump-community-message" data-id="original"><strong>Ana<\/strong><br>Mensagem de &lt;Ana&gt;/);
+  assert.doesNotMatch(panel(),/id="community-message-original"/);
+  assert.match(panel(),/Mensagem original indisponível/);
+  assert.doesNotMatch(panel(),/data-action="jump-community-message" data-id="outside"/);
+  await action('jump-community-message','original');
+  assert.deepEqual(focused,['original','scroll']);
+  assert.match(panel(),/id="community-message-original"/);
+  await action('reply-community-message','original');
+  assert.match(panel(),/Respondendo a[\s\S]*data-action="cancel-community-reply"/);
+  await handlers.submit({target:form,preventDefault(){}});
+  assert.equal(writes[0].replyTo,'original');
+  assert.equal(writes[0].scope,'local');
+  assert.equal(run('state.communityReply'),null);
+  await action('reply-community-message','outside');
+  assert.equal(run('state.communityReply'),null);
+  await action('latest-community-messages');
+  assert.doesNotMatch(panel(),/id="community-message-original"/);
 });
 
 test('draft dates are recorded only after changes and newer edits appear first', () => {
