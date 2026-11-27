@@ -1920,6 +1920,33 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('group welcome toggles only for another member’s introduction', async () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const post={id:'intro',groupId:'art',groupIntroduction:true,userId:'author'};
+    state.posts=[post];const group={id:'art',members:['reader','author']};state.groups=[group];
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),arrayUnion:id=>['add',id],arrayRemove:id=>['remove',id],
+      updateDoc:async(path,change)=>writes.push([path,change.welcomedBy])};
+    render=()=>{};
+  `,context);
+  const controls=()=>vm.runInContext('groupWelcomeControls(post)',context);
+  const toggle=()=>vm.runInContext("onAction({dataset:{action:'toggle-group-welcome',id:'intro'}})",context);
+  assert.match(controls(),/aria-pressed="false"[^>]*>Dar boas-vindas/);
+  await toggle();
+  vm.runInContext("post.welcomedBy=['reader']",context);
+  assert.match(controls(),/aria-pressed="true"[^>]*>Desfazer boas-vindas/);
+  assert.match(controls(),/1 pessoa deu boas-vindas/);
+  await toggle();
+  vm.runInContext("state.user={uid:'author'}",context);
+  assert.doesNotMatch(controls(),/toggle-group-welcome/);
+  await toggle();
+  assert.equal(vm.runInContext("JSON.stringify(writes.map(write=>write[1]))",context),'[["add","reader"],["remove","reader"]]');
+  handlers.toggle({target:{dataset:{groupIntroductions:'art'},isConnected:true,open:true}});
+  assert.equal(vm.runInContext('state.openGroupIntroductions',context),'art');
+});
+
 test('group introduction posts appear in both presentations and the conversation list', () => {
   const context=appContext();
   vm.runInContext(`

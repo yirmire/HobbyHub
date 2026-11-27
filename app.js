@@ -89,7 +89,7 @@ const state = {
   groupNewsReads:new Map(), groupNewsReadsLoaded:false, markingGroupNews:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
-  invitedGroupId:null, groupFirstStepsId:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, groupFirstStepsId:null, openGroupIntroductions:null, changingGroupWelcome:false, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
   pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Map(), directMuteMenu:null, directMuteTimer:null, archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -505,7 +505,7 @@ async function init() {
       state.myProductFeedback=null;state.selectedFeedbackId=null;state.feedbackSupplements=null;
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
-      state.invitedGroupId=null;state.groupFirstStepsId=null;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
+      state.invitedGroupId=null;state.groupFirstStepsId=null;state.openGroupIntroductions=null;state.changingGroupWelcome=false;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
       state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -1226,6 +1226,19 @@ function renderGroupPreview(group,date=new Date()){
    ${next?`<button type="button" class="text-action" data-action="view-event" data-id="${esc(next.id)}">${esc(next.title)}</button><p class="mini muted">${dateLabel(schedule.date)} ${esc(eventTimeLabel(next,schedule))}</p>`:'<p class="mini muted">Nenhum encontro marcado ainda.</p>'}</section>
    ${state.invitedGroupId===group.id?'<div><button type="button" class="text-action" data-action="back-first-visit">Voltar às boas-vindas</button></div>':''}
  </div>`);
+}
+function canWelcomeGroupPost(post){
+ const uid=me();
+ return Boolean(uid&&post.groupIntroduction===true&&post.userId!==uid&&!state.blockedIds.includes(post.userId)
+   &&state.groups.some(group=>group.id===post.groupId&&group.members?.includes(uid)));
+}
+function groupWelcomeControls(post){
+ if(post.groupIntroduction!==true)return '';
+ const welcomes=Array.isArray(post.welcomedBy)?post.welcomedBy:[];
+ const count=welcomes.length,welcomed=welcomes.includes(me());
+ return `<div class="toggle-row" style="flex-wrap:wrap;margin:8px 0">
+ ${canWelcomeGroupPost(post)?`<button type="button" class="btn btn-outline btn-small" data-action="toggle-group-welcome" data-id="${esc(post.id)}" aria-pressed="${welcomed}" ${state.changingGroupWelcome?'disabled':''}>${welcomed?'Desfazer boas-vindas':'Dar boas-vindas 👋'}</button>`:''}
+ <span class="mini muted">${count} ${count===1?'pessoa deu boas-vindas':'pessoas deram boas-vindas'}</span></div>`;
 }
 function groupHighlights(groups, now=new Date()) {
  const activity=new Map(groups.map(group=>[group.id,{}]));
@@ -3702,6 +3715,7 @@ function renderModal() {
  <strong class="mini">${esc(authorName(post))}</strong> ${editedPostLabel(post)}${post.content?`<p class="mini" style="margin:8px 0">${esc(short(post.content,280))}</p>`:''}
  ${renderSharedMedia(post,'na publicação')}
  ${recapEventButton(post)}
+ ${groupWelcomeControls(post)}
  <div class="toggle-row" style="flex-wrap:wrap"><button class="btn btn-soft btn-small" data-action="comments" data-id="${esc(post.id)}">${icon('chat')} Responder</button>${postOptionsButton(post)}${joined&&post.userId!==me()?`<button class="text-action" data-action="report-post" data-id="${esc(post.id)}">Denunciar publicação</button>`:''}${canManageGroup(group)?`<button class="btn btn-outline btn-small" data-action="${isPinned?'unpin-group-post':'pin-group-post'}" data-id="${esc(post.id)}">${isPinned?'Desafixar':'Fixar no grupo'}</button><button class="text-action" data-action="moderate-post" data-id="${esc(post.id)}">Remover publicação</button>`:''}</div></article>`;
  return modalWrap(group.name,`<div class="cover ${topicColor(group.hobby)}" style="height:126px"><span>${emoji(group.hobby)}</span></div>
  <p class="eyebrow" style="margin:15px 0 8px">${esc(group.hobby)} · ${esc(group.location||'Online')}</p><p class="muted" style="font-size:13px">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
@@ -3720,11 +3734,12 @@ function renderModal() {
  ${joined?`<div class="section-head"><h2>Enquetes</h2><button class="text-action" data-action="group-polls" data-id="${esc(group.id)}">Ver enquetes</button></div>`:''}
  <div class="section-head"><h2>Próximos eventos</h2>${joined?`<button class="text-action" data-action="group-event" data-id="${esc(group.id)}">${icon('plus')} Criar evento</button>`:''}</div>
  ${events.length?events.map(event=>eventCard(event,true)).join(''):'<p class="tip">Nenhum encontro marcado ainda.</p>'}
- ${joined?`<details class="card" style="padding:14px;margin:16px 0"><summary style="cursor:pointer;font-weight:800">Apresentações (${introductions.length})</summary>
+ ${joined?`<details class="card" data-group-introductions="${esc(group.id)}" style="padding:14px;margin:16px 0" ${state.openGroupIntroductions===group.id?'open':''}><summary style="cursor:pointer;font-weight:800">Apresentações (${introductions.length})</summary>
  <div class="form-stack" style="margin-top:12px">${introductions.length?introductions.map(post=>`<article class="card" style="padding:12px">
  <strong>${esc(authorName(post))}</strong>
  <p class="post-copy">${esc(short(post.content?.trim()||'Apresentação com foto ou vídeo',200))}</p>
  <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir apresentação de ${esc(authorName(post))}">Abrir apresentação</button>
+ ${groupWelcomeControls(post)}
  </article>`).join(''):'<p class="mini muted">Ainda não há apresentações neste grupo.</p>'}</div></details>`:''}
  <div class="section-head"><h2 id="group-conversations" tabindex="-1">Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
@@ -3761,7 +3776,7 @@ function renderModal() {
  const canModerate=post?.groupId&&canManageGroup(state.groups.find(group=>group.id===post.groupId));
  const belongsToGroup=state.groups.find(group=>group.id===post.groupId)?.members?.includes(me());
  const parent=state.comments.find(item=>item.id===state.commentReplyId&&!item.parentId);
- return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${renderSharedMedia(post,'na publicação')}${recapEventButton(post)}</div>
+ return modalWrap('Conversas sobre a publicação',`<div class="card" style="padding:15px;margin-bottom:19px"><div class="toggle-row"><strong style="font-size:12px">${esc(authorName(post))}</strong>${editedPostLabel(post)}${postOptionsButton(post)}</div><p class="post-copy" style="margin:8px 0 0">${esc(post.content)}</p>${renderSharedMedia(post,'na publicação')}${recapEventButton(post)}${groupWelcomeControls(post)}</div>
  <div class="comment-list">${state.comments.length?renderCommentThreads(belongsToGroup,canModerate):'<p class="tip">Ainda não há comentários. Comece a conversa!</p>'}</div>
  <form id="comment-form" data-draft="true" data-draft-key="${esc(`comment:${me()}:${state.selectedPost}:${state.commentReplyId||''}`)}" class="form-stack">
  ${state.commentReplyId?`<div class="toggle-row" style="flex-wrap:wrap"><strong>${parent?`Respondendo a ${esc(member(parent.userId)?.name||parent.userName||'Pessoa')}`:'Comentário original indisponível'}</strong>
@@ -4908,6 +4923,12 @@ async function onAction(btn) {
     render();
     document.getElementById('group-conversations')?.focus();
     return;
+  case 'toggle-group-welcome':await attempt(async()=>{
+    const post=state.posts.find(item=>item.id===id);
+    if(!post||!canWelcomeGroupPost(post))return;
+    const uid=me(),welcomed=Array.isArray(post.welcomedBy)&&post.welcomedBy.includes(uid);
+    await firebase.updateDoc(ref('posts',id),{welcomedBy:welcomed?firebase.arrayRemove(uid):firebase.arrayUnion(uid)});
+  },'changingGroupWelcome');return;
   case 'notifications':openModal('notifications');return;
   case 'notification-settings':openModal('notification-settings');return;
   case 'event-hobby-alerts':openModal('event-hobby-alerts');return;
@@ -5562,6 +5583,10 @@ document.addEventListener('click',async(event)=>{
  if(event.target.matches('[data-overlay="true"]'))closeModal();
 });
 document.addEventListener('keydown',handleDialogKey);
+document.addEventListener('toggle',event=>{
+ const section=event.target,id=section.dataset?.groupIntroductions;
+ if(id&&section.isConnected)state.openGroupIntroductions=section.open?id:null;
+},true);
 document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState==='visible')void syncNotificationReads();
  if(document.visibilityState==='visible'&&state.user){watchPollNotices();watchEventBulletins();scheduleEventOffers();scheduleEventReminderRefresh();loadHomeEventRooms();void loadPersonalHistory();render();}
