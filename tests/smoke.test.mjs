@@ -1920,7 +1920,7 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
-test('home weekly questions prioritize pinned groups and link to the same conversations', () => {
+test('home weekly questions prioritize pinned groups and link to the same conversations', async () => {
   const context=appContext();
   const html=vm.runInContext(`
     state.user={uid:'reader'};
@@ -1932,6 +1932,12 @@ test('home weekly questions prioritize pinned groups and link to the same conver
   const questions=html.match(/aria-label="Perguntas da semana"[\s\S]*?<\/section>/)?.[0]||'';
   assert.match(questions,/data-id="favorite-post"[\s\S]*data-id="fourth-post"[\s\S]*data-id="second-post"/);
   assert.doesNotMatch(questions,/normal-post|outside-post/);
+  assert.match(questions,/data-action="open-all-weekly-questions"/);
+  vm.runInContext('render=()=>{}',context);
+  await vm.runInContext("onAction({dataset:{action:'open-all-weekly-questions'}})",context);
+  const all=vm.runInContext('renderModal()',context);
+  assert.match(all,/data-id="favorite-post"[\s\S]*data-id="fourth-post"[\s\S]*data-id="second-post"[\s\S]*data-id="normal-post"/);
+  assert.doesNotMatch(all,/outside-post/);
 });
 
 test('weekly question notices show only the current question for joined unmuted groups', async () => {
