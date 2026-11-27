@@ -2408,6 +2408,41 @@ test('legacy community saves migrate once across cities and never revive a cloud
   assert.equal(storage.has(key('reader','global')),true);
 });
 
+test('community reading merges the most recent local and remote positions per account and city', async () => {
+  const context=appContext(),storage=new Map(),cloud=new Map(),writes=[];
+  context.localStorage={get length(){return storage.size;},key:i=>[...storage.keys()][i],
+    getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
+  context.cloud=cloud;context.writes=writes;
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.chatMode='global';state.profile={location:'Recife'};
+    state.communityReadSync={uid:'reader',ready:true,positions:new Map()};db={};
+    firebase={doc:(_db,...path)=>path,runTransaction:async(_db,callback)=>callback({
+      get:async path=>({exists:()=>cloud.has(path.at(-1)),data:()=>cloud.get(path.at(-1))}),
+      set:(path,position)=>{cloud.set(path.at(-1),position);writes.push(path.at(-1));}
+    })};
+  `);
+  const global=run('communityReadingKey()');
+  const local=run("communityReadingKey('community')");
+  const globalDoc=run("communityReadingDocument(communityReadingKey(),'reader')");
+  const localDoc=run("communityReadingDocument(communityReadingKey('community'),'reader')");
+  assert.notEqual(globalDoc,localDoc);
+  storage.set(global,JSON.stringify({id:'a',time:20}));
+  storage.set(local,JSON.stringify({id:'later-local',time:30}));
+  storage.set('hobbyhub-community-read:["other","global"]',JSON.stringify({id:'foreign',time:50}));
+  cloud.set(globalDoc,{id:'b',time:20});
+  cloud.set(localDoc,{id:'old-local',time:10});
+  run('state.communityReadSync.positions=new Map(cloud)');
+  assert.equal(run('readCommunityPosition(communityReadingKey()).id'),'b');
+  assert.equal(run("readCommunityPosition(communityReadingKey('community')).id"),'later-local');
+  await run('flushCommunityReading(state.communityReadSync)');
+  assert.deepEqual(writes,[localDoc]);
+  assert.equal(cloud.get(globalDoc).id,'b');
+  assert.equal(cloud.get(localDoc).id,'later-local');
+  run("state.user={uid:'other'}");
+  assert.equal(run('readCommunityPosition(communityReadingKey()).id'),'foreign');
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
