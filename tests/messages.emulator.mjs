@@ -603,6 +603,15 @@ await request(sender,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionI
 await request(recipient,'PATCH',savedMembership+'?updateMask.fieldPaths=collectionIds',200,{collectionIds:{arrayValue:{values:[str('collection'),str('another')]}}});
 assert.equal((await request(recipient,'GET',savedMembership,200)).fields.savedAt.integerValue,'10');
 const savedNotePath=savedMembership+'?updateMask.fieldPaths=note';
+const savedReadPath=savedMembership+'?updateMask.fieldPaths=read';
+await request(sender,'PATCH',savedReadPath,403,{read:{booleanValue:true}});
+await request(recipient,'PATCH',savedReadPath,403,{read:str('true')});
+await request(recipient,'PATCH',savedReadPath,200,{read:{booleanValue:true}});
+const readSaved=(await request(recipient,'GET',savedMembership,200)).fields;
+assert.equal(readSaved.read.booleanValue,true);
+assert.equal(readSaved.savedAt.integerValue,'10');
+assert.equal(readSaved.collectionIds.arrayValue.values[0].stringValue,'collection');
+await request(recipient,'PATCH',savedReadPath,200,{read:{booleanValue:false}});
 await request(sender,'PATCH',savedNotePath,403,{note:str('Outra conta')});
 await request(recipient,'PATCH',savedNotePath,403,{note:str('a'.repeat(501))});
 await request(recipient,'PATCH',savedNotePath,200,{note:str('Nota privada da publicação')});

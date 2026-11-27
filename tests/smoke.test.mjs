@@ -1986,6 +1986,35 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('saved reading status updates only the saved record and filters unread posts', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.tab='saved';state.user={uid:'reader'};
+    state.savedIds=['first','second'];
+    state.savedCollections=[{id:'kit',name:'Kit'}];state.selectedSavedCollection='kit';
+    state.savedMemberships.set('first',['kit']);state.savedMemberships.set('second',['kit']);
+    state.posts=[{id:'first',content:'Pintura a óleo',likes:[]},{id:'second',content:'Outra pintura',likes:[]}];
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),updateDoc:async(path,change)=>writes.push([path,change])};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  const invoke=(action,id)=>vm.runInContext(`onAction({dataset:${JSON.stringify({action,id})}})`,context);
+  await invoke('toggle-saved-reading-status','first');
+  const writes=JSON.parse(vm.runInContext('JSON.stringify(writes)',context));
+  assert.match(writes[0][0],/members\/reader\/saved\/first$/);
+  assert.deepEqual(writes[0][1],{read:true});
+  vm.runInContext("state.readSavedPosts.add('first')",context);
+  const list=()=>vm.runInContext('renderSaved()',context);
+  assert.match(list(),/Marcar para ler/);
+  await invoke('toggle-saved-reading-filter');
+  assert.doesNotMatch(list(),/Pintura a óleo/);
+  assert.match(list(),/Outra pintura/);
+  await invoke('toggle-saved-reading-filter');
+  assert.match(list(),/Pintura a óleo/);
+  await invoke('toggle-saved-reading-status','first');
+  assert.equal(vm.runInContext('writes[1][1].read',context),false);
+});
+
 test('saved posts sort by save date in either direction and leave undated posts last', () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
