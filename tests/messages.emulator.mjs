@@ -620,6 +620,14 @@ const documents=`${databasePath}/documents/artifacts/${project}/`;
 const log=`${group}/moderationLog/removal-1`;
 const pointer='public/data/removedPosts/remove-in-group';
 const stamp=fieldPath=>[{fieldPath,setToServerValue:'REQUEST_TIME'}];
+const weeklyWithTime={
+  update:{name:documents+group,fields:{weeklyQuestionPostId:str('welcome-post')}},
+  updateMask:{fieldPaths:['weeklyQuestionPostId']},updateTransforms:stamp('weeklyQuestionChangedAt')
+};
+await moderate(other,[weeklyWithTime],403);
+await moderate(sender,[weeklyWithTime],200);
+await moderate(sender,[weeklyWithTime],403);
+assert.ok((await request(sender,'GET',group,200)).fields.weeklyQuestionChangedAt.timestampValue);
 const timedWelcome={
   update:{name:documents+'public/data/posts/group-introduction',fields:welcomes(recipient.localId)},
   updateMask:{fieldPaths:['welcomedBy']},updateTransforms:stamp('welcomesChangedAt')

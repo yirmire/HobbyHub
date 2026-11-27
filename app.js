@@ -668,7 +668,7 @@ const notificationCategoryByType=new Map([
  ['poll-open','polls'],['poll-result','polls'],['event-bulletin','bulletins'],
  ['saved-event-change','savedEvents'],['follow','interactions'],['comment','interactions'],['comment-reply','interactions'],['testimonial','interactions'],['group-welcome','interactions']
 ]);
-const communityNoticeTypes=new Set(['event-hobby-alert','poll-open','poll-result','event-bulletin','saved-event-change']);
+const communityNoticeTypes=new Set(['event-hobby-alert','poll-open','poll-result','event-bulletin','saved-event-change','weekly-question']);
 function watchFollowedPosts(){
  const uid=me(),available=new Set(state.posts.map(post=>post.id));
  const watches=state.followedPostWatches;
@@ -770,6 +770,18 @@ function notificationItems(){
      const count=post.welcomedBy.filter(id=>id!==uid&&!blocked.has(id)).length;
      if(count)items.push({type:'group-welcome',postId:post.id,groupId:post.groupId,count,
        key:'group-welcome:'+post.id,createdAt:post.welcomesChangedAt||post.createdAt});
+   }
+ }
+ if(uid){
+   const groups=state.groups.filter(group=>group.weeklyQuestionPostId&&group.members?.includes(uid)&&!state.mutedCommunityIds.has(group.id));
+   if(groups.length){
+     const posts=new Map(state.posts.map(post=>[post.id,post]));
+     for(const group of groups){
+       const post=posts.get(group.weeklyQuestionPostId);
+       if(post?.groupId!==group.id)continue;
+       items.push({type:'weekly-question',groupId:group.id,postId:post.id,actorId:post.userId,
+         key:'weekly-question:'+group.id+':'+post.id,createdAt:group.weeklyQuestionChangedAt||post.createdAt});
+     }
    }
  }
  const directComments=new Set(state.notificationSettings.interactions===false?[]:state.notifications
@@ -889,6 +901,7 @@ function renderNotifications(){
      'followed-comment':actor+' comentou em uma publicação que você acompanha.',
      testimonial:actor+' enviou um depoimento para você.',
      'group-welcome':(item.count===1?'1 pessoa deu':item.count+' pessoas deram')+' boas-vindas à sua apresentação.',
+     'weekly-question':'Nova pergunta da semana em '+(group?.name||'uma comunidade')+'.',
      report:'Nova denúncia em '+(group?.name||'uma comunidade')+'.',
      'poll-open':'Nova enquete em '+group?.name+' · '+item.poll?.question,
      'poll-result':'Resultado da enquete em '+group?.name+' · '+item.poll?.question,
@@ -903,7 +916,7 @@ function renderNotifications(){
      'product-news':item.news?.title,
      'event-answer':'Sua pergunta foi respondida · '+(state.events.find(event=>event.id===item.eventId)?.title||'Evento')
    }[item.type];
-   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos','group-welcome':'Abrir apresentação',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-hobby-alert':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
+   const label={follow:'Abrir perfil',comment:'Abrir comentários','comment-reply':'Ver resposta','followed-comment':'Ver comentário',testimonial:'Ver depoimentos','group-welcome':'Abrir apresentação','weekly-question':'Abrir conversa',report:'Abrir denúncias','poll-open':'Abrir enquete','poll-result':'Ver resultado','event-answer':'Ver resposta','event-seat':'Ver vaga','event-reminder':'Ver evento','event-hobby-alert':'Ver evento','event-bulletin':'Ler recado','saved-event-change':'Ver evento','confirmed-event-cancellation':'Ver evento','feedback-resolved':item.hasResolution?'Ver resposta':'Ver feedback','feedback-resumed':'Ver feedback','product-news':'Ver novidades'}[item.type];
    const changes=item.event?eventChangeDescriptions(item.event).map(change=>`<li>${esc(change)}</li>`).join(''):'';
    const date=item.type==='product-news'?productNewsDate.format(item.time):when(item.time);
    return `<div class="card" style="padding:12px"><p>${isUnread?'<strong>Novo · </strong>':''}${esc(message)}</p>${changes?`<ul class="mini" style="padding-left:20px">${changes}</ul>`:''}<div class="toggle-row" style="flex-wrap:wrap"><small>${date}</small><button class="text-action" data-action="open-notification" data-id="${esc(item.readKey)}">${label}</button>
@@ -4911,7 +4924,7 @@ async function onAction(btn) {
       if(muted&&exists)transaction.delete(target);
       if(!muted&&!exists)transaction.set(target,{mutedAt:firebase.serverTimestamp()});
     });
-    if(me()===uid)showToast(muted?'Avisos da comunidade reativados.':'Enquetes, recados e mudanças de eventos salvos desta comunidade foram silenciados.');
+    if(me()===uid)showToast(muted?'Avisos da comunidade reativados.':'Avisos de enquetes, perguntas da semana, recados e mudanças de eventos salvos foram silenciados.');
   });return;
   case 'pin-group-post':
   case 'set-weekly-question':
@@ -4924,7 +4937,8 @@ async function onAction(btn) {
     const field=weekly?'weeklyQuestionPostId':'pinnedPostId';
     if(action==='pin-group-post'||action==='set-weekly-question'){
       if(!state.posts.some(post=>post.id===id&&post.groupId===group.id))return;
-      await firebase.updateDoc(groupRef,{[field]:id});
+      const changes=weekly?{weeklyQuestionPostId:id,weeklyQuestionChangedAt:firebase.serverTimestamp()}:{pinnedPostId:id};
+      await firebase.updateDoc(groupRef,changes);
       showToast(weekly?'Pergunta da semana destacada.':'Publicação fixada na comunidade.');
     }else{
       await firebase.runTransaction(db,async tx=>{
@@ -5029,6 +5043,9 @@ async function onAction(btn) {
     }
     if(['comment','comment-reply','followed-comment','group-welcome'].includes(notice.type)&&state.posts.some(post=>post.id===notice.postId)){
       openComments(notice.postId,['comment','group-welcome'].includes(notice.type)?'':notice.commentId);return;
+    }
+    if(notice.type==='weekly-question'&&state.posts.some(post=>post.id===notice.postId)){
+      openComments(notice.postId);return;
     }
     if(notice.type==='follow'&&member(notice.actorId)){
       state.viewUser=notice.actorId;state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='Carregando depoimentos…';

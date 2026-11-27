@@ -614,10 +614,10 @@ service cloud.firestore {
     }
 
     match /artifacts/{appId}/public/data/groups/{groupId} {
-      function canSetGroupPostHighlight(field) {
+      function canSetGroupPostHighlight(field, fields) {
         let postId = request.resource.data.get(field, null);
         return managesGroup(appId, groupId, resource.data)
-          && changedOnly([field])
+          && changedOnly(fields)
           && postId is string
           && (postId == '' || (validText(postId, 1, 120)
             && postId.matches('[^/]+')
@@ -627,7 +627,7 @@ service cloud.firestore {
       allow create: if loggedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.members == [request.auth.uid]
-        && !request.resource.data.keys().hasAny(['pinnedPostId','weeklyQuestionPostId'])
+        && !request.resource.data.keys().hasAny(['pinnedPostId','weeklyQuestionPostId','weeklyQuestionChangedAt'])
         && validText(request.resource.data.name, 3, 75)
         && validText(request.resource.data.hobby, 1, 60)
         && validText(request.resource.data.description, 1, 600)
@@ -635,8 +635,12 @@ service cloud.firestore {
       allow update: if (onlyMyArrayMembership('members')
           && (request.auth.uid in request.resource.data.members
             || !existsAfter(moderationPath(appId, request.auth.uid, groupId))))
-        || canSetGroupPostHighlight('pinnedPostId')
-        || canSetGroupPostHighlight('weeklyQuestionPostId');
+        || canSetGroupPostHighlight('pinnedPostId',['pinnedPostId'])
+        || canSetGroupPostHighlight('weeklyQuestionPostId',['weeklyQuestionPostId'])
+        || (canSetGroupPostHighlight('weeklyQuestionPostId',['weeklyQuestionPostId','weeklyQuestionChangedAt'])
+          && request.resource.data.weeklyQuestionPostId != ''
+          && request.resource.data.weeklyQuestionPostId != resource.data.get('weeklyQuestionPostId','')
+          && request.resource.data.weeklyQuestionChangedAt == request.time);
       allow delete: if loggedIn() && resource.data.get('createdBy', '') == request.auth.uid;
 
       function canReviewModeration() {
