@@ -2106,6 +2106,28 @@ test('group introduction posts appear in both presentations and the conversation
   assert.match(html,/Conversas do grupo[\s\S]*Apresentação[\s\S]*Gosto de aquarela/);
 });
 
+test('introduction drafts survive leaving the editor and are isolated by account, group, and post type', async () => {
+  const context=appContext(),stored=new Map();
+  context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.composingGroup='art';state.composingIntroduction=true;state.modal='compose';
+    state.groups=[{id:'art',name:'Arte',members:['reader'],hobby:'Arte'}];
+    const key=postDraftKey();
+    savePostDraft({dataset:{draftKey:key},elements:{content:{value:'Minha primeira apresentação'},hobby:{value:'Arte'},format:{value:'text'}}});
+    state.modal='group-detail';state.selectedGroup='art';render=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/Continuar apresentação/);
+  assert.equal(vm.runInContext("readPostDraft(introductionDraftKey('other'))",context),null);
+  assert.equal(vm.runInContext("state.composingIntroduction=false;readPostDraft(postDraftKey())",context),null);
+  assert.equal(vm.runInContext("state.user={uid:'other'};readPostDraft(introductionDraftKey('art'))",context),null);
+  await vm.runInContext("state.user={uid:'reader'};onAction({dataset:{action:'introduce-group',id:'art'}})",context);
+  assert.match(vm.runInContext('renderModal()',context),/Continuar apresentação[\s\S]*Descartar rascunho/);
+  await vm.runInContext("onAction({dataset:{action:'continue-post-draft'}})",context);
+  assert.equal(vm.runInContext('state.drafts.get(key).content',context),'Minha primeira apresentação');
+  await vm.runInContext("openPostComposer();onAction({dataset:{action:'discard-post-draft'}})",context);
+  assert.equal(stored.size,0);
+});
+
 test('new group members can choose the introduction or skip straight to conversations', async () => {
   const context=appContext();
   const focused=[];
