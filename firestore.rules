@@ -287,6 +287,12 @@ service cloud.firestore {
         allow create: if validGroupNewsRead();
         allow update: if validGroupNewsRead() && request.resource.data.seenThrough >= resource.data.seenThrough;
       }
+      match /savedDiscoveryGroups/{groupId} {
+        allow read, delete: if isMe(uid);
+        allow create, update: if isMe(uid)
+          && request.resource.data.keys().hasOnly([])
+          && exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/groups/$(groupId));
+      }
       match /notifications/{noticeId} {
         function newFollow(data) {
           let follow = /databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(data.actorId)/following/$(uid);
