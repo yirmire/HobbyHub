@@ -293,6 +293,20 @@ await request(sender, 'POST', 'public/data/messages?documentId=hello', 200, {
 await request(recipient, 'GET', 'public/data/messages/hello', 200);
 await request(null, 'GET', 'public/data/messages/hello', 403);
 
+const communitySaved = `public/data/members/${sender.localId}/communitySaved/hello`;
+await request(sender, 'PATCH', communitySaved, 200, { saved: { booleanValue: true } });
+await request(sender, 'GET', communitySaved, 200);
+await request(sender, 'GET', `public/data/members/${sender.localId}/communitySaved`, 200);
+await request(recipient, 'GET', `public/data/members/${sender.localId}/communitySaved`, 403);
+await request(recipient, 'GET', communitySaved, 403);
+await request(null, 'GET', communitySaved, 403);
+await request(recipient, 'PATCH', communitySaved, 403, { saved: { booleanValue: false } });
+await request(sender, 'PATCH', communitySaved, 403, { saved: { stringValue: 'true' } });
+await request(sender, 'PATCH', communitySaved, 403, { saved: { booleanValue: true }, text: { stringValue: 'extra' } });
+await request(sender, 'PATCH', communitySaved, 200, { saved: { booleanValue: false } });
+await request(sender, 'DELETE', communitySaved, 403);
+
+
 const following = `public/data/members/${sender.localId}/following`;
 await request(sender, 'POST', `${following}?documentId=${recipient.localId}`, 200, {
   createdAt: { integerValue: String(Date.now()) }
