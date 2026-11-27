@@ -2124,6 +2124,35 @@ test('private chat puts conversation tools and per-message actions behind access
   assert.match(panel(),/aria-label="Enviar mensagem"/);
 });
 
+test('community chat menus copy from the active channel and only offer reports for other people', async () => {
+  const context=appContext();
+  const copied=[];
+  context.navigator.clipboard={writeText:async text=>copied.push(text)};
+  vm.runInContext(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='global';state.mobileChatOpen=true;
+    state.messages=[
+      {id:'shared',scope:'global',senderId:'peer',text:'Mensagem global'},
+      {id:'own',scope:'global',senderId:'reader',text:'Minha mensagem'},
+      {id:'shared',senderId:'reader',text:'Mensagem local',location:'Local'}
+    ];
+    state.profile={location:'Local'};render=()=>{};showToast=()=>{};
+  `,context);
+  const panel=()=>vm.runInContext('renderMessages()',context);
+  const act=action=>vm.runInContext(`onAction({dataset:{action:'${action}',id:'shared'}})`,context);
+  assert.match(panel(),/data-id="shared" aria-label="Opções da mensagem" aria-expanded="false"/);
+  assert.match(panel(),/data-type="communityMessage" data-id="shared"/);
+  assert.doesNotMatch(panel(),/data-type="communityMessage" data-id="own"|data-action="reply-direct-message"/);
+  await act('toggle-direct-message-menu');
+  assert.match(panel(),/data-id="shared" aria-label="Opções da mensagem" aria-expanded="true"/);
+  await act('copy-direct-message');
+  vm.runInContext("state.chatMode='community'",context);
+  assert.match(panel(),/data-id="shared" aria-label="Opções da mensagem" aria-expanded="false"/);
+  assert.doesNotMatch(panel(),/data-type="communityMessage"/);
+  assert.match(panel(),/aria-label="Enviar mensagem"/);
+  await act('copy-direct-message');
+  assert.deepEqual(copied,['Mensagem global','Mensagem local']);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
