@@ -1353,23 +1353,31 @@ async function markGroupNewsSeen(uid,entries){
    });
  }
 }
-function renderHomeWeeklyQuestions(groups,blocked){
- const questions=[...groups.values()].filter(group=>group.weeklyQuestionPostId);
- if(!questions.length)return '';
+function activeWeeklyQuestions(groups,blocked){
+ const questions=groups.filter(group=>group.weeklyQuestionPostId);
+ if(!questions.length)return [];
  const posts=new Map(state.posts.map(post=>[post.id,post]));
- const entries=questions.flatMap(group=>{
+ return questions.flatMap(group=>{
    const post=posts.get(group.weeklyQuestionPostId);
    if(!post||post.groupId!==group.id||blocked.has(post.userId))return [];
    return [{group,post,time:group.weeklyQuestionChangedAt?.toMillis?.()||post.createdAt||0}];
- }).sort((a,b)=>comparePinnedGroups(a.group.id,b.group.id)||b.time-a.time).slice(0,3);
- if(!entries.length)return '';
- return `<section class="form-stack" aria-label="Perguntas da semana">
- <h3 style="font-size:14px;margin:0">Perguntas da semana</h3>
- ${entries.map(({group,post})=>`<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
+ }).sort((a,b)=>comparePinnedGroups(a.group.id,b.group.id)||b.time-a.time);
+}
+function renderWeeklyQuestionCards(entries){
+ return entries.map(({group,post})=>`<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
  <strong class="mini">${esc(group.name)}</strong>
  <p class="post-copy">${esc(short(post.content?.trim()||'Abra a publicação para ver a pergunta.',140))}</p>
  <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa da pergunta da semana em ${esc(group.name)}">Abrir conversa</button>
- </article>`).join('')}</section>`;
+ </article>`).join('');
+}
+function renderHomeWeeklyQuestions(groups,blocked){
+ const entries=activeWeeklyQuestions(groups,blocked);
+ if(!entries.length)return '';
+ return `<section class="form-stack" aria-label="Perguntas da semana">
+ <div class="toggle-row" style="justify-content:space-between;flex-wrap:wrap">
+ <h3 style="font-size:14px;margin:0">Perguntas da semana</h3>
+ <button type="button" class="text-action" data-action="open-all-weekly-questions">Ver todas as perguntas da semana</button></div>
+ ${renderWeeklyQuestionCards(entries.slice(0,3))}</section>`;
 }
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
@@ -1383,7 +1391,7 @@ function renderGroupNews(compact=false){
    &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime))
    &&(!query||[post.content,authorName(post),groups.get(post.groupId).name].some(value=>norm(value).includes(query))))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
- const weeklyQuestions=compact?renderHomeWeeklyQuestions(groups,blocked):'';
+ const weeklyQuestions=compact?renderHomeWeeklyQuestions([...groups.values()],blocked):'';
  if(compact&&!posts.length&&!weeklyQuestions)return '';
  const limit=compact?3:state.groupNewsLimit;
  const unread=compact?null:groupUnreadNews();
@@ -3791,6 +3799,11 @@ function renderModal() {
  ${key?'<p class="mini muted">Seu rascunho é salvo neste aparelho.</p>':''}
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
+ if(state.modal==='all-weekly-questions'){
+   const groups=state.groups.filter(group=>group.members?.includes(me()));
+   const entries=activeWeeklyQuestions(groups,new Set(state.blockedIds));
+   return modalWrap('Perguntas da semana',`<div class="form-stack">${renderWeeklyQuestionCards(entries)||'<p class="tip">Seus grupos ainda não têm perguntas em destaque.</p>'}</div>`);
+ }
  if(state.modal==='weekly-question-history')return renderWeeklyQuestionHistory();
  if(state.modal==='group-detail'||state.modal==='group-preview'){
  const group=state.groups.find(g=>g.id===state.selectedGroup);
@@ -5014,6 +5027,7 @@ async function onAction(btn) {
     }
   });return;
   case 'open-weekly-question-history':await openWeeklyQuestionHistory(id);return;
+  case 'open-all-weekly-questions':if(me())openModal('all-weekly-questions');return;
   case 'set-weekly-question':
   case 'clear-weekly-question':await attempt(async()=>{
     const group=state.groups.find(item=>item.id===state.selectedGroup),clear=action==='clear-weekly-question';
