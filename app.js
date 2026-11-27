@@ -2031,9 +2031,11 @@ function renderSaved() {
  const ordering=`<label class="field" style="margin-top:12px">Ordenar por data em que salvou<select class="select" id="saved-post-order">
  <option value="recent" ${state.savedPostOrder==='recent'?'selected':''}>Salvas recentemente</option>
  <option value="oldest" ${state.savedPostOrder==='oldest'?'selected':''}>Salvas há mais tempo</option></select></label>`;
+ const unreadSelected=selection?unreadSavedSelection(selection).length:0;
  const selectionControls=selection?`<div class="toggle-row" style="flex-wrap:wrap;margin-bottom:16px">
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
  <button class="btn btn-primary btn-small" data-action="choose-bulk-collection" ${!selection.size||state.busy?'disabled':''}>Adicionar à coleção</button>
+ <button type="button" class="btn btn-outline btn-small" data-action="mark-selected-saved-read" ${!unreadSelected||state.busy?'disabled':''}>Marcar selecionadas como lidas (${unreadSelected})</button>
  ${collection?`<button class="btn btn-outline btn-small" data-action="remove-selected-from-collection" data-id="${esc(collection.id)}" ${!selection.size||state.busy?'disabled':''}>Retirar desta coleção</button>`:''}</div>`:'';
  const readingFilter=savedIds.size?`<div class="filters" style="margin-top:12px"><button type="button" class="filter ${state.savedReadingOnly?'active':''}" data-action="toggle-saved-reading-filter" aria-pressed="${state.savedReadingOnly}">Para ler</button></div>`:'';
  return filters+search+collections+groupFilter+(savedIds.size?ordering:'')+readingFilter+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
@@ -2064,6 +2066,27 @@ function renderSavedPostActions(post){
  <div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="manage-saved-collections" data-id="${id}">Organizar em coleções</button>
  <button class="text-action" data-action="edit-saved-note" data-id="${id}">${note?'Editar nota privada':'Adicionar nota privada'}</button>
  ${read?'<span class="pill">Lida</span>':''}<button type="button" class="text-action" data-action="toggle-saved-reading-status" data-id="${id}" ${state.busy?'disabled':''}>${read?'Marcar para ler':'Marcar como lida'}</button></div>`;
+}
+function unreadSavedSelection(selection){
+ return [...selection].filter(id=>state.savedIds.includes(id)&&!state.readSavedPosts.has(id));
+}
+async function markSelectedSavedRead(){
+ await attempt(async()=>{
+   const uid=me(),selection=state.savedSelection;
+   if(!uid||!selection?.size||state.tab!=='saved'||state.savedView!=='saved')return;
+   const ids=unreadSavedSelection(selection);
+   if(!ids.length)return;
+   for(let offset=0;offset<ids.length;offset+=450){
+     if(me()!==uid||state.savedSelection!==selection)return;
+     const chunk=ids.slice(offset,offset+450),batch=firebase.writeBatch(db);
+     for(const id of chunk)batch.update(ref('members',uid,'saved',id),{read:true});
+     await batch.commit();
+     for(const id of chunk)selection.delete(id);
+   }
+   if(me()!==uid||state.savedSelection!==selection)return;
+   state.savedSelection=null;
+   showToast(ids.length===1?'Publicação marcada como lida.':'Publicações marcadas como lidas.');
+ });
 }
 async function updateSavedSelection(collectionId,remove){
  await attempt(async()=>{
@@ -5298,6 +5321,7 @@ async function onAction(btn) {
     if(state.tab==='saved'&&state.savedView==='saved'&&state.savedSelection?.size&&!state.busy)openModal('bulk-saved-collection');
     return;
   case 'add-selected-to-collection':await updateSavedSelection(id,false);return;
+  case 'mark-selected-saved-read':await markSelectedSavedRead();return;
   case 'remove-selected-from-collection':await updateSavedSelection(id,true);return;
   case 'manage-saved-collections':
     if(state.tab==='saved'&&state.savedView==='saved'&&state.savedIds.includes(id)){
