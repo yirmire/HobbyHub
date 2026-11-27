@@ -161,12 +161,15 @@ service cloud.firestore {
 
       match /saved/{postId} {
         allow read, delete: if isMe(uid);
-        allow create: if isMe(uid) && validText(request.resource.data.get('note',''), 0, 500);
+        allow create: if isMe(uid) && validText(request.resource.data.get('note',''), 0, 500)
+          && request.resource.data.get('read', false) is bool;
         allow update: if isMe(uid) && changedOnly(['collectionIds'])
           && request.resource.data.collectionIds is list
           && request.resource.data.collectionIds.size() <= 100;
         allow update: if isMe(uid) && changedOnly(['note'])
           && validText(request.resource.data.note, 0, 500);
+        allow update: if isMe(uid) && changedOnly(['read'])
+          && request.resource.data.read is bool;
       }
       match /savedComments/{savedId} {
         function validSavedComment(data) {
