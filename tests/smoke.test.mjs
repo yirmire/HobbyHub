@@ -2443,6 +2443,46 @@ test('community reading merges the most recent local and remote positions per ac
   assert.equal(run('readCommunityPosition(communityReadingKey()).id'),'foreign');
 });
 
+test('community attention lists replies and exact mentions and opens the right channel', async () => {
+  const context=appContext(),focused=[];
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.tab='messages';state.chatMode='global';state.profile={name:'José Silva',location:'Recife'};
+    state.members=[{uid:'reader',name:'José Silva'},{uid:'peer',name:'Ana Costa'}];
+    state.messages=[
+      {id:'mine',senderId:'reader',scope:'global',text:'Olá',createdAt:1},
+      {id:'reply',senderId:'peer',scope:'global',text:'Sim!',replyTo:'mine',createdAt:2},
+      {id:'mention',senderId:'peer',location:'Recife',text:'Oi @JOSÉ-SILVA!',createdAt:3},
+      {id:'short',senderId:'peer',scope:'global',text:'Oi @jose',createdAt:4},
+      {id:'email',senderId:'peer',scope:'global',text:'email@jose',createdAt:5},
+      {id:'prefix',senderId:'peer',scope:'global',text:'Oi @josefina',createdAt:6},
+      {id:'remote',senderId:'peer',location:'Olinda',text:'Oi @jose',createdAt:7},
+      {id:'cross',senderId:'peer',location:'Recife',text:'Resposta fora do canal',replyTo:'mine',createdAt:8},
+      {id:'self',senderId:'reader',scope:'global',text:'Oi @jose',createdAt:9}
+    ];
+    render=()=>{};
+  `);
+  const input={value:'Olá',maxLength:1500,focus:()=>focused.push('input')};
+  context.document.getElementById=id=>id==='community-message-mention'?{focus:()=>focused.push('mention'),scrollIntoView:()=>focused.push('scroll')}:id==='message-text'?input:null;
+  const action=(action,id,value)=>{context.actionData={action,id,value};return run('onAction({dataset:actionData})');};
+  assert.match(run('renderMessages()'),/data-action="open-community-attention">Menções e respostas/);
+  await action('open-community-attention');
+  const modal=run('renderModal()');
+  assert.match(modal,/@jose-silva/);
+  assert.match(modal,/Comunidade local · Menção/);
+  assert.match(modal,/Comunidade global · Resposta/);
+  assert.doesNotMatch(modal,/data-id="(?:email|prefix|remote|cross|self)"/);
+  await action('open-community-attention-message','mention','community');
+  assert.equal(run('state.chatMode'),'community');
+  assert.equal(run('state.modal'),null);
+  assert.deepEqual(focused,['mention','scroll']);
+  await action('mention-community-author','mention');
+  assert.equal(input.value,'Olá @ana-costa ');
+  run("state.members.push({uid:'other',name:'José Silva'})");
+  assert.equal(run("communityMentionHandles('reader').join(',')"),'jose-silva--reader');
+  assert.doesNotMatch(run('renderCommunityAttention()'),/data-id="mention"/);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
