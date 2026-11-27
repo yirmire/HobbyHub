@@ -60,7 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
-  savedView:'saved', savedSearch:'', followedPostsFilter:'all',
+  savedView:'saved', savedGroup:'', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
   savedNotes:new Map(), savedNotePostId:null,
@@ -464,7 +464,7 @@ async function init() {
       state.directSearch=null;state.directLinksLimit=0;state.directEventLimit=0;state.directHistoryAnchor=null;state.directReply=null;state.directReactionPicker=null;
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
-      state.savedView='saved';
+      state.savedView='saved';state.savedGroup='';
       state.savedSearch='';
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.editingSavedCollectionId=null;
@@ -2002,22 +2002,28 @@ function renderSaved() {
  const collection=state.savedCollections.find(item=>item.id===selected);
  const selection=state.savedSelection;
  const collectionIds=savedPostIdsForCollection(collection?.id);
+ const savedIds=savedPostIdsForCollection();
+ const savedGroupIds=new Set(state.posts.filter(post=>savedIds.has(post.id)&&post.groupId).map(post=>post.groupId));
+ const savedGroups=new Map(state.groups.filter(group=>savedGroupIds.has(group.id)).map(group=>[group.id,group.name]));
+ const groupId=savedGroups.has(state.savedGroup)?state.savedGroup:'';
+ const groupFilter=savedGroups.size?`<label class="field" style="margin-top:12px">Por grupo<select class="select" id="saved-group-filter">
+ <option value="">Todos os grupos</option>${searchOptions(savedGroups,groupId)}</select></label>`:'';
  const collections=`<div class="toggle-row" style="flex-wrap:wrap"><label class="field">Coleção<select class="select" id="saved-collection-filter">
  <option value="">Todos os salvos</option>${state.savedCollections.map(item=>`<option value="${esc(item.id)}" ${item.id===selected?'selected':''}>${esc(item.name)}</option>`).join('')}
  </select></label><button class="btn btn-outline btn-small" data-action="create-saved-collection">Nova coleção</button>
  ${collection?`<button class="text-action" data-action="rename-saved-collection" data-id="${esc(collection.id)}">Renomear</button>
  <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}
  ${collectionIds.size&&!selection?`<button class="text-action" data-action="export-saved-posts">${collection?'Exportar coleção e notas':'Exportar salvos e notas'}</button>`:''}</div>`;
- const posts=state.posts.filter(post=>collectionIds.has(post.id));
+ const posts=state.posts.filter(post=>collectionIds.has(post.id)&&(!groupId||post.groupId===groupId));
  const results=posts.filter(post=>savedPostMatches(post,query,true));
  const selectionControls=selection?`<div class="toggle-row" style="flex-wrap:wrap;margin-bottom:16px">
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
  <button class="btn btn-primary btn-small" data-action="choose-bulk-collection" ${!selection.size||state.busy?'disabled':''}>Adicionar à coleção</button>
  ${collection?`<button class="btn btn-outline btn-small" data-action="remove-selected-from-collection" data-id="${esc(collection.id)}" ${!selection.size||state.busy?'disabled':''}>Retirar desta coleção</button>`:''}</div>`:'';
- return filters+search+collections+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
+ return filters+search+collections+groupFilter+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
  ${posts.length||selection?`<button class="text-action" data-action="toggle-saved-selection" ${state.busy?'disabled':''}>${selection?'Cancelar seleção':'Selecionar'}</button>`:''}</div></div>${selectionControls}
  ${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${selection?`<button class="btn btn-outline btn-small" data-action="select-saved-post" data-id="${esc(post.id)}" aria-pressed="${selection.has(post.id)}" ${state.busy?'disabled':''}>${selection.has(post.id)?'Selecionada ✓':'Selecionar publicação'}</button>`:''}${postCard(post)}
- ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':groupId?'<p class="tip" role="status">Nenhuma publicação salva deste grupo nesta lista.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
 function savedPostIdsForCollection(collectionId){
  return new Set(state.savedIds.filter(id=>!collectionId||state.savedMemberships.get(id)?.includes(collectionId)));
@@ -5417,6 +5423,10 @@ document.addEventListener('change',(event)=>{
  else if(event.target.id==='event-community')state.eventCommunity=event.target.value;
  else if(event.target.id==='event-format-filter')state.eventFormat=event.target.value;
  else if(event.target.id==='event-city-filter')state.eventCityFilter=event.target.value;
+ else if(event.target.id==='saved-group-filter'){
+   state.savedGroup=event.target.value;
+   state.savedSelection=null;
+ }
  else if(event.target.id==='saved-collection-filter'){
    state.selectedSavedCollection=event.target.value;state.savedSelection=null;
  }

@@ -1986,6 +1986,32 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('saved group filter composes with the collection and text search', () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.tab='saved';state.user={uid:'reader'};
+    state.groups=[{id:'art',name:'Arte'},{id:'books',name:'Leitura'},{id:'unused',name:'Sem salvos'}];
+    state.savedIds=['first','second','third','global'];
+    state.savedCollections=[{id:'collection',name:'Favoritos'}];
+    state.savedMemberships.set('first',['collection']);state.savedMemberships.set('second',['collection']);
+    state.selectedSavedCollection='collection';state.savedSelection=new Set(['second']);
+    const post=(id,groupId,content)=>({id,groupId,content,likes:[],userId:'author'});
+    state.posts=[post('first','art','Dica de pintura'),post('second','books','Dica de leitura'),
+      post('third','art','Fora da coleção'),post('global',null,'Publicação global')];
+    render=()=>{};
+  `,context);
+  const list=()=>vm.runInContext('renderSaved()',context);
+  handlers.change({target:{id:'saved-group-filter',value:'art'}});
+  assert.equal(vm.runInContext('state.savedSelection',context),null);
+  assert.match(list(),/<option value="art" selected>Arte<\/option>/);
+  assert.doesNotMatch(list(),/Sem salvos|Dica de leitura|Fora da coleção|Publicação global/);
+  assert.match(list(),/Dica de pintura/);
+  vm.runInContext("state.savedSearch='leitura'",context);
+  assert.match(list(),/Nenhuma publicação encontrada com esta busca/);
+  handlers.change({target:{id:'saved-group-filter',value:''}});
+  assert.match(list(),/Dica de leitura/);
+});
+
 test('a saved group news post stays in saved posts when marked as seen', () => {
   const context=appContext();
   vm.runInContext(`
