@@ -2603,7 +2603,7 @@ function communityMentionHandles(uid){
  const handle=peers.includes(slug)?slug+'--'+uid.toLowerCase():slug;
  return first!==slug&&!peers.some(name=>name.split('-')[0]===first)?[handle,first]:[handle];
 }
-function communityAttentionEntries(){
+function communityAttentionEntries(unreadOnly=false){
  const uid=me(),handles=new Set(communityMentionHandles(uid));
  const entries=['global','community'].flatMap(mode=>{
    const messages=chatMessages(mode);
@@ -2611,15 +2611,23 @@ function communityAttentionEntries(){
    const position=readCommunityPosition(communityReadingKey(mode));
    return messages.flatMap(message=>{
      if(!message.id||message.senderId===uid||message.deletedAt)return [];
+     const unread=!position||compareCommunityPositions(communityMessagePosition(message),position)>0;
+     if(unreadOnly&&!unread)return [];
      const reply=ownIds.has(message.replyTo);
      const mentioned=[...String(message.text??'').matchAll(/(?:^|[^\p{L}\p{M}\p{N}_@.+-])@([\p{L}\p{M}\p{N}_-]+)/gu)]
        .some(([,token])=>handles.has(norm(token)));
      if(!reply&&!mentioned)return [];
-     const unread=!position||compareCommunityPositions(communityMessagePosition(message),position)>0;
      return [{message,mode,reply,mentioned,unread}];
    });
  });
- return entries.sort((a,b)=>compareCommunityPositions(communityMessagePosition(b.message),communityMessagePosition(a.message)));
+ return unreadOnly?entries:entries.sort((a,b)=>compareCommunityPositions(communityMessagePosition(b.message),communityMessagePosition(a.message)));
+}
+function communityAttentionBadge(count){
+ return count?`<span class="unread-count"><span aria-hidden="true">${count>99?'99+':count}</span><span class="sr-only">${count===1?'1 menção ou resposta nova':count+' menções ou respostas novas'}</span></span>`:'';
+}
+function renderCommunityAttentionShortcut(){
+ const count=communityAttentionEntries(true).length;
+ return `<button type="button" class="btn btn-soft btn-small" style="margin-top:8px" data-action="open-community-attention">Menções e respostas <span id="community-attention-count" aria-live="polite" data-count="${count}">${communityAttentionBadge(count)}</span></button>`;
 }
 function renderCommunityAttention(){
  const entries=communityAttentionEntries(),handle=communityMentionHandles(me())[0];
@@ -2905,6 +2913,14 @@ function rememberCommunityReading(log){
  if(state.chatMode==='direct'||communityReadingKey()!==key)return;
  const indicator=document.getElementById('community-unread-'+state.chatMode);
  if(indicator)indicator.hidden=!firstUnreadCommunityMessage(chatMessages(),key);
+ const attention=document.getElementById('community-attention-count');
+ if(attention){
+   const count=communityAttentionEntries(true).length;
+   if(attention.dataset.count!==String(count)){
+     attention.dataset.count=String(count);
+     attention.innerHTML=communityAttentionBadge(count);
+   }
+ }
 }
 function restoreChatScroll(previous,next,scroll,nearBottom){
  const search=next.dataset.communitySearch;
@@ -3339,7 +3355,7 @@ function renderMessages() {
  <label class="sr-only" for="direct-thread-search">Buscar conversas pelo nome</label>
  <input class="input" style="width:100%" id="direct-thread-search" type="search" maxlength="100" autocomplete="off" placeholder="Buscar conversas pelo nome" value="${esc(state.directThreadSearch)}">
  <button type="button" class="btn btn-soft btn-small" style="margin-top:8px" data-action="open-all-saved-direct">Mensagens salvas</button>
- <button type="button" class="btn btn-soft btn-small" style="margin-top:8px" data-action="open-community-attention">Menções e respostas</button>
+ ${renderCommunityAttentionShortcut()}
  </div>
  <div class="chat-list"><h3 id="mobile-chat-list-title" tabindex="-1">Conversas</h3>
  <div class="toggle-row" style="flex-wrap:wrap;margin:8px 0" role="group" aria-label="Filtrar conversas privadas">
