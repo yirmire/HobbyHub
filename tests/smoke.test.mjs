@@ -1920,6 +1920,25 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('following a weekly question uses the saved following record and survives rotation', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='all-weekly-questions';
+    const group={id:'art',name:'Arte',members:['reader'],weeklyQuestionPostId:'p'};
+    state.groups=[group];state.posts=[{id:'p',groupId:'art',content:'Pergunta de arte',likes:[]}];
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),serverTimestamp:()=>123,setDoc:async (path,data)=>writes.push([path,data])};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderModal()',context),/Acompanhar conversa/);
+  await vm.runInContext("onAction({dataset:{action:'toggle-followed-weekly-question',id:'p'}})",context);
+  assert.match(vm.runInContext('writes[0][0]',context),/members\/reader\/followedPosts\/p$/);
+  vm.runInContext("state.followedPosts.set('p',123)",context);
+  assert.match(vm.runInContext('renderModal()',context),/Parar de acompanhar/);
+  vm.runInContext("group.weeklyQuestionPostId='';state.savedView='following'",context);
+  assert.match(vm.runInContext('renderSaved()',context),/Pergunta de arte/);
+});
+
 test('weekly unanswered filter updates after the member replies and reopens the list', async () => {
   const context=appContext();
   vm.runInContext(`
