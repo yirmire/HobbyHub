@@ -2187,16 +2187,54 @@ test('community chat resumes at new messages and remembers reading separately by
   assert.equal(log.scrollTop,200);
   assert.deepEqual(JSON.parse(positions.get(globalKey)),{id:'c',time:10});
   context.document.getElementById=()=>null;
-  assert.doesNotMatch(run('renderMessages()'),/Novas mensagens/);
+  assert.doesNotMatch(run('renderMessages()'),/id="community-new-messages"/);
   run("state.chatMode='community'");
   const localKey=run('communityReadingKey()');
   assert.notEqual(localKey,globalKey);
   assert.match(run('renderMessages()'),/Mensagem local/);
-  assert.doesNotMatch(run('renderMessages()'),/Novas mensagens/);
+  assert.doesNotMatch(run('renderMessages()'),/id="community-new-messages"/);
   run("state.profile.location='Recife'");
   assert.notEqual(run('communityReadingKey()'),localKey);
   run("state.chatMode='global';state.user={uid:'other'}");
   assert.notEqual(run('communityReadingKey()'),globalKey);
+});
+
+test('community unread indicators follow each channel and clear after the last new message is read', () => {
+  const context=appContext(),positions=new Map();
+  context.localStorage={getItem:key=>positions.get(key)||null,setItem:(key,value)=>positions.set(key,value)};
+  context.document.visibilityState='visible';
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.chatMode='direct';state.profile={location:'Recife'};
+    state.messages=[
+      {id:'g1',scope:'global',senderId:'peer',createdAt:20,text:'Notícia global'},
+      {id:'g2',scope:'global',senderId:'reader',createdAt:30,text:'Minha resposta'},
+      {id:'l1',senderId:'peer',createdAt:20,text:'Notícia local',location:'Recife'},
+      {id:'elsewhere',senderId:'peer',createdAt:40,text:'Outra cidade',location:'Olinda'}
+    ];
+  `);
+  const globalKey=run("communityReadingKey('global')");
+  const localKey=run("communityReadingKey('community')");
+  const panel=()=>run('renderMessages()');
+  const hidden=mode=>new RegExp('id="community-unread-'+mode+'"[^>]* hidden');
+  assert.match(panel(),hidden('global'));
+  positions.set(globalKey,JSON.stringify({id:'old',time:10}));
+  positions.set(localKey,JSON.stringify({id:'l1',time:20}));
+  assert.doesNotMatch(panel(),hidden('global'));
+  assert.match(panel(),hidden('community'));
+  positions.set(localKey,JSON.stringify({id:'old',time:10}));
+  assert.doesNotMatch(panel(),hidden('community'));
+
+  const indicators={'community-unread-global':{hidden:false},'community-unread-community':{hidden:false}};
+  context.document.getElementById=id=>indicators[id]||null;
+  const row={dataset:{communityMessage:'g1',communityTime:'20'},getBoundingClientRect:()=>({bottom:45})};
+  context.log={dataset:{communityReading:globalKey},clientHeight:100,
+    getBoundingClientRect:()=>({top:0,bottom:100}),querySelectorAll:()=>[row]};
+  run("state.chatMode='global';rememberCommunityReading(log)");
+  assert.equal(indicators['community-unread-global'].hidden,true);
+  assert.equal(indicators['community-unread-community'].hidden,false);
+  assert.match(panel(),hidden('global'));
+  assert.doesNotMatch(panel(),hidden('community'));
 });
 
 test('draft dates are recorded only after changes and newer edits appear first', () => {
