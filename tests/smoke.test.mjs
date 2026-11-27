@@ -1920,6 +1920,30 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('weekly unanswered filter updates after the member replies and reopens the list', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    state.groups=['art','books'].map(id=>({id,name:id,members:['reader'],weeklyQuestionPostId:id+'-post'}));
+    state.posts=state.groups.map(group=>({id:group.weeklyQuestionPostId,groupId:group.id}));
+    const answered=new Set(['books-post']);
+    firebase={collection:(_db,...path)=>path,query:path=>path.at(-2),where:()=>{},limit:()=>{},
+      getDocsFromServer:async id=>({empty:!answered.has(id)})};
+    render=()=>{};
+  `,context);
+  const action=name=>vm.runInContext(`onAction({dataset:{action:'${name}'}})`,context);
+  const list=()=>vm.runInContext('renderModal()',context);
+  await action('open-all-weekly-questions');
+  await action('toggle-weekly-unanswered');
+  assert.match(list(),/data-id="art-post"/);
+  assert.doesNotMatch(list(),/data-id="books-post"/);
+  vm.runInContext("answered.add('art-post');state.modal='comments'",context);
+  await action('open-all-weekly-questions');
+  assert.match(list(),/Nenhuma pergunta por responder/);
+  await action('toggle-weekly-unanswered');
+  assert.match(list(),/data-id="art-post"/);
+});
+
 test('home weekly questions prioritize pinned groups and link to the same conversations', async () => {
   const context=appContext();
   const html=vm.runInContext(`
