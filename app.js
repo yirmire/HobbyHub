@@ -60,7 +60,7 @@ const state = {
   boot:true, initError:'', user:null, profile:null, members:[], posts:[], groups:[], events:[], messages:[],
   threads:[], directMessages:[], comments:[], savedIds:[], savedEventDates:new Map(), followingIds:[], followedPosts:new Map(), followedPostWatches:new Map(), blockedIds:[], receivedTestimonials:[], visibleTestimonials:[], sentTestimonial:null, testimonialStatus:'',
   tab:'home', feed:'all', topic:'Todos', groupView:'mine', groupNewsLimit:20, groupNewsGroup:'', groupNewsUnseenOnly:false, groupNewsSearch:'', groupHobby:'', groupCity:'', eventFilter:'upcoming', receivedEventInvites:null, sentEventInvites:null, dismissedEventInviteIds:new Set(), showDismissedEventInvites:false, search:'', exploreCity:'', exploreHobby:'',
-  savedView:'saved', savedPostOrder:'recent', savedPostDates:new Map(), savedGroup:'', savedSearch:'', followedPostsFilter:'all',
+  savedView:'saved', savedReadingOnly:false, readSavedPosts:new Set(), savedPostOrder:'recent', savedPostDates:new Map(), savedGroup:'', savedSearch:'', followedPostsFilter:'all',
   savedCollections:[], savedMemberships:new Map(), selectedSavedCollection:'', collectionPostId:null, editingSavedCollectionId:null,
   savedSelection:null,
   savedNotes:new Map(), savedNotePostId:null,
@@ -373,6 +373,7 @@ function startSession() {
   },'estado de leitura de mensagens');
   subscribe(col('members',me(),'saved'),snapshot=>{
     state.savedIds=snapshot.docs.map(doc=>doc.id);
+    state.readSavedPosts=new Set(snapshot.docs.filter(doc=>doc.data().read===true).map(doc=>doc.id));
     state.savedPostDates=new Map(snapshot.docs.map(doc=>{
       const date=doc.data().savedAt;
       return [doc.id,typeof date==='number'?date:date?.toMillis?.()];
@@ -469,6 +470,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';state.savedGroup='';state.savedPostOrder='recent';state.savedPostDates.clear();
+      state.savedReadingOnly=false;state.readSavedPosts.clear();
       state.savedSearch='';
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.editingSavedCollectionId=null;
@@ -2018,7 +2020,8 @@ function renderSaved() {
  ${collection?`<button class="text-action" data-action="rename-saved-collection" data-id="${esc(collection.id)}">Renomear</button>
  <button class="text-action" data-action="delete-saved-collection" data-id="${esc(collection.id)}">Excluir coleção</button>`:''}
  ${collectionIds.size&&!selection?`<button class="text-action" data-action="export-saved-posts">${collection?'Exportar coleção e notas':'Exportar salvos e notas'}</button>`:''}</div>`;
- const posts=state.posts.filter(post=>collectionIds.has(post.id)&&(!groupId||post.groupId===groupId));
+ const posts=state.posts.filter(post=>collectionIds.has(post.id)&&(!groupId||post.groupId===groupId)
+   &&(!state.savedReadingOnly||!state.readSavedPosts.has(post.id)));
  const results=posts.filter(post=>savedPostMatches(post,query,true)).sort((a,b)=>{
    const first=state.savedPostDates.get(a.id),second=state.savedPostDates.get(b.id);
    if(!Number.isFinite(first))return Number.isFinite(second)?1:0;
@@ -2032,10 +2035,11 @@ function renderSaved() {
  <span role="status">${selection.size} ${selection.size===1?'selecionada':'selecionadas'}</span>
  <button class="btn btn-primary btn-small" data-action="choose-bulk-collection" ${!selection.size||state.busy?'disabled':''}>Adicionar à coleção</button>
  ${collection?`<button class="btn btn-outline btn-small" data-action="remove-selected-from-collection" data-id="${esc(collection.id)}" ${!selection.size||state.busy?'disabled':''}>Retirar desta coleção</button>`:''}</div>`:'';
- return filters+search+collections+groupFilter+(savedIds.size?ordering:'')+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
+ const readingFilter=savedIds.size?`<div class="filters" style="margin-top:12px"><button type="button" class="filter ${state.savedReadingOnly?'active':''}" data-action="toggle-saved-reading-filter" aria-pressed="${state.savedReadingOnly}">Para ler</button></div>`:'';
+ return filters+search+collections+groupFilter+(savedIds.size?ordering:'')+readingFilter+`<div class="section-head"><h2>${collection?esc(collection.name):'Publicações para guardar'}</h2><div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${posts.length} salvas</span>
  ${posts.length||selection?`<button class="text-action" data-action="toggle-saved-selection" ${state.busy?'disabled':''}>${selection?'Cancelar seleção':'Selecionar'}</button>`:''}</div></div>${selectionControls}
  ${results.length?results.map(post=>`<div class="form-stack" style="margin-bottom:16px">${selection?`<button class="btn btn-outline btn-small" data-action="select-saved-post" data-id="${esc(post.id)}" aria-pressed="${selection.has(post.id)}" ${state.busy?'disabled':''}>${selection.has(post.id)?'Selecionada ✓':'Selecionar publicação'}</button>`:''}${postCard(post)}
- ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':groupId?'<p class="tip" role="status">Nenhuma publicação salva deste grupo nesta lista.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
+ ${selection?'':renderSavedPostActions(post)}</div>`).join(''):query?'<p class="tip" role="status">Nenhuma publicação encontrada com esta busca.</p>':state.savedReadingOnly?'<p class="tip" role="status">Nenhuma publicação para ler com os filtros atuais.</p>':groupId?'<p class="tip" role="status">Nenhuma publicação salva deste grupo nesta lista.</p>':collection?'<p class="tip">Esta coleção ainda está vazia. Use Organizar em coleções em Todos os salvos para adicionar publicações.</p>':empty('🔖','Sua coleção começa aqui','Salve publicações que inspiram seus hobbies. Elas aparecem neste espaço.','Explorar publicações','explore')}`;
 }
 function savedPostIdsForCollection(collectionId){
  return new Set(state.savedIds.filter(id=>!collectionId||state.savedMemberships.get(id)?.includes(collectionId)));
@@ -2055,9 +2059,11 @@ function savedPostsExport(collection){
 }
 function renderSavedPostActions(post){
  const note=state.savedNotes.get(post.id),id=esc(post.id);
+ const read=state.readSavedPosts.has(post.id);
  return `${note?`<aside class="card" style="padding:12px"><strong>Nota privada</strong><p class="post-copy" style="margin:4px 0 0">${esc(note)}</p></aside>`:''}
  <div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="manage-saved-collections" data-id="${id}">Organizar em coleções</button>
- <button class="text-action" data-action="edit-saved-note" data-id="${id}">${note?'Editar nota privada':'Adicionar nota privada'}</button></div>`;
+ <button class="text-action" data-action="edit-saved-note" data-id="${id}">${note?'Editar nota privada':'Adicionar nota privada'}</button>
+ ${read?'<span class="pill">Lida</span>':''}<button type="button" class="text-action" data-action="toggle-saved-reading-status" data-id="${id}" ${state.busy?'disabled':''}>${read?'Marcar para ler':'Marcar como lida'}</button></div>`;
 }
 async function updateSavedSelection(collectionId,remove){
  await attempt(async()=>{
@@ -5232,6 +5238,18 @@ async function onAction(btn) {
       state.savedView=btn.dataset.value;render();
     }
     return;
+  case 'toggle-saved-reading-filter':
+    if(state.tab==='saved'&&state.savedView==='saved'){
+      state.savedReadingOnly=!state.savedReadingOnly;state.savedSelection=null;render();
+    }
+    return;
+  case 'toggle-saved-reading-status':await attempt(async()=>{
+    const uid=me();
+    if(!uid||state.tab!=='saved'||state.savedView!=='saved'||!state.savedIds.includes(id))return;
+    const read=!state.readSavedPosts.has(id);
+    await firebase.updateDoc(ref('members',uid,'saved',id),{read});
+    if(me()===uid)showToast(read?'Publicação marcada como lida.':'Publicação marcada para ler.');
+  });return;
   case 'open-saved-comment':{
     const saved=state.savedComments.get(id);
     if(state.tab==='saved'&&state.savedView==='comments'&&saved&&state.savedCommentWatches.get(id)?.comment){
