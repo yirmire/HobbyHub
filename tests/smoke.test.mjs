@@ -1986,6 +1986,24 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('saved posts sort by save date in either direction and leave undated posts last', () => {
+  const handlers={},context=appContext(handlers);
+  vm.runInContext(`
+    state.tab='saved';state.user={uid:'reader'};state.savedGroup='art';state.savedSearch='dica';
+    state.groups=[{id:'art',name:'Arte'}];
+    state.savedIds=['a','b','c','other'];
+    state.savedPostDates=new Map([['a',20],['b',10],['other',30]]);
+    state.posts=['b','c','a','other'].map((id,index)=>({id,groupId:id==='other'?'other':'art',
+      content:'Dica '+id,userId:'author',likes:[],createdAt:100-index}));
+    render=()=>{};
+  `,context);
+  assert.match(vm.runInContext('renderSaved()',context),/Dica a[\s\S]*Dica b[\s\S]*Dica c/);
+  handlers.change({target:{id:'saved-post-order',value:'oldest'}});
+  const oldest=vm.runInContext('renderSaved()',context);
+  assert.match(oldest,/Dica b[\s\S]*Dica a[\s\S]*Dica c/);
+  assert.doesNotMatch(oldest,/Dica other/);
+});
+
 test('saved group filter composes with the collection and text search', () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
