@@ -2106,6 +2106,28 @@ test('group introduction posts appear in both presentations and the conversation
   assert.match(html,/Conversas do grupo[\s\S]*Apresentação[\s\S]*Gosto de aquarela/);
 });
 
+test('draft dates are recorded only after changes and newer edits appear first', () => {
+  const context=appContext(),items=new Map();
+  let time=1700000000000;
+  context.Date=class extends Date{static now(){return time;}};
+  context.localStorage={get length(){return items.size;},key:index=>[...items.keys()][index],
+    getItem:key=>items.get(key)||null,setItem:(key,value)=>items.set(key,value)};
+  items.set('hobbyhub-post-draft:reader:feed',JSON.stringify({content:'Rascunho antigo',hobby:'Arte',format:'text'}));
+  vm.runInContext(`
+    state.user={uid:'reader'};state.modal='compose';state.groups=[{id:'art',name:'Arte',members:['reader']}];
+    const form={dataset:{draftKey:postDraftKey()},elements:{content:{value:'Rascunho antigo'},hobby:{value:'Arte'},format:{value:'text'}}};
+    savePostDraft(form);
+  `,context);
+  assert.doesNotMatch(vm.runInContext('renderMyPostDrafts()',context),/Última edição/);
+  vm.runInContext("form.elements.content.value='Rascunho editado';savePostDraft(form)",context);
+  time+=60000;
+  vm.runInContext('savePostDraft(form)',context);
+  assert.equal(vm.runInContext('readPostDraft(postDraftKey()).updatedAt',context),1700000000000);
+  vm.runInContext("state.composingGroup='art';form.dataset.draftKey=postDraftKey();form.elements.content.value='Rascunho mais recente';savePostDraft(form)",context);
+  const html=vm.runInContext('renderMyPostDrafts()',context);
+  assert.match(html,/Rascunho mais recente[\s\S]*Última edição[\s\S]*Rascunho editado/);
+});
+
 test('my drafts lists only this account’s drafts and resumes or discards the selected item', async () => {
   const context=appContext(),items=new Map();
   context.localStorage={get length(){return items.size;},key:index=>[...items.keys()][index],
