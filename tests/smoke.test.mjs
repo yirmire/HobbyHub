@@ -1920,6 +1920,30 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('discovering communities by profile interests also respects the city', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.tab='groups';state.groupView='discover';state.user={uid:'reader'};
+    state.profile={hobbies:['Fotografia analógica']};
+    state.groups=[
+      {id:'local',name:'Fotógrafos da cidade',hobby:'Fotografia analogica',location:'Curitiba',members:[]},
+      {id:'far',name:'Fotógrafos de fora',hobby:'Fotografia analógica',location:'Recife',members:[]},
+      {id:'other',name:'Leitoras da cidade',hobby:'Leitura',location:'Curitiba',members:[]}
+    ];
+    state.groupCity=cityKey('Curitiba');render=()=>{};
+  `,context);
+  const toggle=()=>vm.runInContext("onAction({dataset:{action:'toggle-group-my-interests'}})",context);
+  await toggle();
+  const list=()=>vm.runInContext('renderGroups()',context);
+  assert.match(list(),/data-action="toggle-group-my-interests" aria-pressed="true"/);
+  assert.match(list(),/data-id="local"/);
+  assert.doesNotMatch(list(),/data-id="(?:far|other)"/);
+  vm.runInContext("state.profile.hobbies=[]",context);
+  assert.match(list(),/Adicione seus interesses[\s\S]*Editar perfil/);
+  await toggle();
+  assert.match(list(),/data-id="other"/);
+});
+
 test('pinned groups appear first in both views and only joined groups can be pinned', async () => {
   const context=appContext();
   vm.runInContext(`
