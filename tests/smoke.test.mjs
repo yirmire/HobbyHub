@@ -503,7 +503,7 @@ test('private chat search finds accented text outside the recent window and open
   const opened=vm.runInContext("showDirectMessage('message-12');renderMessages()",context);
   assert.match(opened,/id="direct-message-message-12" tabindex="-1"/);
   assert.match(opened,/Ir para as mais recentes/);
-  assert.doesNotMatch(vm.runInContext("state.chatMode='global';renderMessages()",context),/Buscar na conversa/);
+  assert.doesNotMatch(vm.runInContext("state.chatMode='global';renderMessages()",context),/id="direct-search"|data-action="toggle-direct-search"/);
 });
 
 test('notifications count unread items and only show reports to current moderators', () => {
