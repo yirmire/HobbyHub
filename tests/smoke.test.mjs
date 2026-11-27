@@ -1920,6 +1920,28 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('a group can replace its weekly question without removing earlier conversations', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'owner'};state.selectedGroup='art';state.modal='group-detail';
+    const group={id:'art',name:'Arte',hobby:'Arte',createdBy:'owner',members:['owner'],weeklyQuestionPostId:'earlier'};
+    state.groups=[group];state.posts=[
+      {id:'new',groupId:'art',content:'Qual projeto você está fazendo?',likes:[]},
+      {id:'earlier',groupId:'art',content:'Qual técnica você prefere?',likes:[]}
+    ];
+    firebase={doc:(_db,...path)=>path.join('/'),updateDoc:async(_,change)=>Object.assign(group,change)};
+    render=()=>{};showToast=()=>{};
+  `,context);
+  const render=()=>vm.runInContext('renderModal()',context);
+  assert.match(render(),/aria-label="Pergunta da semana"[\s\S]*data-action="comments" data-id="earlier"/);
+  await vm.runInContext("onAction({dataset:{action:'set-weekly-question',id:'new'}})",context);
+  const html=render();
+  assert.match(html,/aria-label="Pergunta da semana"[\s\S]*data-action="comments" data-id="new"/);
+  assert.match(html,/Conversas do grupo[\s\S]*Qual técnica você prefere/);
+  vm.runInContext("state.user={uid:'member'};group.members.push('member')",context);
+  assert.doesNotMatch(render(),/set-weekly-question|clear-weekly-question/);
+});
+
 test('group welcome notices combine reactions and link to the original presentation', async () => {
   const context=appContext();
   vm.runInContext(`
