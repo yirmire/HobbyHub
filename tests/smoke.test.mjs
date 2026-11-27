@@ -2106,6 +2106,29 @@ test('group introduction posts appear in both presentations and the conversation
   assert.match(html,/Conversas do grupo[\s\S]*Apresentação[\s\S]*Gosto de aquarela/);
 });
 
+test('my drafts lists only this account’s drafts and resumes or discards the selected item', async () => {
+  const context=appContext(),items=new Map();
+  context.localStorage={get length(){return items.size;},key:index=>[...items.keys()][index],
+    getItem:key=>items.get(key)||null,removeItem:key=>items.delete(key)};
+  for(const [scope,content] of [['feed','Texto do feed'],['intro:art','Minha apresentação'],['group:missing','Grupo antigo']]){
+    items.set('hobbyhub-post-draft:reader:'+scope,JSON.stringify({content,hobby:'Arte',format:'text'}));
+  }
+  items.set('hobbyhub-post-draft:other:feed',JSON.stringify({content:'Texto de outra conta'}));
+  vm.runInContext("state.user={uid:'reader'};state.tab='saved';state.savedView='drafts';state.groups=[{id:'art',name:'Arte',members:['reader']}];render=()=>{}",context);
+  const list=()=>vm.runInContext('renderSaved()',context);
+  const action=(action,id)=>vm.runInContext(`onAction({dataset:${JSON.stringify({action,id})}})`,context);
+  assert.match(list(),/Arte[\s\S]*Minha apresentação[\s\S]*Texto do feed[\s\S]*Grupo antigo/);
+  assert.doesNotMatch(list(),/Texto de outra conta|resume-local-post-draft" data-id="hobbyhub-post-draft:reader:group:missing"/);
+  await action('resume-local-post-draft','hobbyhub-post-draft:reader:intro:art');
+  assert.equal(vm.runInContext('state.drafts.get(postDraftKey()).content',context),'Minha apresentação');
+  assert.equal(vm.runInContext('state.composingIntroduction',context),true);
+  await action('discard-local-post-draft','hobbyhub-post-draft:reader:feed');
+  assert.match(vm.runInContext('renderModal()',context),/Descartar rascunho/);
+  await action('confirm-discard-local-post-draft');
+  assert.equal(items.has('hobbyhub-post-draft:reader:feed'),false);
+  assert.equal(items.has('hobbyhub-post-draft:reader:intro:art'),true);
+});
+
 test('introduction drafts survive leaving the editor and are isolated by account, group, and post type', async () => {
   const context=appContext(),stored=new Map();
   context.localStorage={getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)};
