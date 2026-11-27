@@ -2665,14 +2665,24 @@ function showDirectMessage(id){
  row?.scrollIntoView({block:'nearest'});
 }
 const directReactionOptions=new Map([['👍','Gostei'],['❤️','Amei'],['😂','Engraçado'],['😮','Surpresa'],['🙌','Celebração']]);
-function renderDirectMessageMenu(m,blocked){
- const peer=state.chatTarget?.uid;
- const open=state.directMessageMenu?.peer===peer&&state.directMessageMenu?.id===m.id;
+function chatMessageMenuScope(){
+ return state.chatMode==='direct'?state.chatTarget?.uid&&'direct:'+state.chatTarget.uid:state.chatMode;
+}
+function chatMessages(){
+ if(state.chatMode==='direct')return state.directMessages;
+ return state.messages.filter(m=>state.chatMode==='global'?m.scope==='global':m.scope!=='global'&&locate(m.location));
+}
+function renderMessageMenu(m,actions){
+ if(!m.id)return '';
+ const open=state.directMessageMenu?.scope===chatMessageMenuScope()&&state.directMessageMenu?.id===m.id;
  return `<div class="direct-message-menu">
  <button type="button" class="direct-message-menu-toggle" data-action="toggle-direct-message-menu" data-id="${esc(m.id)}" aria-label="Opções da mensagem" aria-expanded="${open}">⋯</button>
  <div class="direct-message-actions ${open?'is-open':''}">
  ${m.id?`<button type="button" class="btn btn-soft btn-small" data-action="copy-direct-message" data-id="${esc(m.id)}">Copiar</button>`:''}
- ${!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton('privateMessage',m.id,'mensagem'):''}</div></div>`;
+ ${actions}</div></div>`;
+}
+function renderDirectMessageMenu(m,blocked){
+ return renderMessageMenu(m,`${!blocked&&canEditDirectMessage(m)?`<button type="button" class="btn btn-soft btn-small" data-action="edit-direct-message" data-id="${esc(m.id)}">Editar</button><button type="button" class="btn btn-soft btn-small" data-action="delete-direct-message" data-id="${esc(m.id)}">Apagar para todos</button>`:''}${!blocked&&m.id?`<button type="button" class="btn btn-soft btn-small" data-action="reply-direct-message" data-id="${esc(m.id)}">Responder</button>`:''}${m.id&&state.directSavedIds?`<button type="button" class="btn btn-soft btn-small" aria-pressed="${state.directSavedIds.has(m.id)}" data-action="toggle-direct-saved-message" data-id="${esc(m.id)}" ${state.changingDirectSaved?'disabled':''}>${state.directSavedIds.has(m.id)?'Remover dos salvos':'Salvar mensagem'}</button>`:''}${m.id?renderDirectReactions(m,blocked):''}${m.senderId!==me()&&m.id?reportButton('privateMessage',m.id,'mensagem'):''}`);
 }
 function renderDirectReactions(message,blocked){
  const mine=message.reactions?.[me()];
@@ -3022,7 +3032,7 @@ function renderMessages() {
  if(state.allSavedDirect)return renderAllSavedDirectMessages(state.allSavedDirect);
  const community=state.chatMode!=='direct';
  const global=state.chatMode==='global';
- const messages=community?state.messages.filter(m=>global?m.scope==='global':m.scope!=='global'&&locate(m.location)):state.directMessages;
+ const messages=chatMessages();
  const anchor=community?-1:messages.findIndex(message=>message.id===state.directHistoryAnchor);
  const end=anchor<0?messages.length:Math.min(messages.length,Math.max(150,anchor+75));
  const start=Math.max(0,end-150);
@@ -3095,7 +3105,7 @@ function renderMessages() {
  ${searching?renderDirectSearch(searching.query,matches.length):''}
  <div id="chat-log" class="chat-log">${showingEvents?renderSharedDirectEvents(messages,state.directEventLimit):showingSaved?renderDirectSavedMessages(messages):showingLinks?renderDirectLinks(messages,state.directLinksLimit):searching?renderDirectSearchMatches(matches,searching.limit):`
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
- ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?(m.senderId!==me()&&m.id?reportButton('communityMessage',m.id,'mensagem'):''):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
+ ${messages.length?messages.slice(start,end).map(m=>`<div ${community?'':`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(m.senderName||member(m.senderId)?.name||'Pessoa')}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo!==m.id?directQuote(originals?.get(m.replyTo)):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,m.senderId!==me()&&m.id?reportButton('communityMessage',m.id,'mensagem'):''):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-direct-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
@@ -5504,15 +5514,15 @@ async function onAction(btn) {
     render();
     return;
   case 'toggle-direct-message-menu':{
-    const peer=state.chatTarget?.uid;
-    if(state.chatMode!=='direct'||!peer||!state.directMessages.some(message=>message.id===id&&!message.deletedAt))return;
-    const open=state.directMessageMenu?.peer===peer&&state.directMessageMenu?.id===id;
+    const scope=chatMessageMenuScope();
+    if(!scope||!chatMessages().some(message=>message.id===id&&!message.deletedAt))return;
+    const open=state.directMessageMenu?.scope===scope&&state.directMessageMenu?.id===id;
     state.mobileChatOptions=false;state.directMuteMenu=null;state.directReactionPicker=null;
-    state.directMessageMenu=open?null:{peer,id};render();return;
+    state.directMessageMenu=open?null:{scope,id};render();return;
   }
   case 'copy-direct-message':{
-    if(state.chatMode!=='direct'||!state.chatTarget)return;
-    const message=state.directMessages.find(item=>item.id===id&&!item.deletedAt);
+    if(!chatMessageMenuScope())return;
+    const message=chatMessages().find(item=>item.id===id&&!item.deletedAt);
     if(message&&typeof message.text==='string')await copyContentLink(message.text,'Mensagem copiada.','Copie a mensagem:');
     return;
   }
