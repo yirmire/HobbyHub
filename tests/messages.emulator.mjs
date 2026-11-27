@@ -627,7 +627,15 @@ const weeklyWithTime={
 await moderate(other,[weeklyWithTime],403);
 await moderate(sender,[weeklyWithTime],200);
 await moderate(sender,[weeklyWithTime],403);
-assert.ok((await request(sender,'GET',group,200)).fields.weeklyQuestionChangedAt.timestampValue);
+const questionTime=(await request(sender,'GET',group,200)).fields.weeklyQuestionChangedAt;
+assert.ok(questionTime.timestampValue);
+const archivedQuestion=group+'/weeklyQuestionHistory/welcome-post';
+const archiveQuestion={update:{name:documents+archivedQuestion,fields:{highlightedAt:questionTime}}};
+const replaceQuestion={...weeklyWithTime,update:{...weeklyWithTime.update,fields:{weeklyQuestionPostId:str('group-introduction')}}};
+await moderate(sender,[archiveQuestion],403);
+await moderate(sender,[archiveQuestion,replaceQuestion],200);
+await request(other,'GET',archivedQuestion,403);
+assert.equal((await request(recipient,'GET',archivedQuestion,200)).fields.highlightedAt.timestampValue,questionTime.timestampValue);
 const timedWelcome={
   update:{name:documents+'public/data/posts/group-introduction',fields:welcomes(recipient.localId)},
   updateMask:{fieldPaths:['welcomedBy']},updateTransforms:stamp('welcomesChangedAt')
