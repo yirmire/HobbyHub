@@ -1986,6 +1986,22 @@ test('group news counts unseen posts and only advances the selected group marker
   assert.match(html,/Livros \(1 nova\)/);
 });
 
+test('a saved group news post stays in saved posts when marked as seen', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.groupNewsReadsLoaded=true;
+    state.groups=[{id:'art',name:'Arte',members:['reader']}];
+    state.posts=[{id:'work',groupId:'art',content:'Trabalho novo',createdAt:15,userId:'author',likes:[]}];
+    state.groupNewsUnseenOnly=true;
+  `,context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/data-action="save" data-id="work"[^>]*>Salvar para ler depois/);
+  vm.runInContext("state.savedIds=['work']",context);
+  assert.match(vm.runInContext('renderGroupNews()',context),/data-action="save" data-id="work"[^>]*>Remover dos salvos/);
+  vm.runInContext("state.groupNewsReads.set('art',15)",context);
+  assert.doesNotMatch(vm.runInContext('renderGroupNews()',context),/data-id="work"/);
+  assert.match(vm.runInContext('renderSaved()',context),/Trabalho novo/);
+});
+
 test('searching group news matches text, author or group and composes with the existing filters', async () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
