@@ -69,7 +69,7 @@ const state = {
   exploreView:'people', postSearchHobby:'', postSearchGroup:'', postSearchLimit:20,
   eventSearch:'', eventHobby:'', eventCommunity:'', eventFormat:'', eventCityFilter:'', eventFiltersOpen:false, savedEventSearches:new Map(), savedEventSearchesLoaded:false, eventRoom:null, homeEventRooms:new Map(),
   eventAgendaView:'list', eventWeekOffset:0,
-  chatMode:'community', chatTarget:null, communityReply:null, communityHistoryAnchor:null, communitySearch:null, communitySavedPanel:null, mobileChatOpen:false, mobileChatOptions:false, directMessageMenu:null, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
+  chatMode:'community', chatTarget:null, communityReply:null, communityHistoryAnchor:null, communitySearch:null, communitySavedPanel:null, communitySavedCloud:null, communitySavedMigration:null, mobileChatOpen:false, mobileChatOptions:false, directMessageMenu:null, mobileChatListScroll:0, directSearch:null, directLinksLimit:0, directEventLimit:0, allSavedDirect:null, directSavedLimit:0, directSavedIds:null, directSavedUnsub:null, directHistoryAnchor:null, directReply:null, eventChatShares:new Map(), directMessageEditor:null, directReactionPicker:null, selectedPost:null, postEditor:null, commentEditor:null, commentReplyId:null, expandedCommentReplies:new Set(), selectedGroup:null, composingGroup:null, viewUser:null,
   modal:null, modalReturnFocus:null, authMode:'login', busy:false, openingDirect:false, updatingFollow:false, updatingBlock:false, updatingGroup:false, alerts:[], quizMood:null,
   reportTarget:null,
   groupsLoaded:false,
@@ -140,6 +140,7 @@ function unsubscribeAll() {
  state.eventChatShares.clear();
  state.mobileChatOpen=false;state.mobileChatOptions=false;state.directMessageMenu=null;state.mobileChatListScroll=0;
  state.directMessageEditor=null;state.communityReply=null;state.communityHistoryAnchor=null;state.communitySearch=null;state.communitySavedPanel=null;
+ state.communitySavedCloud=null;state.communitySavedMigration=null;
  closeAllSavedDirectMessages();
  stopDirectSavedMessages();
  for(const unsub of state.sessionUnsubs.splice(0))try{unsub();}catch{}
@@ -329,6 +330,11 @@ async function ensureMember(user) {
   return profile;
 }
 function startSession() {
+  const uid=me();
+  subscribe(col('members',uid,'communitySaved'),snapshot=>{
+    if(me()===uid)state.communitySavedCloud={uid,markers:new Map(snapshot.docs.map(marker=>[marker.id,marker.data().saved]))};
+  },'mensagens salvas das comunidades');
+  void migrateCommunitySaved(uid);
   const docs=(snapshot)=>snapshot.docs.map((d)=>({...d.data(),id:d.id}));
   subscribe(col('members'), (s)=>{state.members=docs(s);state.profile=state.members.find((p)=>p.uid===me()) || state.profile;},'membros');
   subscribe(col('posts'), (s)=>{
@@ -2688,13 +2694,56 @@ function communityReadingKey(mode=state.chatMode){
  return 'hobbyhub-community-read:'+communityChannelKey(mode);
 }
 function communitySavedKey(){
- return 'hobbyhub-community-saved:'+communityChannelKey();
+ return COMMUNITY_SAVED_PREFIX+communityChannelKey();
+}
+const COMMUNITY_SAVED_PREFIX='hobbyhub-community-saved:';
+function parseLegacyCommunitySaved(raw){
+ const ids=JSON.parse(raw);
+ return Array.isArray(ids)?ids.filter(id=>typeof id==='string'&&id.length>0&&id.length<=150&&!id.includes('/')):[];
 }
 function readCommunitySaved(){
+ let local=[];
+ try{local=parseLegacyCommunitySaved(localStorage.getItem(communitySavedKey()));}catch{}
+ const saved=new Set(local);
+ const cloud=state.communitySavedCloud;
+ if(!cloud||cloud.uid!==me())return saved;
+ for(const [id,active] of cloud.markers){
+   if(active)saved.add(id);
+   else saved.delete(id);
+ }
+ return saved;
+}
+async function migrateCommunitySaved(uid){
+ if(!uid||state.communitySavedMigration)return;
+ const migration={uid};
+ state.communitySavedMigration=migration;
  try{
-   const ids=JSON.parse(localStorage.getItem(communitySavedKey()));
-   return new Set(Array.isArray(ids)?ids.filter(id=>typeof id==='string'):[]);
- }catch{return new Set();}
+   const entries=[];
+   for(let i=0;i<localStorage.length;i++){
+     const key=localStorage.key(i);
+     if(!key?.startsWith(COMMUNITY_SAVED_PREFIX))continue;
+     try{
+       const [owner]=JSON.parse(key.slice(COMMUNITY_SAVED_PREFIX.length));
+       if(owner!==uid)continue;
+       const raw=localStorage.getItem(key);
+       entries.push({key,raw,ids:new Set(parseLegacyCommunitySaved(raw))});
+     }catch{}
+   }
+   for(const {key,raw,ids} of entries){
+     for(const id of ids){
+       if(me()!==uid||state.communitySavedMigration!==migration)return;
+       const marker=ref('members',uid,'communitySaved',id);
+       await firebase.runTransaction(db,async transaction=>{
+         if(!(await transaction.get(marker)).exists())transaction.set(marker,{saved:true});
+       });
+     }
+     if(me()!==uid||state.communitySavedMigration!==migration)return;
+     if(localStorage.getItem(key)===raw)localStorage.removeItem(key);
+   }
+ }catch(error){console.warn('HobbyHub: mensagens salvas aguardando sincronização.',error);}
+ finally{
+   if(state.communitySavedMigration===migration){state.communitySavedMigration=null;if(state.tab==='messages')render();}
+ }
 }
 function communitySaveButton(id,saved){
  return `<button type="button" class="btn btn-soft btn-small" data-action="toggle-community-saved-message" data-id="${esc(id)}" aria-pressed="${saved}">${saved?'Remover dos salvos':'Salvar mensagem'}</button>`;
@@ -5676,13 +5725,11 @@ async function onAction(btn) {
   }
   case 'toggle-community-saved-message':{
     if(!me()||state.chatMode==='direct'||!id||!chatMessages().some(message=>message.id===id))return;
-    const saved=readCommunitySaved();
-    const removing=saved.delete(id);
-    if(!removing)saved.add(id);
-    try{localStorage.setItem(communitySavedKey(),JSON.stringify([...saved]));}
-    catch{showToast('Não foi possível guardar a mensagem neste navegador.',true);return;}
-    render();
-    showToast(removing?'Mensagem removida dos salvos.':'Mensagem salva.');
+    const uid=me(),saved=!readCommunitySaved().has(id);
+    await attempt(async()=>{
+      await firebase.setDoc(ref('members',uid,'communitySaved',id),{saved});
+      if(me()===uid)showToast(saved?'Mensagem salva.':'Mensagem removida dos salvos.');
+    },'changingCommunitySaved','Não foi possível sincronizar esta mensagem salva.');
     return;
   }
   case 'more-community-matches':
@@ -6127,7 +6174,7 @@ document.addEventListener('change',(event)=>{
  render();
 });
 window.addEventListener('hashchange',openLinkedContent);
-window.addEventListener('online',()=>void syncNotificationReads());
+window.addEventListener('online',()=>{void syncNotificationReads();void migrateCommunitySaved(me());});
 window.visualViewport?.addEventListener('resize',updateMobileViewport);
 window.visualViewport?.addEventListener('scroll',updateMobileViewport);
 document.addEventListener('error',(event)=>{
