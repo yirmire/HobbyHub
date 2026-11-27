@@ -1264,12 +1264,14 @@ function renderGroupNews(compact=false){
  ${unreadCount&&!query?`<div><button type="button" class="btn btn-outline btn-small" data-action="mark-group-news-list" aria-label="Marcar lista como vista, ${unreadCount} ${unreadCount===1?'publicação':'publicações'}" ${state.markingGroupNews?'disabled':''}>Marcar lista como vista (${unreadCount})</button></div>`:''}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
+   const saved=state.savedIds.includes(post.id);
    const summary=post.content?.trim()||[post.photoUrl?'Foto':'',post.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
    return `<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
      <button type="button" class="text-action" data-action="view-group" data-id="${esc(group.id)}">${esc(group.name)}</button>
      <p class="muted mini">${esc(author)}</p>
      <p class="post-copy">${esc(short(summary,140))}</p>
      <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa de ${esc(author)} em ${esc(group.name)}">Abrir conversa</button>
+     ${!compact?`<button type="button" class="text-action" data-action="save" data-id="${esc(post.id)}" aria-label="${saved?'Remover dos salvos':'Salvar para ler depois'} a publicação de ${esc(author)} em ${esc(group.name)}">${saved?'Remover dos salvos':'Salvar para ler depois'}</button>`:''}
    </article>`;
  }).join(''):`<p class="tip" role="status">${emptyMessage}</p>`}
  ${!compact&&posts.length>limit?'<button type="button" class="btn btn-outline btn-small" data-action="more-group-news">Ver mais publicações</button>':''}
