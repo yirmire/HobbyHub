@@ -1920,6 +1920,32 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('first visit saves the chosen hobby and carries the selection into discovery', async () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};state.profile={hobbies:['Leitura']};
+    state.modal='first-visit';state.welcomeHobby='Arte';
+    state.groups=[{id:'art',name:'Ateliê',hobby:'Arte',members:[]}];
+    state.savedDiscoveryGroupsLoaded=true;
+    const writes=[];
+    firebase={doc:(_db,...path)=>path.join('/'),runTransaction:async (_db,work)=>work({
+      get:async()=>({data:()=>state.profile}),update:(path,change)=>writes.push([path,change])
+    })};render=()=>{};showToast=()=>{};
+  `,context);
+  const invoke=(action,id)=>vm.runInContext(`onAction({dataset:${JSON.stringify({action,id})}})`,context);
+  await invoke('save-welcome-hobby');
+  assert.equal(vm.runInContext('JSON.stringify(writes[0][1])',context),'{"hobbies":["Leitura","Arte"]}');
+  vm.runInContext("state.profile.hobbies.push('Arte')",context);
+  await invoke('save-welcome-hobby');
+  assert.equal(vm.runInContext('writes.length',context),1);
+  await invoke('view-welcome-group','art');
+  assert.match(vm.runInContext('renderModal()',context),/Guardar grupo[\s\S]*Voltar às boas-vindas/);
+  await invoke('back-first-visit');
+  assert.equal(vm.runInContext('state.welcomeHobby',context),'Arte');
+  await invoke('welcome-discover-groups');
+  assert.equal(vm.runInContext("state.tab+' '+state.groupView+' '+state.groupHobby",context),'groups discover Arte');
+});
+
 test('saved group discovery keeps the bookmark before and after joining', async () => {
   const context=appContext();
   vm.runInContext(`
