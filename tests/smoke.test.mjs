@@ -1920,6 +1920,30 @@ test('video captions require a video and load a bounded WebVTT file without cred
   await assert.rejects(load(),/muito grande/);
 });
 
+test('group preview shows the latest post and the earliest upcoming event before joining', () => {
+  const context=appContext();
+  vm.runInContext(`
+    state.user={uid:'reader'};
+    const group={id:'art',name:'Arte',description:'Oficinas de pintura',hobby:'Arte',members:['owner']};
+    state.groups=[group];state.selectedGroup='art';state.modal='group-preview';
+    state.posts=[
+      {id:'old',groupId:'art',createdAt:1,content:'Post anterior'},
+      {id:'new',groupId:'art',createdAt:2,content:'Oficina de aquarela'}
+    ];
+    state.events=[
+      {id:'later',groupId:'art',title:'Evento posterior',date:'2099-06-02',time:'09:00'},
+      {id:'cancelled',groupId:'art',title:'Cancelado',cancelled:true,date:'2099-05-01',time:'09:00'},
+      {id:'next',groupId:'art',title:'Prática de desenho',date:'2099-06-01',time:'09:00'}
+    ];
+  `,context);
+  const html=vm.runInContext('renderModal()',context);
+  assert.match(html,/Oficinas de pintura[\s\S]*data-action="join-group"[\s\S]*Oficina de aquarela/);
+  assert.match(html,/data-action="view-event" data-id="next">Prática de desenho/);
+  assert.doesNotMatch(html,/Post anterior|Cancelado|Evento posterior|Conversas do grupo/);
+  vm.runInContext("group.members.push('reader')",context);
+  assert.match(vm.runInContext('renderModal()',context),/Conversas do grupo/);
+});
+
 test('community discovery orders by the latest available post after applying filters', () => {
   const handlers={},context=appContext(handlers);
   vm.runInContext(`
