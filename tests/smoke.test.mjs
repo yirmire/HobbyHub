@@ -2338,6 +2338,43 @@ test('community search finds words and participant names in the open channel and
   assert.doesNotMatch(panel(),/id="community-search"/);
 });
 
+test('saved community messages are private to the browser account and channel and reopen the original', async () => {
+  const context=appContext(),storage=new Map();
+  context.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.chatMode='global';state.profile={location:'Recife'};
+    state.messages=[
+      {id:'global-note',scope:'global',senderId:'peer',text:'Recomendação global'},
+      {id:'local-note',location:'Recife',senderId:'peer',text:'Recomendação local'}
+    ];
+    render=()=>{};showToast=()=>{};
+  `);
+  const action=(action,id)=>{context.actionData={action,id};return run('onAction({dataset:actionData})');};
+  const panel=()=>run('renderMessages()');
+  await action('toggle-community-saved-message','global-note');
+  assert.match(panel(),/data-id="global-note" aria-pressed="true">Remover dos salvos/);
+  await action('toggle-community-saved');
+  assert.match(panel(),/id="community-saved-title"/);
+  assert.match(panel(),/data-action="jump-community-message" data-id="global-note"/);
+  assert.doesNotMatch(panel(),/data-community-reading=|Recomendação local/);
+  await action('jump-community-message','global-note');
+  assert.match(panel(),/id="community-message-global-note"/);
+  await action('toggle-community-saved-message','global-note');
+  await action('toggle-community-saved');
+  assert.match(panel(),/ainda não tem mensagens salvas/);
+  await action('toggle-community-saved-message','global-note');
+  run("showCommunityChat('community')");
+  await action('toggle-community-saved');
+  assert.doesNotMatch(panel(),/Recomendação global/);
+  await action('toggle-community-saved-message','local-note');
+  assert.match(panel(),/Recomendação local/);
+  run("state.profile.location='Olinda';state.messages.push({id:'other-note',location:'Olinda',text:'Outra cidade'})");
+  assert.equal(run('readCommunitySaved().size'),0);
+  run("state.chatMode='global';state.user={uid:'other'}");
+  assert.equal(run('readCommunitySaved().size'),0);
+});
+
 test('draft dates are recorded only after changes and newer edits appear first', () => {
   const context=appContext(),items=new Map();
   let time=1700000000000;
