@@ -1353,6 +1353,24 @@ async function markGroupNewsSeen(uid,entries){
    });
  }
 }
+function renderHomeWeeklyQuestions(groups,blocked){
+ const questions=[...groups.values()].filter(group=>group.weeklyQuestionPostId);
+ if(!questions.length)return '';
+ const posts=new Map(state.posts.map(post=>[post.id,post]));
+ const entries=questions.flatMap(group=>{
+   const post=posts.get(group.weeklyQuestionPostId);
+   if(!post||post.groupId!==group.id||blocked.has(post.userId))return [];
+   return [{group,post,time:group.weeklyQuestionChangedAt?.toMillis?.()||post.createdAt||0}];
+ }).sort((a,b)=>comparePinnedGroups(a.group.id,b.group.id)||b.time-a.time).slice(0,3);
+ if(!entries.length)return '';
+ return `<section class="form-stack" aria-label="Perguntas da semana">
+ <h3 style="font-size:14px;margin:0">Perguntas da semana</h3>
+ ${entries.map(({group,post})=>`<article class="card" style="padding:12px;min-width:0;overflow-wrap:anywhere">
+ <strong class="mini">${esc(group.name)}</strong>
+ <p class="post-copy">${esc(short(post.content?.trim()||'Abra a publicação para ver a pergunta.',140))}</p>
+ <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}" aria-label="Abrir conversa da pergunta da semana em ${esc(group.name)}">Abrir conversa</button>
+ </article>`).join('')}</section>`;
+}
 function renderGroupNews(compact=false){
  const groups=new Map(state.groups.filter(group=>group.members?.includes(me())).map(group=>[group.id,group]));
  const filter=groupNewsFilter(groups,compact);
@@ -1365,7 +1383,8 @@ function renderGroupNews(compact=false){
    &&(!unseenOnly||isUnseenGroupPost(post,uid,blocked,currentTime))
    &&(!query||[post.content,authorName(post),groups.get(post.groupId).name].some(value=>norm(value).includes(query))))
    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
- if(compact&&!posts.length)return '';
+ const weeklyQuestions=compact?renderHomeWeeklyQuestions(groups,blocked):'';
+ if(compact&&!posts.length&&!weeklyQuestions)return '';
  const limit=compact?3:state.groupNewsLimit;
  const unread=compact?null:groupUnreadNews();
  const unreadCount=compact?0:groupNewsListReads(groups,filter,unread).reduce((sum,[,entry])=>sum+entry.count,0);
@@ -1393,6 +1412,7 @@ function renderGroupNews(compact=false){
  ${!compact&&groups.size?`<label class="field" for="group-news-search">Buscar nas novidades<input id="group-news-search" class="input" type="search" maxlength="200" placeholder="Texto, autor ou grupo" value="${esc(state.groupNewsSearch)}"></label>`:''}
  ${unreadCount&&query?'<p class="mini muted">Limpe a busca para marcar a lista como vista.</p>':''}
  ${unreadCount&&!query?`<div><button type="button" class="btn btn-outline btn-small" data-action="mark-group-news-list" aria-label="Marcar lista como vista, ${unreadCount} ${unreadCount===1?'publicação':'publicações'}" ${state.markingGroupNews?'disabled':''}>Marcar lista como vista (${unreadCount})</button></div>`:''}
+ ${weeklyQuestions}
  ${posts.length?posts.slice(0,limit).map(post=>{
    const group=groups.get(post.groupId),author=authorName(post);
    const saved=state.savedIds.includes(post.id);
