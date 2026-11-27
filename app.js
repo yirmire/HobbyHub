@@ -1179,7 +1179,7 @@ function groupCard(g, activity,unreadCount=0,lastPublished){
  const joined=(g.members||[]).includes(me());
  const pinAction=state.pinnedGroupIds.has(g.id)?'Desafixar':'Fixar';
  return `<article class="card community-card"><div class="cover ${topicColor(g.hobby)}"><span>${emoji(g.hobby)}</span></div>
- <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
+ <div><span class="eyebrow">${esc(g.hobby||'Comunidade')}</span><h3 style="margin:6px 0"><button data-action="view-group" data-id="${esc(g.id)}" ${lastPublished!==undefined?`data-preview="true" aria-label="Ver prévia de ${esc(g.name)}"`:''} style="font-weight:800;text-align:left">${esc(g.name)} ${icon('arrow')}</button></h3><p class="card-desc">${esc(g.description||'Um espaço para compartilhar esse interesse.')}</p></div>
  ${joined&&state.groupRoles.get(g.id)==='pending'?'<span class="pill">Convite para moderar</span>':''}
  ${joined&&state.pinnedGroupsLoaded?`<button type="button" class="text-action" data-action="toggle-pinned-group" data-id="${esc(g.id)}" aria-label="${pinAction} ${esc(g.name)}" ${state.changingPinnedGroup?'disabled':''}>${pinAction} grupo</button>`:''}
  ${joined?groupNewsReadControls(g,unreadCount):''}
@@ -1188,6 +1188,32 @@ function groupCard(g, activity,unreadCount=0,lastPublished){
  ${activity?.event?`<div><small class="muted">Próximo evento · ${dateLabel(activity.event.date)} ${esc(activity.event.time||'')}</small><br><button class="text-action" data-action="view-event" data-id="${esc(activity.event.id)}">${esc(activity.event.title)}</button></div>`:''}
  <div class="card-bottom"><span class="card-meta">${icon('users')} ${(g.members||[]).length} membros<br>${esc(g.location||'Online')}</span>
  <button class="btn btn-small ${joined?'btn-outline':'btn-primary'}" data-action="join-group" data-id="${esc(g.id)}">${joined?'Participando':'+ Participar'}</button></div></article>`;
+}
+function latestDiscoverableGroupPosts(groupIds){
+ const latest=new Map(),blocked=new Set(state.blockedIds),current=now();
+ for(const post of state.posts){
+   const date=post.createdAt;
+   if(groupIds.has(post.groupId)&&!blocked.has(post.userId)&&Number.isFinite(date)&&date<=current&&date>(latest.get(post.groupId)?.createdAt||0))latest.set(post.groupId,post);
+ }
+ return latest;
+}
+function renderGroupPreview(group,date=new Date()){
+ const post=latestDiscoverableGroupPosts(new Set([group.id])).get(group.id);
+ const current=`${localDateKey(date)} ${date.toTimeString().slice(0,5)}`;
+ const next=state.events.filter(event=>event.groupId===group.id&&!event.cancelled&&event.date&&eventScheduleKey(event)>=current)
+   .sort((a,b)=>eventScheduleKey(a).localeCompare(eventScheduleKey(b)))[0];
+ const schedule=next?viewerEventSchedule(next):null;
+ const summary=post?.content?.trim()||[post?.photoUrl?'Foto':'',post?.videoUrl?'Vídeo':''].filter(Boolean).join(' e ')||'Publicação na comunidade';
+ return modalWrap(group.name,`<div class="form-stack">
+   <p class="eyebrow">${esc(group.hobby)} · ${esc(group.location||'Online')}</p>
+   <p class="post-copy">${esc(group.description||'Encontre pessoas que amam esse hobby.')}</p>
+   <div class="toggle-row" style="flex-wrap:wrap"><span class="pill">${icon('users')} ${(group.members||[]).length} membros</span>
+   <button type="button" class="btn btn-primary btn-small" data-action="join-group" data-id="${esc(group.id)}" ${state.updatingGroup?'disabled':''}>Participar</button></div>
+   <section class="card" style="padding:14px"><h3>Última publicação</h3>
+   ${post?`<p class="post-copy">${esc(short(summary,240))}</p>`:'<p class="mini muted">Sem publicações disponíveis.</p>'}</section>
+   <section class="card" style="padding:14px"><h3>Próximo evento</h3>
+   ${next?`<button type="button" class="text-action" data-action="view-event" data-id="${esc(next.id)}">${esc(next.title)}</button><p class="mini muted">${dateLabel(schedule.date)} ${esc(eventTimeLabel(next,schedule))}</p>`:'<p class="mini muted">Nenhum encontro marcado ainda.</p>'}</section>
+ </div>`);
 }
 function groupHighlights(groups, now=new Date()) {
  const activity=new Map(groups.map(group=>[group.id,{}]));
@@ -1299,15 +1325,9 @@ function renderGroups(){
  const list=groups.filter(group=>(!query||norm([group.name,group.hobby,group.description,group.location].join(' ')).includes(query))
    && (!discovering||((!hobby||group.hobby===hobby)&&(!city||cityKey(group.location)===city)&&(!myInterests||myHobbies.has(norm(group.hobby))))));
  if(!discovering)list.sort((a,b)=>comparePinnedGroups(a.id,b.id));
- const latest=new Map();
+ const latest=discovering?latestDiscoverableGroupPosts(new Set(list.map(group=>group.id))):null;
  if(discovering){
-   const groupIds=new Set(list.map(group=>group.id));
-   const blocked=new Set(state.blockedIds),current=now();
-   for(const post of state.posts){
-     const date=post.createdAt;
-     if(groupIds.has(post.groupId)&&!blocked.has(post.userId)&&Number.isFinite(date)&&date<=current&&date>(latest.get(post.groupId)||0))latest.set(post.groupId,date);
-   }
-   if(state.groupDiscoveryOrder==='active')list.sort((a,b)=>(latest.get(b.id)||0)-(latest.get(a.id)||0));
+   if(state.groupDiscoveryOrder==='active')list.sort((a,b)=>(latest.get(b.id)?.createdAt||0)-(latest.get(a.id)?.createdAt||0));
  }
  const activity=discovering?null:groupHighlights(list);
  const unread=discovering?null:groupUnreadNews();
@@ -1315,7 +1335,7 @@ function renderGroups(){
  ${discovering?`<div class="filters"><button type="button" class="filter ${myInterests?'active':''}" data-action="toggle-group-my-interests" aria-pressed="${myInterests}">Meus interesses</button>
  <label class="field">Ordenar grupos<select class="select" id="group-discovery-order"><option value="default" ${state.groupDiscoveryOrder==='default'?'selected':''}>Ordem padrão</option><option value="active" ${state.groupDiscoveryOrder==='active'?'selected':''}>Mais ativos recentemente</option></select></label></div>`:''}
  <div class="section-head"><h2>${discovering?'Descubra comunidades':'Seus grupos'}</h2><span class="pill">${list.length} ${list.length===1?'grupo':'grupos'}</span></div>
- ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id),unread?.get(group.id)?.count,discovering?latest.get(group.id)||null:undefined)).join('')}</div>`:discovering?myInterests&&!myHobbies.size?empty('🧩','Adicione seus interesses','Escolha seus hobbies no perfil para encontrar grupos relacionados.','Editar perfil','edit-profile'):empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
+ ${list.length?`<div class="grid-two">${list.map(group=>groupCard(group,activity?.get(group.id),unread?.get(group.id)?.count,discovering?latest.get(group.id)?.createdAt||null:undefined)).join('')}</div>`:discovering?myInterests&&!myHobbies.size?empty('🧩','Adicione seus interesses','Escolha seus hobbies no perfil para encontrar grupos relacionados.','Editar perfil','edit-profile'):empty('🧩','Nenhuma comunidade encontrada','Ajuste os filtros ou crie uma comunidade.','Criar uma comunidade','group'):empty('🧩',query?'Nenhuma comunidade encontrada':'Encontre seu primeiro grupo',query?'Mude os termos da busca.':'Descubra comunidades para participar.','Descobrir comunidades','discover-groups')}`;
 }
 const EVENT_OFFER_MS=3600000;
 function eventSeatOffer(event,uid=me()){
@@ -3643,10 +3663,11 @@ function renderModal() {
  ${key?'<p class="mini muted">Seu rascunho é salvo neste aparelho.</p>':''}
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
- if(state.modal==='group-detail'){
+ if(state.modal==='group-detail'||state.modal==='group-preview'){
  const group=state.groups.find(g=>g.id===state.selectedGroup);
  if(!group)return modalWrap('Comunidade indisponível','<p>Esta comunidade não está mais disponível.</p>');
  const joined=(group.members||[]).includes(me());
+ if(state.modal==='group-preview'&&!joined)return renderGroupPreview(group);
  const welcoming=state.invitedGroupId===group.id;
  const groupPosts=state.posts.filter(p=>p.groupId===group.id);
  const pinned=groupPosts.find(p=>p.id===group.pinnedPostId);
@@ -4674,7 +4695,7 @@ async function onAction(btn) {
     if(me()===uid&&state.pollDetail===detail&&state.modal==='poll-detail')await openPoll(groupId,poll);
     if(me()===uid)showToast('Voto registrado!');
   });return;
-  case 'view-group':state.selectedGroup=id;openModal('group-detail');return;
+  case 'view-group':state.selectedGroup=id;openModal(btn.dataset.preview==='true'?'group-preview':'group-detail');return;
   case 'moderation-history':{
     const group=state.groups.find(item=>item.id===id);
     if(!canManageGroup(group))return;
