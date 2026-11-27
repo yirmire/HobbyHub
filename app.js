@@ -89,7 +89,7 @@ const state = {
   groupNewsReads:new Map(), groupNewsReadsLoaded:false, markingGroupNews:false,
   notificationFilter:'all', notificationReadSync:null, feedbackAdmin:false, feedbackAdminRole:null, productFeedbackQueue:null,
   myProductFeedback:null, selectedFeedbackId:null, feedbackSupplements:null,
-  invitedGroupId:null, groupFirstStepsId:null, openGroupIntroductions:null, changingGroupWelcome:false, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
+  invitedGroupId:null, groupFirstStepsId:null, openGroupIntroductions:null, changingGroupWelcome:false, weeklyQuestionHistory:null, composingIntroduction:false, composingRecapId:null, pendingPostDraft:null, welcomePending:false, welcomeHobby:'',
   pinnedDirectThreads:[], directThreadFilter:'all', directThreadSearch:'', manualUnreadThreads:new Set(), mutedDirectThreads:new Map(), directMuteMenu:null, directMuteTimer:null, archivedDirectThreads:new Map(), latestInboundAt:new Map(), privateReadAt:new Map(), inboundUnsubs:new Map(), pendingReads:new Set(),
   dark:localStorage.getItem('hobbyhub-theme')==='dark', pendingSignup:null,
   sessionUnsubs:[], messageUnsub:null, commentUnsub:null, drafts:new Map()
@@ -506,6 +506,7 @@ async function init() {
       state.notificationReadSync=user?{uid:user.uid,pending:new Set(readPendingNotifications(user.uid)),flushing:false}:null;
       state.notificationReads=new Set(state.notificationReadSync?.pending);
       state.invitedGroupId=null;state.groupFirstStepsId=null;state.openGroupIntroductions=null;state.changingGroupWelcome=false;state.composingIntroduction=false;state.composingRecapId=null;state.pendingPostDraft=null;state.welcomePending=justSignedUp;state.welcomeHobby='';
+      state.weeklyQuestionHistory=null;
       state.pinnedDirectThreads=[];state.directThreadFilter='all';state.directThreadSearch='';state.manualUnreadThreads.clear();state.mutedDirectThreads.clear();state.directMuteMenu=null;clearTimeout(state.directMuteTimer);state.archivedDirectThreads.clear();state.latestInboundAt.clear();state.privateReadAt.clear();state.pendingReads=new Set();
       if(user){try{
         const profile=await ensureMember(user);
@@ -1263,6 +1264,54 @@ function groupWelcomeControls(post){
  return `<div class="toggle-row" style="flex-wrap:wrap;margin:8px 0">
  ${canWelcomeGroupPost(post)?`<button type="button" class="btn btn-outline btn-small" data-action="toggle-group-welcome" data-id="${esc(post.id)}" aria-pressed="${welcomed}" ${state.changingGroupWelcome?'disabled':''}>${welcomed?'Desfazer boas-vindas':'Dar boas-vindas 👋'}</button>`:''}
  <span class="mini muted">${count} ${count===1?'pessoa deu boas-vindas':'pessoas deram boas-vindas'}</span></div>`;
+}
+async function changeWeeklyQuestion(groupId,postId,clear=false){
+ const groupRef=ref('groups',groupId);
+ await firebase.runTransaction(db,async transaction=>{
+   const group=(await transaction.get(groupRef)).data();
+   const previous=group?.weeklyQuestionPostId;
+   if(!group||(clear?previous!==postId:previous===postId))return;
+   if(previous)transaction.set(ref('groups',groupId,'weeklyQuestionHistory',previous),{
+     highlightedAt:group.weeklyQuestionChangedAt||null
+   });
+   transaction.update(groupRef,clear?{weeklyQuestionPostId:''}:{
+     weeklyQuestionPostId:postId,weeklyQuestionChangedAt:firebase.serverTimestamp()
+   });
+ });
+}
+async function openWeeklyQuestionHistory(id){
+ const group=state.groups.find(item=>item.id===id);
+ if(!group||(!group.members?.includes(me())&&!canManageGroup(group)))return;
+ const history={groupId:id,entries:null,error:false};
+ state.weeklyQuestionHistory=history;
+ state.selectedGroup=id;
+ openModal('weekly-question-history');
+ try{
+   const snapshot=await firebase.getDocs(col('groups',id,'weeklyQuestionHistory'));
+   history.entries=snapshot.docs.map(doc=>({...doc.data(),postId:doc.id}));
+ }catch(error){
+   history.error=true;
+   console.error('HobbyHub: histórico de perguntas',error);
+ }
+ if(state.modal==='weekly-question-history'&&state.weeklyQuestionHistory===history)render();
+}
+function renderWeeklyQuestionHistory(){
+ const history=state.weeklyQuestionHistory;
+ const group=state.groups.find(item=>item.id===history?.groupId);
+ if(!group)return modalWrap('Histórico de perguntas','<p>Esta comunidade não está mais disponível.</p>');
+ const posts=new Map(state.posts.filter(post=>post.groupId===group.id&&!state.blockedIds.includes(post.userId)).map(post=>[post.id,post]));
+ const entries=(history.entries||[]).filter(entry=>entry.postId!==group.weeklyQuestionPostId&&posts.has(entry.postId))
+   .sort((a,b)=>(b.highlightedAt?.toMillis?.()||0)-(a.highlightedAt?.toMillis?.()||0));
+ let content='<p class="tip">Ainda não há perguntas anteriores disponíveis.</p>';
+ if(history.error)content=`<p class="tip" role="status">Não foi possível carregar o histórico.</p><button type="button" class="text-action" data-action="open-weekly-question-history" data-id="${esc(group.id)}">Tentar novamente</button>`;
+ else if(!history.entries)content='<p class="tip" role="status">Carregando perguntas anteriores…</p>';
+ else if(entries.length)content=entries.map(entry=>{
+   const post=posts.get(entry.postId),date=entry.highlightedAt?.toMillis?.();
+   return `<article class="card" style="padding:12px"><p class="post-copy">${esc(short(post.content?.trim()||'Abra a publicação para ver a pergunta.',240))}</p>
+   <p class="mini muted">${Number.isFinite(date)?'Destacada em '+new Date(date).toLocaleDateString('pt-BR'):'Data do destaque indisponível'}</p>
+   <button type="button" class="text-action" data-action="comments" data-id="${esc(post.id)}">Abrir conversa</button></article>`;
+ }).join('');
+ return modalWrap('Histórico de perguntas',`<div class="form-stack"><div><button type="button" class="text-action" data-action="view-group" data-id="${esc(group.id)}">Voltar ao grupo</button></div>${content}</div>`);
 }
 function groupHighlights(groups, now=new Date()) {
  const activity=new Map(groups.map(group=>[group.id,{}]));
@@ -3722,6 +3771,7 @@ function renderModal() {
  ${key?'<p class="mini muted">Seu rascunho é salvo neste aparelho.</p>':''}
  <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="close">Cancelar</button><button class="btn btn-primary" type="submit" ${state.busy?'disabled':''}>${icon('send')} Publicar</button></div></form>`);
  }
+ if(state.modal==='weekly-question-history')return renderWeeklyQuestionHistory();
  if(state.modal==='group-detail'||state.modal==='group-preview'){
  const group=state.groups.find(g=>g.id===state.selectedGroup);
  if(!group)return modalWrap('Comunidade indisponível','<p>Esta comunidade não está mais disponível.</p>');
@@ -3773,6 +3823,7 @@ function renderModal() {
  <p class="post-copy">${esc(short(weeklyQuestion.content?.trim()||'Abra a publicação para ver a pergunta.',240))}</p>
  <div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary btn-small" data-action="comments" data-id="${esc(weeklyQuestion.id)}">Abrir conversa</button>
  ${canManage?`<button type="button" class="text-action" data-action="clear-weekly-question" data-id="${esc(weeklyQuestion.id)}">Retirar destaque</button>`:''}</div></section>`:''}
+ ${joined||canManage?`<div style="margin:12px 0"><button type="button" class="text-action" data-action="open-weekly-question-history" data-id="${esc(group.id)}">Histórico de perguntas da semana</button></div>`:''}
  <div class="section-head"><h2 id="group-conversations" tabindex="-1">Conversas do grupo</h2><span class="pill">${posts.length} posts recentes</span></div>
  ${posts.length?posts.map(post=>renderGroupPost(post)).join(''):pinned?'':empty('💡','Uma conversa pode começar aqui',joined?'Compartilhe a primeira publicação da comunidade.':'Participe para trocar ideias com esta comunidade.',joined?'Publicar no grupo':'',joined?'group-post':'group')}
  `);
@@ -4927,25 +4978,28 @@ async function onAction(btn) {
     if(me()===uid)showToast(muted?'Avisos da comunidade reativados.':'Avisos de enquetes, perguntas da semana, recados e mudanças de eventos salvos foram silenciados.');
   });return;
   case 'pin-group-post':
-  case 'set-weekly-question':
-  case 'clear-weekly-question':
   case 'unpin-group-post':await attempt(async()=>{
     const group=state.groups.find(g=>g.id===state.selectedGroup);
     if(!canManageGroup(group))return;
     const groupRef=ref('groups',group.id);
-    const weekly=action==='set-weekly-question'||action==='clear-weekly-question';
-    const field=weekly?'weeklyQuestionPostId':'pinnedPostId';
-    if(action==='pin-group-post'||action==='set-weekly-question'){
+    if(action==='pin-group-post'){
       if(!state.posts.some(post=>post.id===id&&post.groupId===group.id))return;
-      const changes=weekly?{weeklyQuestionPostId:id,weeklyQuestionChangedAt:firebase.serverTimestamp()}:{pinnedPostId:id};
-      await firebase.updateDoc(groupRef,changes);
-      showToast(weekly?'Pergunta da semana destacada.':'Publicação fixada na comunidade.');
+      await firebase.updateDoc(groupRef,{pinnedPostId:id});
+      showToast('Publicação fixada na comunidade.');
     }else{
       await firebase.runTransaction(db,async tx=>{
         const current=await tx.get(groupRef);
-        if(current.data()?.[field]===id)tx.update(groupRef,{[field]:''});
+        if(current.data()?.pinnedPostId===id)tx.update(groupRef,{pinnedPostId:''});
       });
     }
+  });return;
+  case 'open-weekly-question-history':await openWeeklyQuestionHistory(id);return;
+  case 'set-weekly-question':
+  case 'clear-weekly-question':await attempt(async()=>{
+    const group=state.groups.find(item=>item.id===state.selectedGroup),clear=action==='clear-weekly-question';
+    if(!canManageGroup(group)||(!clear&&!state.posts.some(post=>post.id===id&&post.groupId===group.id)))return;
+    await changeWeeklyQuestion(group.id,id,clear);
+    showToast(clear?'Destaque retirado.':'Pergunta da semana destacada.');
   });return;
   case 'group-post':
   case 'introduce-group':{
