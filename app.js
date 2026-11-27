@@ -480,7 +480,7 @@ async function init() {
       state.threads=[];state.savedIds=[];state.savedEventDates.clear();state.followingIds=[];state.blockedIds=[];state.receivedTestimonials=[];state.visibleTestimonials=[];state.sentTestimonial=null;state.testimonialStatus='';state.selectedPost=null;state.postEditor=null;state.commentEditor=null;state.commentReplyId=null;state.chatMode='community';state.chatTarget=null;state.modal=null;
       state.expandedCommentReplies.clear();
       state.savedView='saved';state.savedGroup='';state.savedPostOrder='recent';state.savedPostDates.clear();
-      state.savedReadingOnly=false;state.readSavedPosts.clear();
+      state.savedReadingOnly=false;state.readSavedPosts.clear();state.localDraftToDiscard=null;
       state.savedSearch='';
       state.savedCollections=[];state.savedMemberships.clear();state.selectedSavedCollection='';state.collectionPostId=null;
       state.editingSavedCollectionId=null;
@@ -2193,12 +2193,46 @@ function renderSavedComments(query){
    <button class="text-action" data-action="remove-saved-comment" data-id="${esc(key)}" ${state.busy?'disabled':''}>Remover dos salvos</button></div></article>`;
  }).join('')}</div>`;
 }
+function myPostDrafts(){
+ const uid=me();
+ if(!uid)return [];
+ const prefix=postDraftPrefix(uid);
+ try{
+   const drafts=[];
+   for(let index=0;index<localStorage.length;index++){
+     const key=localStorage.key(index);
+     if(!key?.startsWith(prefix))continue;
+     const scope=key.slice(prefix.length),match=/^(intro|group):([^:]+)$/.exec(scope);
+     if(scope!=='feed'&&!match)continue;
+     let groupId='';
+     try{groupId=match?decodeURIComponent(match[2]):'';}catch{continue;}
+     const draft=readPostDraft(key);
+     if(!draft)continue;
+     const group=state.groups.find(item=>item.id===groupId);
+     drafts.push({key,draft,groupId,introduction:match?.[1]==='intro',name:group?.name||(groupId?'Grupo indisponível':'Feed'),
+       available:!groupId||Boolean(group?.members?.includes(uid))});
+   }
+   return drafts.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+ }catch{return [];}
+}
+function renderMyPostDrafts(){
+ const drafts=myPostDrafts();
+ return `<section class="form-stack" aria-label="Meus rascunhos">
+ <p class="mini muted">Rascunhos guardados neste aparelho.</p>
+ ${drafts.map(({key,draft,introduction,name,available})=>`<article class="card" style="padding:14px;overflow-wrap:anywhere">
+ <strong>${esc(name)}</strong><p class="mini muted">${introduction?'Apresentação':'Publicação'}</p>
+ <p class="post-copy">${esc(short(draft.content.trim()||'Rascunho com mídia',160))}</p>
+ ${!available?'<p class="mini muted">Este grupo está indisponível para publicar.</p>':''}
+ <div class="toggle-row" style="flex-wrap:wrap">${available?`<button type="button" class="btn btn-primary btn-small" data-action="resume-local-post-draft" data-id="${esc(key)}">Continuar</button>`:''}
+ <button type="button" class="text-action" data-action="discard-local-post-draft" data-id="${esc(key)}">Descartar</button></div></article>`).join('')||'<p class="tip">Você ainda não tem rascunhos neste aparelho.</p>'}</section>`;
+}
 function renderSaved() {
  const query=norm(state.savedSearch);
- const filters=`<div class="filters" role="group" aria-label="Tipo de item salvo">${[['saved','Salvos'],['following','Acompanhando'],['comments','Comentários']].map(([view,label])=>
+ const filters=`<div class="filters" role="group" aria-label="Tipo de item salvo">${[['saved','Salvos'],['following','Acompanhando'],['comments','Comentários'],['drafts','Meus rascunhos']].map(([view,label])=>
    `<button class="filter ${state.savedView===view?'active':''}" data-action="saved-view" data-value="${view}" aria-pressed="${state.savedView===view}">${label}</button>`).join('')}</div>`;
  const search=`<div class="form-stack" style="margin-bottom:16px"><label class="field">${state.savedView==='comments'?'Buscar comentários':'Buscar publicações'}<input class="input" id="saved-search" type="search" placeholder="${state.savedView==='saved'?'Texto, autor, comunidade ou nota':'Texto, autor ou comunidade'}" value="${esc(state.savedSearch)}"></label>
  ${query?'<button class="text-action" data-action="clear-saved-search">Limpar busca</button>':''}</div>`;
+ if(state.savedView==='drafts')return filters+renderMyPostDrafts();
  if(state.savedView==='following')return filters+search+renderFollowedPosts(query);
  if(state.savedView==='comments')return filters+search+renderSavedComments(query);
  const selected=state.selectedSavedCollection;
@@ -3846,6 +3880,7 @@ function renderModal() {
    `<button type="button" class="filter ${filter===value?'active':''}" data-action="set-weekly-answer-filter" data-value="${value}" aria-pressed="${filter===value}">${label}</button>`).join('')}</div>
    ${content}</div>`);
  }
+ if(state.modal==='discard-local-post-draft')return modalWrap('Descartar rascunho?',`<div class="form-stack"><p>O texto guardado neste aparelho será apagado.</p><div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close">Cancelar</button><button type="button" class="btn btn-primary" data-action="confirm-discard-local-post-draft">Descartar rascunho</button></div></div>`);
  if(state.modal==='weekly-question-history')return renderWeeklyQuestionHistory();
  if(state.modal==='group-detail'||state.modal==='group-preview'){
  const group=state.groups.find(g=>g.id===state.selectedGroup);
@@ -4034,16 +4069,19 @@ function saveCurrentPrivateMessageDraft(message=document.getElementById('message
  const key=privateMessageDraftKey();
  savePrivateMessageDraft(key,message??readPrivateMessageDraft(key)?.message??'',state.directReply?.id||'');
 }
+function postDraftPrefix(uid){
+ return 'hobbyhub-post-draft:'+encodeURIComponent(uid)+':';
+}
 function introductionDraftKey(groupId){
  const uid=me();
- return uid&&groupId?'hobbyhub-post-draft:'+encodeURIComponent(uid)+':intro:'+encodeURIComponent(groupId):'';
+ return uid&&groupId?postDraftPrefix(uid)+'intro:'+encodeURIComponent(groupId):'';
 }
 function postDraftKey(){
  const uid=me();
  if(!uid||state.composingRecapId)return '';
  if(state.composingIntroduction)return introductionDraftKey(state.composingGroup);
  const scope=state.composingGroup?'group:'+encodeURIComponent(state.composingGroup):'feed';
- return 'hobbyhub-post-draft:'+encodeURIComponent(uid)+':'+scope;
+ return postDraftPrefix(uid)+scope;
 }
 function postDraftMedia(value){
  return Object.fromEntries(Object.entries(sharedMediaFieldsLimits).map(([name,limit])=>[name,String(value(name)||'').slice(0,limit)]));
@@ -4179,6 +4217,7 @@ function clearContentLink(){
  }
 }
 function closeModal(){
+ state.localDraftToDiscard=null;
  state.savedEventSearchNews=null;
  state.directMessageEditor=null;
  state.myCommentActivity=null;
@@ -5586,9 +5625,28 @@ async function onAction(btn) {
     state.modal='post-options';render();return;
   }
   case 'saved-view':
-    if(state.tab==='saved'&&['saved','following','comments'].includes(btn.dataset.value)){
+    if(state.tab==='saved'&&['saved','following','comments','drafts'].includes(btn.dataset.value)){
       if(state.savedView!==btn.dataset.value)state.savedSelection=null;
       state.savedView=btn.dataset.value;render();
+    }
+    return;
+  case 'resume-local-post-draft':{
+    if(state.tab!=='saved'||state.savedView!=='drafts')return;
+    const item=myPostDrafts().find(draft=>draft.key===id&&draft.available);
+    if(!item)return;
+    state.composingGroup=item.groupId||null;state.composingIntroduction=item.introduction;state.composingRecapId=null;
+    state.pendingPostDraft=null;state.drafts.clear();state.drafts.set(item.key,item.draft);
+    state.modal='compose';render();document.getElementById('post-content')?.focus();
+    return;
+  }
+  case 'discard-local-post-draft':
+    if(state.tab==='saved'&&state.savedView==='drafts'&&myPostDrafts().some(draft=>draft.key===id)){
+      state.localDraftToDiscard=id;openModal('discard-local-post-draft');
+    }
+    return;
+  case 'confirm-discard-local-post-draft':
+    if(state.modal==='discard-local-post-draft'&&myPostDrafts().some(draft=>draft.key===state.localDraftToDiscard)){
+      removePostDraft(state.localDraftToDiscard);state.localDraftToDiscard=null;closeModal();
     }
     return;
   case 'toggle-saved-reading-filter':
