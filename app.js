@@ -9,7 +9,12 @@ const FIREBASE_CONFIG = {
   messagingSenderId: '97040838158',
   appId: '1:97040838158:web:47070af0ff42a9817fd65f'
 };
-const PROJECT = 'hubbyhub-98c71';
+const LOCAL_CHAT_PILOT=['localhost','127.0.0.1'].includes(window.location.hostname)
+  &&new URLSearchParams(window.location.search).get('piloto')==='1';
+const PROJECT = LOCAL_CHAT_PILOT?'demo-hobbyhub':'hubbyhub-98c71';
+let protectedLocalChat=LOCAL_CHAT_PILOT;
+let pilotLocalRoom={id:'',messages:[],stop:null};
+let pilotCityReview={allowed:false,requests:[]};
 const BASE = ['artifacts', PROJECT, 'public', 'data'];
 const TOPICS = [
   {name:'Fotografia',emoji:'📸',color:'pink'}, {name:'Música',emoji:'🎵',color:'orange'},
@@ -134,6 +139,10 @@ async function attempt(callback, pending='busy', permissionMessage) {
   finally {state[pending]=false;render();}
 }
 function unsubscribeAll() {
+ protectedLocalChat=LOCAL_CHAT_PILOT;
+ pilotLocalRoom.stop?.();
+ pilotLocalRoom={id:'',messages:[],stop:null};
+ pilotCityReview={allowed:false,requests:[]};
  state.savedEventSearchNews=null;
  state.receivedEventInvites=null;state.sentEventInvites=null;state.dismissedEventInviteIds.clear();state.showDismissedEventInvites=false;
  if(['invites','sent-invites'].includes(state.eventFilter))state.eventFilter='upcoming';
@@ -332,6 +341,98 @@ async function ensureMember(user) {
   state.pendingSignup=null;
   return profile;
 }
+function watchPilotLocalRoom(uid) {
+ subscribe(firebase.doc(db,'artifacts',PROJECT,'localChatModerators',uid),snapshot=>{
+   if(me()===uid)pilotCityReview.allowed=snapshot.data()?.active===true;
+ },'permissão de moderação local');
+ subscribe(firebase.doc(db,'artifacts',PROJECT,'localChatMemberships',uid),snapshot=>{
+   if(me()!==uid)return;
+   const id=snapshot.data()?.cityId||'';
+   if(id===pilotLocalRoom.id)return;
+   pilotLocalRoom.stop?.();
+   const room={id,messages:[],stop:null};
+   pilotLocalRoom=room;
+   if(!id)return;
+   room.stop=firebase.onSnapshot(pilotRoomMessages(id),messages=>{
+     if(pilotLocalRoom!==room||me()!==uid)return;
+     room.messages=messages.docs.map(doc=>({...doc.data(),id:doc.id})).sort((a,b)=>compareCommunityPositions(communityMessagePosition(a),communityMessagePosition(b)));
+     render();
+   },error=>{
+     if(pilotLocalRoom!==room)return;
+     room.messages=[];showToast(friendlyError(error),true);render();
+   });
+ },'sala local');
+}
+function pilotRoomMessages(id){
+ return firebase.collection(db,'artifacts',PROJECT,'localChatRooms',id,'messages');
+}
+async function requestPilotRoom(){
+ const uid=me(),location=myLocation();
+ if(!protectedLocalChat||!uid||!location||location.includes('/'))return;
+ const alias=await firebase.getDoc(firebase.doc(db,'artifacts',PROJECT,'localChatCities',location));
+ if(me()!==uid)return;
+ const id=alias.data()?.cityId;
+ if(!id){showToast('A cidade do seu perfil ainda não está no teste.',true);return;}
+ if(id===pilotLocalRoom.id){showToast('Você já participa da sala dessa cidade.');return;}
+ const changing=Boolean(pilotLocalRoom.id);
+ const kind=changing?'localChatChangeRequests':'localChatMemberships';
+ await firebase.setDoc(firebase.doc(db,'artifacts',PROJECT,kind,uid),{cityId:id});
+ if(me()===uid)showToast(changing?'Pedido de troca enviado para moderação.':'Você entrou na sala local.');
+}
+async function openPilotCityReview(){
+ const uid=me(),review=pilotCityReview;
+ if(!protectedLocalChat||!uid||!review.allowed)return;
+ const requests=firebase.collection(db,'artifacts',PROJECT,'localChatChangeRequests');
+ const result=await firebase.getDocs(firebase.query(requests,firebase.limit(50)));
+ if(me()!==uid||pilotCityReview!==review||!review.allowed)return;
+ review.requests=result.docs.map(doc=>({uid:doc.id,cityId:doc.data().cityId}));
+ openModal('pilot-city-review');
+}
+async function approvePilotCity(uid,cityId){
+ const reviewer=me(),review=pilotCityReview;
+ if(!protectedLocalChat||!reviewer||!review.allowed||state.modal!=='pilot-city-review'||
+    !review.requests.some(request=>request.uid===uid&&request.cityId===cityId))return;
+ const request=firebase.doc(db,'artifacts',PROJECT,'localChatChangeRequests',uid);
+ const membership=firebase.doc(db,'artifacts',PROJECT,'localChatMemberships',uid);
+ const approved=await firebase.runTransaction(db,async transaction=>{
+   const pending=await transaction.get(request);
+   if(pending.data()?.cityId!==cityId)return false;
+   transaction.set(membership,{cityId});
+   transaction.delete(request);
+   return true;
+ });
+ if(me()!==reviewer||pilotCityReview!==review)return;
+ if(state.modal==='pilot-city-review')await openPilotCityReview();
+ showToast(approved?'Troca de cidade aprovada.':'O pedido mudou. Confira a lista atualizada.',!approved);
+}
+function watchCommunityChatMode(uid) {
+ let stopMessages, activeMode, watchingRooms=false;
+ function setMode(enabled){
+   if(me()!==uid||activeMode===enabled)return;
+   activeMode=enabled;
+   protectedLocalChat=enabled;
+   stopMessages?.();
+   state.messages=[];
+   state.communityHistoryAnchor=null;state.communityReply=null;state.directMessageMenu=null;
+   if(state.modal==='pilot-city-review'&&!enabled)state.modal=null;
+   if(enabled&&!watchingRooms){watchingRooms=true;watchPilotLocalRoom(uid);}
+   const source=col('messages');
+   const query=enabled?firebase.query(source,firebase.where('scope','==','global')):source;
+   stopMessages=firebase.onSnapshot(query,snapshot=>{
+     if(me()!==uid||activeMode!==enabled)return;
+     state.messages=snapshot.docs.map(doc=>({...doc.data(),id:doc.id}))
+       .sort((a,b)=>compareCommunityPositions(communityMessagePosition(a),communityMessagePosition(b)));
+     render();
+   },error=>{
+     if(me()===uid&&activeMode===enabled){console.warn('HobbyHub: chat da comunidade.',error);showToast(friendlyError(error),true);}
+   });
+ }
+ state.sessionUnsubs.push(()=>stopMessages?.());
+ if(LOCAL_CHAT_PILOT){setMode(true);return;}
+ subscribe(firebase.doc(db,'artifacts',PROJECT,'settings','localChatRollout'),snapshot=>{
+   setMode(snapshot.data()?.protectedRooms===true);
+ },'configuração do chat local');
+}
 function startSession() {
   const uid=me();
   subscribe(col('members',uid,'communitySaved'),snapshot=>{
@@ -359,7 +460,7 @@ function startSession() {
     state.events=docs(s).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
     state.eventsLoaded=true;scheduleEventOffers();scheduleEventReminderRefresh();watchEventBulletins();void loadPersonalHistory();void loadEventRoom();loadHomeEventRooms();queueMicrotask(openLinkedContent);
   },'eventos');
-  subscribe(col('messages'), (s)=>{state.messages=docs(s).sort((a,b)=>compareCommunityPositions(communityMessagePosition(a),communityMessagePosition(b)));},'chat da comunidade');
+  watchCommunityChatMode(uid);
   subscribe(firebase.query(firebase.collection(db,'artifacts',PROJECT,'dm_threads'),firebase.where('participants','array-contains',me())),
     (s)=>{
       const previous=state.threads.map(thread=>thread.id).sort().join(',');
@@ -482,8 +583,12 @@ async function init() {
       import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js')
     ]);
     firebase={...appModule,...authModule,...storeModule};
-    const app=firebase.initializeApp(FIREBASE_CONFIG);
+    const app=firebase.initializeApp(LOCAL_CHAT_PILOT?{...FIREBASE_CONFIG,apiKey:'demo',projectId:PROJECT}:FIREBASE_CONFIG);
     auth=firebase.getAuth(app);db=firebase.getFirestore(app);
+    if(LOCAL_CHAT_PILOT){
+      firebase.connectAuthEmulator(auth,'http://127.0.0.1:9099');
+      firebase.connectFirestoreEmulator(db,'127.0.0.1',8080);
+    }
     firebase.onAuthStateChanged(auth,async(user)=>{
       const justSignedUp=Boolean(user&&state.pendingSignup);
       unsubscribeAll();state.alerts=[];state.user=user;state.profile=null;
@@ -2746,6 +2851,7 @@ function chatMessageMenuScope(){
  return state.chatMode==='direct'?state.chatTarget?.uid&&'direct:'+state.chatTarget.uid:state.chatMode;
 }
 function communityChannelKey(mode=state.chatMode){
+ if(protectedLocalChat&&mode!=='global')return JSON.stringify([me(),['local',pilotLocalRoom.id]]);
  const channel=mode==='global'?'global':['local',cityKey(myLocation())];
  return JSON.stringify([me(),channel]);
 }
@@ -2946,6 +3052,7 @@ function restoreChatScroll(previous,next,scroll,nearBottom){
 }
 function chatMessages(mode=state.chatMode){
  if(mode==='direct')return state.directMessages;
+ if(protectedLocalChat&&mode!=='global')return pilotLocalRoom.messages;
  return state.messages.filter(m=>mode==='global'?m.scope==='global':m.scope!=='global'&&locate(m.location));
 }
 function renderMessageMenu(m,actions){
@@ -3331,14 +3438,14 @@ function renderMessages() {
  const showingEvents=!community&&state.chatTarget&&state.directEventLimit>0;
  const showingLinks=!community&&state.chatTarget&&state.directLinksLimit>0;
  const matches=searching?(community?communitySearchResults(messages,searching.query):directSearchResults(messages,searching.query)):[];
- const title=global?'Comunidade global':community?`Comunidade de ${myLocation()}`:(state.chatTarget?.name||'Escolha uma pessoa');
+ const title=global?'Comunidade global':community?(protectedLocalChat?'Comunidade local':`Comunidade de ${myLocation()}`):(state.chatTarget?.name||'Escolha uma pessoa');
  const blocked=!community&&state.blockedIds.includes(state.chatTarget?.uid);
  const activeThread=!community&&state.chatTarget?threadId(me(),state.chatTarget.uid):null;
  const originals=new Map(messages.map(message=>[message.id,message]));
  const reply=community?(state.communityReply?.key===readingKey?state.communityReply:null):state.directReply;
  const replying=blocked?null:originals.get(reply?.id);
  const savedDraft=community?null:readPrivateMessageDraft(privateMessageDraftKey());
- const draftKey=`message-form:${me()}:${community?state.chatMode:`direct:${state.chatTarget?.uid}`}`;
+ const draftKey=`message-form:${me()}:${community?(protectedLocalChat&&!global?`pilot:${pilotLocalRoom.id}`:state.chatMode):`direct:${state.chatTarget?.uid}`}`;
  const unreadOnly=state.directThreadFilter==='unread';
  const archiveOnly=state.directThreadFilter==='archived';
  const query=norm(state.directThreadSearch);
@@ -3399,6 +3506,8 @@ function renderMessages() {
  ${!community&&start>0?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.max(0,start-75)].id)}">Ver mensagens anteriores</button>`:''}
  ${messages.length?visibleMessages.map(m=>`${unread===m?'<div id="community-new-messages" class="community-new-messages">Novas mensagens</div>':''}<div ${community?`id="community-message-${esc(m.id)}" tabindex="-1" data-community-message="${esc(m.id)}" data-community-time="${communityMessagePosition(m).time}"`:`id="direct-message-${esc(m.id)}" tabindex="-1"`} class="chat-row ${m.senderId===me()?'mine':''}"><div class="chat-bubble">${!community&&m.deletedAt?'<em>Mensagem apagada</em>':`${m.senderId!==me()&&community?`<small>${esc(communityMessageAuthor(m))}</small>`:''}${typeof m.replyTo==='string'&&m.replyTo&&m.replyTo!==m.id?(directQuote(originals.get(m.replyTo),community)||(community?'<small>Mensagem original indisponível</small>':'')):''}${community?esc(m.text):renderDirectMessageText(m.text,m.senderId!==me())}<span style="display:block;text-align:right;font-size:9px;opacity:.65;margin-top:5px">${when(m.createdAt)}${!community&&m.editedAt?' · Editada':''}</span>${community?renderMessageMenu(m,`<button type="button" class="btn btn-soft btn-small" data-action="reply-community-message" data-id="${esc(m.id)}">Responder</button>${m.senderId!==me()&&member(m.senderId)?`<button type="button" class="btn btn-soft btn-small" data-action="mention-community-author" data-id="${esc(m.id)}">Mencionar</button>`:''}${communitySaveButton(m.id,communitySaved.has(m.id))}${m.senderId!==me()?reportButton('communityMessage',m.id,'mensagem'):''}`):renderDirectMessageMenu(m,blocked)}`}</div></div>`).join(''):`<div class="chat-empty"><span class="emoji">${community?'👋':'💌'}</span>${community?'Dê um oi à sua comunidade!':'Comece com uma mensagem simpática.'}</div>`}
  ${!community&&end<messages.length?`<button class="btn btn-soft" data-action="jump-direct-message" data-id="${esc(messages[Math.min(messages.length-1,end+10)].id)}">Ver mensagens seguintes</button><button class="btn btn-soft" data-action="latest-direct-messages">Ir para as mais recentes</button>`:''}`}</div>
+ ${protectedLocalChat&&community&&!global?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">${pilotLocalRoom.id?`Sala ativa: ${esc(pilotLocalRoom.id)}. O acesso muda após aprovação.`:'Entre na sala da cidade informada no perfil.'}</span><button type="button" class="btn btn-soft btn-small" data-action="request-pilot-room">${pilotLocalRoom.id?'Solicitar troca de cidade':'Entrar na sala local'}</button></div>`:''}
+ ${protectedLocalChat&&community&&!global&&pilotCityReview.allowed?`<div class="community-chat-navigation"><button type="button" class="btn btn-soft btn-small" data-action="open-pilot-city-review">Revisar trocas de cidade</button></div>`:''}
  ${community&&!communitySearch&&!showingCommunitySaved&&messages.length?`<div class="community-chat-navigation"><button type="button" class="btn btn-soft btn-small" data-action="latest-community-messages" aria-controls="chat-log">Ir para o fim ↓</button></div>`:''}
  ${replying?`<div class="chat-send" style="flex-wrap:wrap;align-items:center"><span class="mini muted">Respondendo a</span>${directQuote(replying,community)}<button type="button" class="btn btn-soft btn-small" data-action="cancel-${community?'community':'direct'}-reply">Cancelar resposta</button></div>`:''}
  ${blocked?'<div class="chat-send"><p class="tip">Você bloqueou novas mensagens nesta conversa.</p></div>':community||state.chatTarget?`<form id="message-form" data-draft="true" data-draft-key="${esc(draftKey)}" class="chat-send"><input class="input" id="message-text" name="message" value="${esc(savedDraft?.message||'')}" maxlength="1500" required placeholder="Escreva sua mensagem..."><button class="btn btn-primary" type="submit" aria-label="Enviar mensagem" ${state.busy?'disabled':''}>${icon('send')}</button></form>`:`<div class="chat-send"><button class="btn btn-soft" data-action="tab" data-tab="explore">Encontrar pessoas</button></div>`}</div></div>`;
@@ -3967,6 +4076,11 @@ function renderMyCommentActivity(){
  ${activity?.more&&!activity.loading?`<button class="btn btn-outline btn-small" data-action="load-my-comments">${activity.error?'Tentar novamente':'Carregar mais'}</button>`:''}</div>`);
 }
 function renderModal() {
+ if(state.modal==='pilot-city-review'&&protectedLocalChat&&pilotCityReview.allowed){
+   return modalWrap('Pedidos de troca de cidade',`<div class="form-stack">${pilotCityReview.requests.length?
+     pilotCityReview.requests.map(request=>`<div class="toggle-row"><span>${esc(member(request.uid)?.name||'Membro do HobbyHub')} · ${esc(request.cityId)}</span><button type="button" class="btn btn-soft btn-small" data-action="approve-pilot-city" data-id="${esc(request.uid)}" data-value="${esc(request.cityId)}">Aprovar troca</button></div>`).join(''):
+     '<p class="tip">Nenhum pedido em aberto.</p>'}</div>`);
+ }
  if(state.modal==='community-attention')return renderCommunityAttention();
  if(state.modal==='saved-event-search-news')return renderSavedEventSearchNews();
  if(state.modal==='saved-event-searches')return renderSavedEventSearches();
@@ -4929,7 +5043,8 @@ function openReport(type,id) {
      const direct=type==='privateMessage';
      if(direct&&!state.chatTarget?.uid)return;
      if(direct)parentId=threadId(me(),state.chatTarget.uid);
-     const message=(direct?state.directMessages:state.messages).find(record=>record.id===id);
+     if(!direct&&protectedLocalChat&&state.chatMode==='community')parentId=pilotLocalRoom.id;
+     const message=(direct?state.directMessages:chatMessages()).find(record=>record.id===id);
      if(message)item={author:message.senderId,text:message.text};
    }
    if(!item?.author||item.author===me()||!item.text)return;
@@ -5918,6 +6033,9 @@ async function onAction(btn) {
     if(log?.dataset.communityReading){log.scrollTop=log.scrollHeight;rememberCommunityReading(log);}
     return;
   }
+  case 'request-pilot-room':await attempt(requestPilotRoom,'changingPilotRoom');return;
+  case 'open-pilot-city-review':await attempt(openPilotCityReview,'changingPilotRoom');return;
+  case 'approve-pilot-city':await attempt(()=>approvePilotCity(id,btn.dataset.value),'changingPilotRoom');return;
   case 'chat-community':showCommunityChat(btn.dataset.value==='global'?'global':'community',true);return;
   case 'comments':openComments(id);return;
   case 'my-comment-activity':
@@ -6777,7 +6895,12 @@ document.addEventListener('submit',async(event)=>{
     }else{
       const reply=state.communityReply;
       if(reply?.key===communityReadingKey()&&chatMessages().some(message=>message.id===reply.id))payload.replyTo=reply.id;
-      await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
+      if(protectedLocalChat&&state.chatMode==='community'){
+        if(!pilotLocalRoom.id){showToast('Entre na sala local antes de enviar mensagens.',true);return;}
+        await firebase.addDoc(pilotRoomMessages(pilotLocalRoom.id),payload);
+      }else{
+        await firebase.addDoc(col('messages'),{...payload,location:myLocation(),scope:state.chatMode==='global'?'global':'local'});
+      }
       if(state.communityReply===reply)state.communityReply=null;
       clearSubmittedDraft(form.id,key,'message',data.message);
     }

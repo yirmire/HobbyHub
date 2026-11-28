@@ -4,19 +4,85 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // Tests the UI and chat creation logic without real Firebase credentials.
-function appContext(handlers = {}) {
+function appContext(handlers = {}, page = 'https://example.test/HobbyHub/') {
   const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
     .replace(/\binit\(\);\s*$/, '');
   const context = vm.createContext({
     console, Date, URL, URLSearchParams, TextEncoder, setTimeout, clearTimeout, navigator: {},
     localStorage: { getItem: () => null, setItem: () => {} },
     window: { addEventListener: () => {}, scrollTo: () => {}, scrollY: 0,
-      location: new URL('https://example.test/HobbyHub/') },
+      location: new URL(page) },
     document: { addEventListener: (event, handler) => { handlers[event] = handler; }, getElementById: () => null }
   });
   vm.runInContext(source, context, {filename: 'app.js', timeout: 1500});
   return context;
 }
+
+test('the production chat changes queries only when the protected-room flag is enabled', () => {
+  const context=appContext(),listeners=new Map(),stopped=[];
+  context.listeners=listeners;
+  context.stopped=stopped;
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};db={};render=()=>{};
+    firebase={
+      doc:(_db,...parts)=>parts.join('/'),
+      collection:(_db,...parts)=>parts.join('/'),
+      where:(key,op,value)=>[key,op,value].join(':'),
+      query:(path,filter)=>path+'?'+filter,
+      onSnapshot:(path,callback)=>{listeners.set(path,callback);return ()=>stopped.push(path);}
+    };
+    watchCommunityChatMode('reader');
+  `);
+  const project='artifacts/hubbyhub-98c71';
+  const mode=listeners.get(project+'/settings/localChatRollout');
+  const messages=project+'/public/data/messages';
+  mode({data:()=>undefined});
+  assert.ok(listeners.has(messages));
+  assert.equal(run('protectedLocalChat'),false);
+  mode({data:()=>({protectedRooms:true})});
+  assert.ok(listeners.has(messages+'?scope:==:global'));
+  assert.ok(listeners.has(project+'/localChatMemberships/reader'));
+  assert.equal(run('protectedLocalChat'),true);
+  mode({data:()=>({protectedRooms:false})});
+  assert.equal(run('protectedLocalChat'),false);
+  assert.deepEqual(stopped,[messages,messages+'?scope:==:global']);
+});
+
+test('the localhost pilot uses only the assigned city room for the local chat', async () => {
+  const handlers={},context=appContext(handlers,'http://127.0.0.1:8000/?piloto=1'),writes=[];
+  context.writes=writes;
+  context.FormData=function(){return [['message','Mensagem nova']];};
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    state.user={uid:'reader'};state.profile={name:'Ana',location:'Olinda'};state.tab='messages';state.chatMode='community';
+    state.messages=[{id:'old',text:'Histórico legado',senderId:'peer',location:'Olinda'}];
+    pilotLocalRoom={id:'recife-pe',messages:[{id:'current',text:'Sala atribuída',senderId:'peer'}]};
+    db={};firebase={collection:(_db,...path)=>path,addDoc:async(path,data)=>writes.push([path.join('/'),data.text])};
+    render=()=>{};showToast=()=>{};
+  `);
+  const panel=run('renderMessages()');
+  assert.match(panel,/Sala atribuída/);
+  assert.match(panel,/Solicitar troca de cidade/);
+  assert.doesNotMatch(panel,/Histórico legado/);
+  const form={id:'message-form',dataset:{draftKey:'message-form:reader:pilot:recife-pe'},elements:{message:{value:'Mensagem nova'}}};
+  context.document.getElementById=id=>id==='message-form'?form:null;
+  await handlers.submit({target:form,preventDefault(){}});
+  assert.equal(form.elements.message.value,'');
+  assert.deepEqual(writes.map(entry=>Array.from(entry)),[['artifacts/demo-hobbyhub/localChatRooms/recife-pe/messages','Mensagem nova']]);
+  run("state.communitySavedCloud={uid:'reader',markers:new Map([['current',true]])}");
+  await run("onAction({dataset:{action:'toggle-community-saved'}})");
+  assert.match(run('renderMessages()'),/data-action="jump-community-message" data-id="current"/);
+  const focused=[];
+  context.document.getElementById=id=>id==='community-message-current'?
+    {focus:()=>focused.push(id),scrollIntoView:()=>focused.push('scroll')}:null;
+  await run("onAction({dataset:{action:'jump-community-message',id:'current'}})");
+  assert.deepEqual(focused,['community-message-current','scroll']);
+  run("pilotLocalRoom={id:'olinda-pe',messages:[]}");
+  await run("onAction({dataset:{action:'toggle-community-saved'}})");
+  assert.doesNotMatch(run('renderMessages()'),/Sala atribuída|data-id="current"/);
+  assert.equal(vm.runInContext('LOCAL_CHAT_PILOT',appContext({},'https://example.test/HobbyHub/?piloto=1')),false);
+});
 
 test('the compact event filter button counts only active facets and preserves them when folded', async () => {
   const context=appContext();
