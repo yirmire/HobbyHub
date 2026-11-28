@@ -103,7 +103,22 @@ service cloud.firestore {
     }
     function verifiedCommunityReport(appId, report) {
       let message = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/messages/$(report.targetId)).data;
-      return verifiedReportContent(report, message.senderId, message.text);
+      return (!legacyLocalChatRestricted(appId) || message.scope == 'global')
+        && verifiedReportContent(report, message.senderId, message.text);
+    }
+    function legacyLocalChatRestricted(appId) {
+      let path = /databases/$(database)/documents/artifacts/$(appId)/settings/localChatRollout;
+      return exists(path) && get(path).data.get('protectedRooms', false) == true
+        && get(path).data.get('restrictLegacy', false) == true;
+    }
+    function localRoomMember(appId, cityId) {
+      return loggedIn()
+        && get(/databases/$(database)/documents/artifacts/$(appId)/localChatMemberships/$(request.auth.uid)).data.cityId == cityId;
+    }
+    function verifiedLocalReport(appId, report) {
+      let message = get(/databases/$(database)/documents/artifacts/$(appId)/localChatRooms/$(report.parentId)/messages/$(report.targetId)).data;
+      return localRoomMember(appId, report.parentId)
+        && verifiedReportContent(report, message.senderId, message.text);
     }
     function verifiedTestimonialReport(appId, report) {
       let entry = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(report.parentId)/testimonials/$(report.targetId)).data;
@@ -124,6 +139,7 @@ service cloud.firestore {
         && (
           (report.targetType == 'privateMessage' && threadMember(appId, report.parentId) && verifiedPrivateReport(appId, report))
           || (report.targetType == 'communityMessage' && report.parentId == '' && verifiedCommunityReport(appId, report))
+          || (report.targetType == 'communityMessage' && report.parentId != '' && verifiedLocalReport(appId, report))
           || (report.targetType == 'testimonial' && verifiedTestimonialReport(appId, report))
           || (report.targetType == 'profile' && report.parentId == '' && verifiedProfileReport(appId, report))
         );
@@ -1084,15 +1100,79 @@ service cloud.firestore {
       }
     }
 
+    // Pilot city rooms. The server assigns access; profile text does not grant membership.
+    function selectedPilotCity(appId, uid) {
+      let profile = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/members/$(uid)).data;
+      return get(/databases/$(database)/documents/artifacts/$(appId)/localChatCities/$(profile.location)).data.cityId;
+    }
+    match /artifacts/{appId}/localChatCities/{alias} {
+      allow get: if loggedIn();
+    }
+    function canReviewLocalChat(appId) {
+      return loggedIn()
+        && get(/databases/$(database)/documents/artifacts/$(appId)/localChatModerators/$(request.auth.uid)).data.active == true;
+    }
+    function pendingLocalChatRequest(appId, uid) {
+      return /databases/$(database)/documents/artifacts/$(appId)/localChatChangeRequests/$(uid);
+    }
+    match /artifacts/{appId}/localChatModerators/{uid} {
+      allow get: if isMe(uid);
+    }
+    match /artifacts/{appId}/localChatMemberships/{uid} {
+      allow get: if isMe(uid) || canReviewLocalChat(appId);
+      allow create: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['cityId'])
+        && request.resource.data.cityId == selectedPilotCity(appId, uid);
+      allow update: if canReviewLocalChat(appId)
+        && request.resource.data.keys().hasOnly(['cityId'])
+        && request.resource.data.cityId != resource.data.cityId
+        && request.resource.data.cityId == get(pendingLocalChatRequest(appId, uid)).data.cityId
+        && request.resource.data.cityId == selectedPilotCity(appId, uid)
+        && !existsAfter(pendingLocalChatRequest(appId, uid));
+    }
+    match /artifacts/{appId}/localChatChangeRequests/{uid} {
+      allow get: if isMe(uid) || canReviewLocalChat(appId);
+      allow list: if canReviewLocalChat(appId) && request.query.limit <= 50;
+      allow create, update: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['cityId'])
+        && request.resource.data.cityId == selectedPilotCity(appId, uid)
+        && !localRoomMember(appId, request.resource.data.cityId);
+      allow delete: if canReviewLocalChat(appId)
+        && getAfter(/databases/$(database)/documents/artifacts/$(appId)/localChatMemberships/$(uid)).data.cityId == resource.data.cityId;
+    }
+    match /artifacts/{appId}/localChatRooms/{cityId}/messages/{messageId} {
+      function belongsToRoom() {
+        return localRoomMember(appId, cityId);
+      }
+      function validLocalChatMessage(data) {
+        return data.keys().hasOnly(['senderId', 'senderName', 'text', 'createdAt', 'replyTo'])
+          && data.senderId == request.auth.uid
+          && validText(data.senderName, 1, 60)
+          && validText(data.text, 1, 1500)
+          && data.createdAt is number
+          && (!('replyTo' in data) || (validText(data.replyTo, 1, 150)
+            && exists(/databases/$(database)/documents/artifacts/$(appId)/localChatRooms/$(cityId)/messages/$(data.replyTo))));
+      }
+      allow read: if belongsToRoom();
+      allow create: if belongsToRoom() && validLocalChatMessage(request.resource.data);
+      allow delete: if belongsToRoom() && resource.data.senderId == request.auth.uid;
+    }
+
+    match /artifacts/{appId}/settings/localChatRollout {
+      allow get: if loggedIn();
+    }
     match /artifacts/{appId}/public/data/messages/{messageId} {
-      allow read: if loggedIn();
+      allow read: if loggedIn()
+        && (!legacyLocalChatRestricted(appId) || resource.data.scope == 'global');
       allow create: if loggedIn()
+        && (!legacyLocalChatRestricted(appId) || request.resource.data.scope == 'global')
         && request.resource.data.senderId == request.auth.uid
         && validText(request.resource.data.text, 1, 1500)
         && validText(request.resource.data.location, 1, 90)
         && request.resource.data.createdAt is number;
       allow update: if false;
-      allow delete: if loggedIn() && resource.data.senderId == request.auth.uid;
+      allow delete: if loggedIn() && resource.data.senderId == request.auth.uid
+        && (!legacyLocalChatRestricted(appId) || resource.data.scope == 'global');
     }
 
     // Mensagens realmente segregadas por par de participantes.
