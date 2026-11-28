@@ -131,6 +131,10 @@ function friendlyError(error) {
   };
   return labels[key] || `Não foi possível concluir. ${error?.message ? String(error.message).slice(0,100):'Tente novamente.'}`;
 }
+function sendAccountVerification(user){
+ return LOCAL_CHAT_PILOT?firebase.sendEmailVerification(user):
+   firebase.sendEmailVerification(user,{url:'https://yirmire.github.io/HobbyHub/'});
+}
 async function attempt(callback, pending='busy', permissionMessage) {
   if(state[pending])return;
   state[pending]=true;
@@ -584,7 +588,7 @@ async function init() {
     ]);
     firebase={...appModule,...authModule,...storeModule};
     const app=firebase.initializeApp(LOCAL_CHAT_PILOT?{...FIREBASE_CONFIG,apiKey:'demo',projectId:PROJECT}:FIREBASE_CONFIG);
-    auth=firebase.getAuth(app);db=firebase.getFirestore(app);
+    auth=firebase.getAuth(app);auth.languageCode='pt-BR';db=firebase.getFirestore(app);
     if(LOCAL_CHAT_PILOT){
       firebase.connectAuthEmulator(auth,'http://127.0.0.1:9099');
       firebase.connectFirestoreEmulator(db,'127.0.0.1',8080);
@@ -2680,6 +2684,7 @@ function renderProfile() {
  ${(p.hobbies||[]).length?`<div class="interest-row">${p.hobbies.map(h=>`<span class="pill">${emoji(h)} ${esc(h)}</span>`).join('')}</div>`:''}
  <div class="profile-stats"><div><strong>${posts.length}</strong><small>publicações</small></div><div><strong>${groupCount}</strong><small>comunidades</small></div><div><strong>${state.followingIds.length}</strong><small>seguindo</small></div></div></div></div>
  <div class="section-head"><h2>Ajuda e feedback</h2><div class="toggle-row" style="flex-wrap:wrap"><button class="text-action" data-action="send-feedback">Enviar feedback</button><button class="text-action" data-action="my-product-feedback">Meus feedbacks</button><button class="text-action" data-action="product-news">Novidades</button>${state.feedbackAdmin?'<button class="text-action" data-action="product-feedback-admin">Painel de feedback</button>':hasFeedbackAdminRole()?'<button class="text-action" data-action="feedback-admin-verification">Ativar painel de feedback</button>':''}</div></div>
+ ${state.user?.email&&!state.user.emailVerified?`<section class="card" style="padding:16px;margin:14px 0" aria-label="Confirmação de e-mail"><strong>Confirme seu e-mail</strong><p class="mini muted">Abra o link de confirmação na sua caixa de entrada.</p><div class="toggle-row" style="flex-wrap:wrap"><button type="button" class="btn btn-soft btn-small" data-action="verify-account-email">Enviar confirmação</button><button type="button" class="btn btn-outline btn-small" data-action="refresh-account-email">Já confirmei</button></div></section>`:''}
  <div class="section-head"><h2>Pessoas bloqueadas</h2></div>
  <div class="card" style="padding:16px">${state.blockedIds.length?state.blockedIds.map(uid=>`<div class="toggle-row"><span>${esc(member(uid)?.name||'Perfil indisponível')}</span>${blockButton(uid)}</div>`).join(''):'<p class="tip">Nenhuma pessoa bloqueada.</p>'}</div>
  <div class="section-head" id="received-testimonials"><h2>Depoimentos recebidos</h2></div>
@@ -5712,6 +5717,21 @@ async function onAction(btn) {
   case 'load-feedback-supplements':await loadFeedbackSupplements();return;
   case 'answer-feedback-resolution':await answerFeedbackResolution(id,btn.dataset.value);return;
   case 'feedback-admin-verification':if(hasFeedbackAdminRole())openModal('feedback-admin-verification');return;
+  case 'verify-account-email':await attempt(async()=>{
+    const user=auth.currentUser;
+    if(!user?.email||user.emailVerified)return;
+    await sendAccountVerification(user);
+    if(me()===user.uid)showToast('Link de confirmação enviado.');
+  },'changingEmailVerification');return;
+  case 'refresh-account-email':await attempt(async()=>{
+    const user=auth.currentUser;
+    if(!user)return;
+    await user.reload();
+    await user.getIdToken(true);
+    if(me()!==user.uid)return;
+    updateFeedbackAdminAccess();
+    showToast(user.emailVerified?'E-mail confirmado.':'Seu e-mail ainda aguarda confirmação.');
+  },'changingEmailVerification');return;
   case 'send-feedback-verification':await attempt(async()=>{
     if(!hasFeedbackAdminRole()||state.feedbackAdmin)return;
     await firebase.sendEmailVerification(auth.currentUser);
@@ -6536,9 +6556,16 @@ document.addEventListener('submit',async(event)=>{
     else{
       const name=val('name'),location=val('location');if(name.length<2||!location)throw new Error('Informe seu nome e sua cidade.');
       state.pendingSignup={name,location};
-      try {await firebase.createUserWithEmailAndPassword(auth,email,password);}
+      let account;
+      try {account=await firebase.createUserWithEmailAndPassword(auth,email,password);}
       catch(error){state.pendingSignup=null;throw error;}
-      showToast('Conta criada! Seja bem-vindo ao HobbyHub.');
+      try{
+        await sendAccountVerification(account.user);
+        showToast('Conta criada. Enviamos um link para confirmar seu e-mail.');
+      }catch(error){
+        console.warn('HobbyHub: falha no envio da confirmação de e-mail.',error);
+        showToast('Conta criada. Use Enviar confirmação no seu perfil.',true);
+      }
     }
   });return;
   case 'edit-comment-form':await attempt(async()=>{
