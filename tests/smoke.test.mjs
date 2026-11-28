@@ -18,6 +18,28 @@ function appContext(handlers = {}, page = 'https://example.test/HobbyHub/') {
   return context;
 }
 
+test('signup and profile controls send and refresh email verification without blocking access', async () => {
+  const handlers={}, context=appContext(handlers), actions=[];
+  context.actions=actions;
+  context.FormData=function(){return [['email','test@example.test'],['password','password123'],['name','Ana'],['location','Recife']];};
+  const run=code=>vm.runInContext(code,context);
+  run(`
+    const account={uid:'reader',email:'test@example.test',emailVerified:false,
+      reload:async()=>{account.emailVerified=true;},getIdToken:async force=>actions.push(force)};
+    auth={currentUser:account};
+    firebase={createUserWithEmailAndPassword:async()=>{actions.push('signup');return {user:account};},sendEmailVerification:async user=>actions.push(user.uid)};
+    state.authMode='register';render=()=>{};showToast=()=>{};
+  `);
+  await handlers.submit({target:{id:'auth-form'},preventDefault(){}});
+  run("state.user=account;state.profile={name:'Ana',location:'Recife'}");
+  assert.match(run('renderProfile()'),/data-action="verify-account-email"/);
+  await run("onAction({dataset:{action:'verify-account-email'}})");
+  await run("onAction({dataset:{action:'refresh-account-email'}})");
+  assert.deepEqual(actions,['signup','reader','reader',true]);
+  assert.equal(run('account.emailVerified'),true);
+  assert.doesNotMatch(run('renderProfile()'),/data-action="verify-account-email"/);
+});
+
 test('the production chat changes queries only when the protected-room flag is enabled', () => {
   const context=appContext(),listeners=new Map(),stopped=[];
   context.listeners=listeners;
