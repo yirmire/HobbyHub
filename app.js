@@ -588,6 +588,13 @@ async function init() {
     ]);
     firebase={...appModule,...authModule,...storeModule};
     const app=firebase.initializeApp(LOCAL_CHAT_PILOT?{...FIREBASE_CONFIG,apiKey:'demo',projectId:PROJECT}:FIREBASE_CONFIG);
+    const appCheckKey=document.querySelector('meta[name="firebase-app-check-site-key"]')?.content.trim();
+    if(appCheckKey&&!LOCAL_CHAT_PILOT){
+      try{
+        const {initializeAppCheck,ReCaptchaEnterpriseProvider}=await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-app-check.js');
+        initializeAppCheck(app,{provider:new ReCaptchaEnterpriseProvider(appCheckKey),isTokenAutoRefreshEnabled:true});
+      }catch(error){console.warn('HobbyHub: App Check indisponível.',error);}
+    }
     auth=firebase.getAuth(app);auth.languageCode='pt-BR';db=firebase.getFirestore(app);
     if(LOCAL_CHAT_PILOT){
       firebase.connectAuthEmulator(auth,'http://127.0.0.1:9099');
